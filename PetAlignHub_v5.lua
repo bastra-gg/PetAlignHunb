@@ -1,638 +1,463 @@
--- PetAlignHub v5
--- Почти как HTML-прога: настройки слева, результаты карточками справа, инструкция снизу.
--- Для твоей тестовой сборки. Не вызывает remotes, Apply работает только через _G.PetAPI / _G.SelectedPet.
+-- PetAlignHub v6
+-- Мини-режим: ребы + редкость + лучший баг. Клик по карточке = спросить pet и запустить ровнение.
+-- Для твоей тестовой сборки. Без RemoteEvent-спама.
 
-local Players = game:GetService("Players")
-local lp = Players.LocalPlayer
+local Players=game:GetService("Players")
+local lp=Players.LocalPlayer
 
-local RARITIES = {
-	{id="Basic", label="Базовый", base=250, stat=1},
-	{id="Uncommon", label="Необычный", base=500, stat=2},
-	{id="Rare", label="Редкий", base=750, stat=3},
-	{id="Epic", label="Эпический", base=1000, stat=4},
-	{id="Unique", label="Уникальный", base=1250, stat=5},
+local BASE={Basic=250,Uncommon=500,Rare=750,Epic=1000,Unique=1250}
+local STAT={Basic=1,Uncommon=2,Rare=3,Epic=4,Unique=5}
+local RAR_ORDER={"Unique","Epic","Rare","Uncommon","Basic"}
+local RAR_CHOICES={"Auto","Unique","Epic","Rare","Uncommon","Basic"}
+
+local ROCKS={
+{id="AncientJungle",label="Древний лес",value=16.25,names={"AncientJungle","Ancient Jungle","Jungle"}},
+{id="MuscleKing",label="Король мышц",value=12.5,names={"MuscleKing","Muscle King","King"}},
+{id="Legends",label="Легенды",value=2.5,names={"Legends","Legend"}},
+{id="Inferno",label="Инферно",value=1.125,names={"Inferno"}},
+{id="Mystic",label="Мистический",value=.75,names={"Mystic"}},
+{id="Frozen",label="Ледяной",value=.375,names={"Frozen","Ice"}},
+{id="Golden",label="Золотой",value=.2,names={"Golden","Gold"}},
+{id="Large",label="Большой",value=.075,names={"Large"}},
+{id="Punching",label="Груша",value=.05,names={"Punching","PunchingBag"}},
+{id="Tiny",label="Малый",value=.025,names={"Tiny","Small"}},
 }
 
-local RAR_ORDER = {"Unique","Epic","Rare","Uncommon","Basic"}
-
-local ROCKS = {
-	{id="AncientJungle", label="Древний лес", value=16.25},
-	{id="MuscleKing", label="Король мышц", value=12.5},
-	{id="Legends", label="Легенды", value=2.5},
-	{id="Inferno", label="Инферно", value=1.125},
-	{id="Mystic", label="Мистический", value=.75},
-	{id="Frozen", label="Ледяной", value=.375},
-	{id="Golden", label="Золотой", value=.2},
-	{id="Large", label="Большой", value=.075},
-	{id="Punching", label="Груша", value=.05},
-	{id="Tiny", label="Малый", value=.025},
+local TREAD_NAMES={
+[1]={"Treadmill1","Treadmill +1","+1","XP1"},
+[2]={"Treadmill2","Treadmill +2","+2","XP2"},
+[3]={"Treadmill3","Treadmill +3","+3","XP3"},
+[4]={"Treadmill4","Treadmill +4","+4","XP4"},
+[5]={"Treadmill5","Treadmill +5","+5","XP5"},
+[6]={"Treadmill6","Treadmill +6","+6","XP6"},
 }
 
-local rarityData = {}
-for _,r in ipairs(RARITIES) do rarityData[r.id] = r end
-
-local rockData = {}
-for _,r in ipairs(ROCKS) do rockData[r.id] = r end
-
-local function round(n)
-	return math.floor((tonumber(n) or 0) + 0.5)
-end
-
-local function whole(n)
-	return math.abs((tonumber(n) or 0) - round(n)) < 1e-7
-end
+local function round(n)return math.floor((tonumber(n)or 0)+.5)end
+local function whole(n)return math.abs((tonumber(n)or 0)-round(n))<1e-7 end
+local function cum(base,lvl)return base*lvl*(lvl+1)/2 end
+local function totalFrom(base,lvl,xp)return cum(base,lvl-1)+xp end
+local function lvlCap(base,lvl)return base*lvl end
 
 local function fmt(n)
-	n = round(n)
-	local s = tostring(n)
-	local left,num,right = string.match(s,'^([^%d]*%d)(%d*)(.-)$')
-	if not left then return s end
-	return left .. (num:reverse():gsub("(%d%d%d)","%1 "):reverse()) .. right
-end
-
-local function cum(base,lvl)
-	return base * lvl * (lvl + 1) / 2
-end
-
-local function totalFrom(base,lvl,xp)
-	return cum(base,lvl - 1) + xp
-end
-
-local function levelCap(base,lvl)
-	return base * lvl
-end
-
-local function levelFromTotal(base,total)
-	if total <= 0 then return 1,0 end
-
-	local prev = 0
-	for lvl = 1,19 do
-		local cap = cum(base,lvl)
-
-		if total < cap then
-			return lvl,total - prev
-		end
-
-		if total == cap then
-			return lvl,base * lvl
-		end
-
-		prev = cap
-	end
-
-	return 20,0
+	local s=tostring(round(n))
+	local sign=""
+	if s:sub(1,1)=="-"then sign="-"s=s:sub(2)end
+	return sign..s:reverse():gsub("(%d%d%d)","%1 "):reverse():gsub("^ ","")
 end
 
 local function parseNum(s)
-	s = tostring(s or ""):lower()
-	s = s:gsub("%s+",""):gsub(",",".")
-	s = s:gsub("ребиртов",""):gsub("ребов",""):gsub("реб","")
-
-	local n = tonumber(s:match("([%d%.]+)") or "")
+	s=tostring(s or ""):lower():gsub("%s+",""):gsub(",",".")
+	s=s:gsub("ребиртов",""):gsub("ребов",""):gsub("реб","")
+	local n=tonumber(s:match("([%d%.]+)")or"")
 	if not n then return nil end
+	local suf=s:match("[kmbtкмбт]")or""
+	local mult={k=1e3,["к"]=1e3,m=1e6,["м"]=1e6,b=1e9,["б"]=1e9,t=1e12,["т"]=1e12}
+	return round(n*(mult[suf]or 1))
+end
 
-	local suf = s:match("[kmbtкмбт]") or ""
-	local mult = {
-		k=1e3, ["к"]=1e3,
-		m=1e6, ["м"]=1e6,
-		b=1e9, ["б"]=1e9,
-		t=1e12, ["т"]=1e12,
-	}
-
-	return round(n * (mult[suf] or 1))
+local function levelFromTotal(base,total)
+	if total<=0 then return 1,0 end
+	local prev=0
+	for lvl=1,19 do
+		local cap=cum(base,lvl)
+		if total<cap then return lvl,total-prev end
+		if total==cap then return lvl,base*lvl end
+		prev=cap
+	end
+	return 20,0
 end
 
 local function readNumber(obj,names)
 	if not obj then return nil end
-
-	if type(obj) == "table" then
-		for _,name in ipairs(names) do
-			local v = obj[name]
-			if tonumber(v) then return tonumber(v) end
+	if type(obj)=="table"then
+		for _,n in ipairs(names)do if tonumber(obj[n])then return tonumber(obj[n])end end
+	end
+	if typeof(obj)=="Instance"then
+		for _,n in ipairs(names)do
+			local v=obj:FindFirstChild(n,true)
+			if v and(v:IsA("IntValue")or v:IsA("NumberValue"))then return v.Value end
+			if v and v:IsA("StringValue")then return parseNum(v.Value)end
 		end
 	end
-
-	if typeof(obj) == "Instance" then
-		for _,name in ipairs(names) do
-			local v = obj:FindFirstChild(name,true)
-
-			if v and (v:IsA("IntValue") or v:IsA("NumberValue")) then
-				return v.Value
-			end
-
-			if v and v:IsA("StringValue") then
-				return parseNum(v.Value)
-			end
-		end
-	end
-
 	return nil
 end
 
 local function setNumber(obj,names,value)
 	if not obj then return false end
-
-	if type(obj) == "table" then
-		obj[names[1]] = value
-		return true
-	end
-
-	if typeof(obj) == "Instance" then
-		for _,name in ipairs(names) do
-			local v = obj:FindFirstChild(name,true)
-
-			if v and (v:IsA("IntValue") or v:IsA("NumberValue")) then
-				v.Value = value
-				return true
-			end
+	if type(obj)=="table"then obj[names[1]]=value return true end
+	if typeof(obj)=="Instance"then
+		for _,n in ipairs(names)do
+			local v=obj:FindFirstChild(n,true)
+			if v and(v:IsA("IntValue")or v:IsA("NumberValue"))then v.Value=value return true end
 		end
 	end
-
 	return false
 end
 
-local function selectedPet()
-	if _G.PetAPI and _G.PetAPI.GetSelectedPet then
-		local ok,res = pcall(_G.PetAPI.GetSelectedPet)
-		if ok then return res end
+local function root()
+	local c=lp.Character or lp.CharacterAdded:Wait()
+	return c:FindFirstChild("HumanoidRootPart")or c:FindFirstChild("Torso")or c:FindFirstChild("UpperTorso")
+end
+
+local function findByNames(names)
+	for _,obj in ipairs(workspace:GetDescendants())do
+		local low=obj.Name:lower()
+		for _,n in ipairs(names)do
+			local q=tostring(n):lower()
+			if low==q or low:find(q,1,true)then
+				if obj:IsA("BasePart")then return obj end
+				local p=obj:FindFirstChildWhichIsA("BasePart",true)
+				if p then return p end
+			end
+		end
 	end
-
-	if _G.SelectedPet then return _G.SelectedPet end
-	if _G.Pet then return _G.Pet end
-
 	return nil
+end
+
+local function tpTo(part)
+	local r=root()
+	if not r or not part then return false end
+	r.CFrame=part.CFrame+Vector3.new(0,4,0)
+	return true
+end
+
+local function selectedPet()
+	if _G.PetAPI and _G.PetAPI.GetSelectedPet then local ok,res=pcall(_G.PetAPI.GetSelectedPet)if ok and res then return res end end
+	return _G.SelectedPet or _G.Pet
+end
+
+local function hasPet(rarity)
+	if _G.PetAPI and _G.PetAPI.HasPet then local ok,res=pcall(_G.PetAPI.HasPet,rarity)if ok then return res end end
+	return nil
+end
+
+local function selectPet(rarity)
+	if _G.PetAPI and _G.PetAPI.SelectPet then pcall(_G.PetAPI.SelectPet,rarity)end
+end
+
+local function petTotal(pet,rarity)
+	local total=readNumber(pet,{"TotalXP","TotalExp","totalXP","totalExp"})
+	if total then return total end
+	local lvl=readNumber(pet,{"Level","Lvl","level","lvl"})or 1
+	local xp=readNumber(pet,{"XP","Exp","Experience","xp"})or 0
+	return totalFrom(BASE[rarity],lvl,xp)
 end
 
 local function detectRebirths()
-	if _G.PetAPI and _G.PetAPI.GetRebirths then
-		local ok,res = pcall(_G.PetAPI.GetRebirths)
-		if ok and tonumber(res) then return round(tonumber(res)) end
-	end
-
-	if _G.Rebirths and tonumber(_G.Rebirths) then
-		return round(tonumber(_G.Rebirths))
-	end
-
-	local ls = lp:FindFirstChild("leaderstats")
+	if _G.PetAPI and _G.PetAPI.GetRebirths then local ok,res=pcall(_G.PetAPI.GetRebirths)if ok and tonumber(res)then return round(res)end end
+	if _G.Rebirths and tonumber(_G.Rebirths)then return round(_G.Rebirths)end
+	local ls=lp:FindFirstChild("leaderstats")
 	if ls then
-		for _,v in ipairs(ls:GetChildren()) do
-			local n = v.Name:lower()
-			if n:find("reb") or n:find("перер") or n == "ребы" then
-				if v:IsA("IntValue") or v:IsA("NumberValue") then return round(v.Value) end
-				if v:IsA("StringValue") then return parseNum(v.Value) end
+		for _,v in ipairs(ls:GetChildren())do
+			local n=v.Name:lower()
+			if n:find("reb")or n:find("перер")then
+				if v:IsA("IntValue")or v:IsA("NumberValue")then return round(v.Value)end
+				if v:IsA("StringValue")then return parseNum(v.Value)end
 			end
 		end
 	end
-
 	return nil
 end
 
-local function currentPetTotal(rarity,manualLvl,manualXp)
-	local pet = selectedPet()
-	local base = rarityData[rarity].base
-
-	if pet then
-		local total = readNumber(pet,{"TotalXP","TotalExp","totalXP","totalExp"})
-		if total then return total end
-
-		local lvl = readNumber(pet,{"Level","Lvl","level","lvl"}) or manualLvl
-		local xp = readNumber(pet,{"XP","Exp","Experience","xp"}) or manualXp
-		return totalFrom(base,lvl,xp)
-	end
-
-	return totalFrom(base,manualLvl,manualXp)
-end
-
-local function bestGlitch(rawHit,rarityId,rockId)
-	if not whole(rawHit) then return nil end
-
-	local r = rarityData[rarityId]
-	local hit = round(rawHit)
-	local best = nil
-
-	for endLvl = 1,19 do
-		local endTotal = cum(r.base,endLvl)
-		local startTotal = endTotal - hit
-
-		if startTotal >= 0 then
-			local startLvl,startXp = levelFromTotal(r.base,startTotal)
-			local crossed = endLvl - startLvl + 1
-
-			if crossed >= 1 then
-				local cand = {
-					rarity = rarityId,
-					rarityLabel = r.label,
-					rock = rockId,
-					rockLabel = rockData[rockId].label,
-					hit = hit,
-					setLvl = startLvl,
-					setXp = startXp,
-					startTotal = startTotal,
-					capLvl = endLvl,
-					bonus = crossed * r.stat,
-					crossed = crossed,
-					left = levelCap(r.base,startLvl) - startXp,
-				}
-
-				if not best
-				or cand.bonus > best.bonus
-				or (cand.bonus == best.bonus and cand.startTotal < best.startTotal) then
-					best = cand
-				end
+local function bestForHit(rawHit,rarity,rock)
+	if not whole(rawHit)then return nil end
+	local base,stat=BASE[rarity],STAT[rarity]
+	local hit=round(rawHit)
+	local best=nil
+	for endLvl=1,19 do
+		local endTotal=cum(base,endLvl)
+		local startTotal=endTotal-hit
+		if startTotal>=0 then
+			local sl,sx=levelFromTotal(base,startTotal)
+			local cross=endLvl-sl+1
+			if cross>=1 then
+				local cand={rarity=rarity,rock=rock.id,rockLabel=rock.label,hit=hit,setLvl=sl,setXp=sx,startTotal=startTotal,capLvl=endLvl,bonus=cross*stat,crossed=cross,left=lvlCap(base,sl)-sx}
+				if not best or cand.bonus>best.bonus or(cand.bonus==best.bonus and cand.startTotal<best.startTotal)then best=cand end
 			end
 		end
 	end
-
 	return best
 end
 
-local function getSuggestions(rebirths,rarityFilter,rockFilter)
-	local list = {}
-
-	for _,rarity in ipairs(RAR_ORDER) do
-		if rarityFilter == "Auto" or rarityFilter == rarity then
-			for _,rock in ipairs(ROCKS) do
-				if rockFilter == "Auto" or rockFilter == rock.id then
-					local rawHit = (rebirths + 20) * rock.value
-					local cand = bestGlitch(rawHit,rarity,rock.id)
-
-					if cand then
-						table.insert(list,cand)
-					end
+local function getBest(reb,filter)
+	local best=nil
+	for _,rarity in ipairs(RAR_ORDER)do
+		if filter=="Auto"or filter==rarity then
+			for _,rock in ipairs(ROCKS)do
+				local cand=bestForHit((reb+20)*rock.value,rarity,rock)
+				if cand and(not best or cand.bonus>best.bonus or(cand.bonus==best.bonus and STAT[cand.rarity]>STAT[best.rarity])or(cand.bonus==best.bonus and cand.hit>best.hit))then
+					best=cand
 				end
 			end
 		end
 	end
-
-	table.sort(list,function(a,b)
-		if a.bonus ~= b.bonus then return a.bonus > b.bonus end
-		if rarityData[a.rarity].stat ~= rarityData[b.rarity].stat then
-			return rarityData[a.rarity].stat > rarityData[b.rarity].stat
-		end
-		if a.hit ~= b.hit then return a.hit > b.hit end
-		return a.startTotal < b.startTotal
-	end)
-
-	return list
+	return best
 end
 
-local function treadmillPlan(diff)
-	diff = round(diff)
-
-	if diff < 0 then
-		return "ПЕРЕКАЧАНО на "..fmt(math.abs(diff)).." XP. Жми другую карточку/Next."
+local function makePlan(diff)
+	diff=round(diff)
+	if diff<0 then return nil,"Пет выше точки на "..fmt(math.abs(diff)).." XP."end
+	local plan={}
+	for g=6,1,-1 do
+		local c=math.floor(diff/g)
+		if c>0 then table.insert(plan,{gain=g,count=c})diff-=c*g end
 	end
-
-	if diff == 0 then
-		return "Уже ровно. Бей камень."
-	end
-
-	local parts = {}
-	for g = 6,1,-1 do
-		local count = math.floor(diff / g)
-
-		if count > 0 then
-			table.insert(parts,"дорожка +"..g.." × "..count)
-			diff = diff - count * g
-		end
-	end
-
-	return table.concat(parts,"\n")
+	return plan,nil
 end
 
--- UI helpers
-
-local gui = Instance.new("ScreenGui")
-gui.Name = "PetAlignHubV5"
-gui.ResetOnSpawn = false
-gui.Parent = lp:WaitForChild("PlayerGui")
-
-local frame = Instance.new("Frame",gui)
-frame.Size = UDim2.new(0,650,0,430)
-frame.Position = UDim2.new(0.5,-325,0.5,-215)
-frame.BackgroundColor3 = Color3.fromRGB(12,11,26)
-frame.BorderSizePixel = 0
-frame.Active = true
-frame.Draggable = true
-Instance.new("UICorner",frame).CornerRadius = UDim.new(0,18)
-
-local stroke = Instance.new("UIStroke",frame)
-stroke.Color = Color3.fromRGB(132,70,255)
-stroke.Thickness = 1.6
-
-local title = Instance.new("TextLabel",frame)
-title.Size = UDim2.new(1,-60,0,40)
-title.Position = UDim2.new(0,16,0,8)
-title.BackgroundTransparency = 1
-title.Text = "Калькулятор багов • Script Edition"
-title.TextColor3 = Color3.new(1,1,1)
-title.Font = Enum.Font.GothamBlack
-title.TextSize = 20
-title.TextXAlignment = Enum.TextXAlignment.Left
-
-local close = Instance.new("TextButton",frame)
-close.Size = UDim2.new(0,36,0,36)
-close.Position = UDim2.new(1,-48,0,8)
-close.Text = "×"
-close.TextColor3 = Color3.fromRGB(255,180,190)
-close.BackgroundColor3 = Color3.fromRGB(62,20,34)
-close.Font = Enum.Font.GothamBlack
-close.TextSize = 20
-Instance.new("UICorner",close).CornerRadius = UDim.new(0,12)
-close.MouseButton1Click:Connect(function() gui:Destroy() end)
-
-local left = Instance.new("Frame",frame)
-left.Size = UDim2.new(0,245,0,360)
-left.Position = UDim2.new(0,14,0,56)
-left.BackgroundColor3 = Color3.fromRGB(17,16,36)
-left.BorderSizePixel = 0
-Instance.new("UICorner",left).CornerRadius = UDim.new(0,15)
-
-local right = Instance.new("Frame",frame)
-right.Size = UDim2.new(1,-280,0,360)
-right.Position = UDim2.new(0,270,0,56)
-right.BackgroundColor3 = Color3.fromRGB(17,16,36)
-right.BorderSizePixel = 0
-Instance.new("UICorner",right).CornerRadius = UDim.new(0,15)
-
-local function makeLabel(parent,text,x,y,w)
-	local l = Instance.new("TextLabel",parent)
-	l.Size = UDim2.new(0,w or 200,0,18)
-	l.Position = UDim2.new(0,x,0,y)
-	l.BackgroundTransparency = 1
-	l.Text = text
-	l.TextColor3 = Color3.fromRGB(205,195,255)
-	l.Font = Enum.Font.GothamBold
-	l.TextSize = 12
-	l.TextXAlignment = Enum.TextXAlignment.Left
-	return l
+local function planText(plan)
+	if not plan or #plan==0 then return "уже ровно"end
+	local t={}
+	for _,p in ipairs(plan)do table.insert(t,"+"..p.gain.."×"..p.count)end
+	return table.concat(t,"  ")
 end
 
-local function makeBox(parent,x,y,w,text,placeholder)
-	local b = Instance.new("TextBox",parent)
-	b.Size = UDim2.new(0,w,0,34)
-	b.Position = UDim2.new(0,x,0,y)
-	b.Text = text or ""
-	b.PlaceholderText = placeholder or ""
-	b.ClearTextOnFocus = false
-	b.TextColor3 = Color3.new(1,1,1)
-	b.PlaceholderColor3 = Color3.fromRGB(155,145,190)
-	b.BackgroundColor3 = Color3.fromRGB(31,29,61)
-	b.Font = Enum.Font.GothamBold
-	b.TextSize = 14
-	Instance.new("UICorner",b).CornerRadius = UDim.new(0,10)
-	return b
-end
+local gui=Instance.new("ScreenGui")
+gui.Name="PetAlignHubV6"
+gui.ResetOnSpawn=false
+gui.Parent=lp:WaitForChild("PlayerGui")
 
-local function makeButton(parent,x,y,w,text,color)
-	local b = Instance.new("TextButton",parent)
-	b.Size = UDim2.new(0,w,0,34)
-	b.Position = UDim2.new(0,x,0,y)
-	b.Text = text
-	b.TextColor3 = Color3.new(1,1,1)
-	b.BackgroundColor3 = color or Color3.fromRGB(62,50,120)
-	b.Font = Enum.Font.GothamBlack
-	b.TextSize = 13
-	Instance.new("UICorner",b).CornerRadius = UDim.new(0,10)
-	return b
-end
+local frame=Instance.new("Frame",gui)
+frame.Size=UDim2.new(0,360,0,250)
+frame.Position=UDim2.new(.5,-180,.5,-125)
+frame.BackgroundColor3=Color3.fromRGB(12,11,26)
+frame.BorderSizePixel=0
+frame.Active=true
+frame.Draggable=true
+Instance.new("UICorner",frame).CornerRadius=UDim.new(0,16)
+local st=Instance.new("UIStroke",frame)
+st.Color=Color3.fromRGB(132,70,255)
+st.Thickness=1.5
 
-makeLabel(left,"Перерождения",14,14)
-local rebBox = makeBox(left,14,35,135,"","45164")
-local readBtn = makeButton(left,158,35,72,"Read",Color3.fromRGB(105,55,210))
+local title=Instance.new("TextLabel",frame)
+title.Size=UDim2.new(1,-54,0,36)
+title.Position=UDim2.new(0,14,0,8)
+title.BackgroundTransparency=1
+title.Text="Pet Align Hub v6"
+title.TextColor3=Color3.new(1,1,1)
+title.Font=Enum.Font.GothamBlack
+title.TextSize=19
+title.TextXAlignment=Enum.TextXAlignment.Left
 
-makeLabel(left,"Редкость питомца",14,80)
-local rarityBtn = makeButton(left,14,101,216,"Auto",Color3.fromRGB(56,45,108))
+local close=Instance.new("TextButton",frame)
+close.Size=UDim2.new(0,32,0,32)
+close.Position=UDim2.new(1,-42,0,8)
+close.Text="×"
+close.TextColor3=Color3.fromRGB(255,180,190)
+close.BackgroundColor3=Color3.fromRGB(62,20,34)
+close.Font=Enum.Font.GothamBlack
+close.TextSize=18
+Instance.new("UICorner",close).CornerRadius=UDim.new(0,10)
+close.MouseButton1Click:Connect(function()gui:Destroy()end)
 
-makeLabel(left,"Камень",14,146)
-local rockBtn = makeButton(left,14,167,216,"Auto",Color3.fromRGB(56,45,108))
+local rebBox=Instance.new("TextBox",frame)
+rebBox.Size=UDim2.new(0,210,0,38)
+rebBox.Position=UDim2.new(0,14,0,54)
+rebBox.Text=""
+rebBox.PlaceholderText="Впиши ребы"
+rebBox.ClearTextOnFocus=false
+rebBox.TextColor3=Color3.new(1,1,1)
+rebBox.PlaceholderColor3=Color3.fromRGB(160,150,190)
+rebBox.BackgroundColor3=Color3.fromRGB(31,29,61)
+rebBox.Font=Enum.Font.GothamBold
+rebBox.TextSize=15
+Instance.new("UICorner",rebBox).CornerRadius=UDim.new(0,11)
 
-makeLabel(left,"Текущий pet lvl / XP",14,212)
-local lvlBox = makeBox(left,14,233,80,"1","lvl")
-local xpBox = makeBox(left,102,233,128,"0","xp")
+local rarityBtn=Instance.new("TextButton",frame)
+rarityBtn.Size=UDim2.new(0,116,0,38)
+rarityBtn.Position=UDim2.new(1,-130,0,54)
+rarityBtn.Text="Auto"
+rarityBtn.TextColor3=Color3.new(1,1,1)
+rarityBtn.BackgroundColor3=Color3.fromRGB(62,50,120)
+rarityBtn.Font=Enum.Font.GothamBlack
+rarityBtn.TextSize=14
+Instance.new("UICorner",rarityBtn).CornerRadius=UDim.new(0,11)
 
-local warn = Instance.new("TextLabel",left)
-warn.Size = UDim2.new(1,-28,0,72)
-warn.Position = UDim2.new(0,14,0,278)
-warn.BackgroundColor3 = Color3.fromRGB(25,22,45)
-warn.TextColor3 = Color3.fromRGB(255,226,122)
-warn.Font = Enum.Font.GothamBold
-warn.TextSize = 11
-warn.TextWrapped = true
-warn.TextYAlignment = Enum.TextYAlignment.Top
-warn.Text = "Примечание: это математика XP. Реальный баг проверяй по статам питомца, не только по lvl/XP."
-Instance.new("UICorner",warn).CornerRadius = UDim.new(0,11)
+local card=Instance.new("TextButton",frame)
+card.Size=UDim2.new(1,-28,0,106)
+card.Position=UDim2.new(0,14,0,106)
+card.Text=""
+card.BackgroundColor3=Color3.fromRGB(18,45,35)
+card.BorderSizePixel=0
+card.AutoButtonColor=true
+Instance.new("UICorner",card).CornerRadius=UDim.new(0,14)
+local cs=Instance.new("UIStroke",card)
+cs.Color=Color3.fromRGB(86,255,154)
+cs.Thickness=1.5
 
-local resTitle = Instance.new("TextLabel",right)
-resTitle.Size = UDim2.new(1,-24,0,28)
-resTitle.Position = UDim2.new(0,12,0,8)
-resTitle.BackgroundTransparency = 1
-resTitle.Text = "Результаты"
-resTitle.TextColor3 = Color3.new(1,1,1)
-resTitle.Font = Enum.Font.GothamBlack
-resTitle.TextSize = 18
-resTitle.TextXAlignment = Enum.TextXAlignment.Left
+local cardText=Instance.new("TextLabel",card)
+cardText.Size=UDim2.new(1,-20,1,-16)
+cardText.Position=UDim2.new(0,10,0,8)
+cardText.BackgroundTransparency=1
+cardText.TextColor3=Color3.fromRGB(255,238,170)
+cardText.Font=Enum.Font.GothamBold
+cardText.TextSize=13
+cardText.TextWrapped=true
+cardText.TextYAlignment=Enum.TextYAlignment.Top
+cardText.TextXAlignment=Enum.TextXAlignment.Left
+cardText.Text="Впиши ребы — лучший баг появится тут."
 
-local mini = Instance.new("TextLabel",right)
-mini.Size = UDim2.new(0,190,0,24)
-mini.Position = UDim2.new(1,-202,0,11)
-mini.BackgroundTransparency = 1
-mini.Text = "введи ребы"
-mini.TextColor3 = Color3.fromRGB(155,150,180)
-mini.Font = Enum.Font.GothamBold
-mini.TextSize = 11
-mini.TextXAlignment = Enum.TextXAlignment.Right
+local status=Instance.new("TextLabel",frame)
+status.Size=UDim2.new(1,-28,0,22)
+status.Position=UDim2.new(0,14,1,-28)
+status.BackgroundTransparency=1
+status.Text="Клик по карточке = начать авто-ровнение"
+status.TextColor3=Color3.fromRGB(175,165,210)
+status.Font=Enum.Font.GothamBold
+status.TextSize=11
+status.TextXAlignment=Enum.TextXAlignment.Left
 
-local scroll = Instance.new("ScrollingFrame",right)
-scroll.Size = UDim2.new(1,-24,0,202)
-scroll.Position = UDim2.new(0,12,0,43)
-scroll.BackgroundTransparency = 1
-scroll.BorderSizePixel = 0
-scroll.ScrollBarThickness = 4
-scroll.CanvasSize = UDim2.new(0,0,0,0)
+local confirm=Instance.new("Frame",frame)
+confirm.Size=UDim2.new(1,-28,0,112)
+confirm.Position=UDim2.new(0,14,0,106)
+confirm.BackgroundColor3=Color3.fromRGB(20,18,40)
+confirm.Visible=false
+confirm.ZIndex=5
+Instance.new("UICorner",confirm).CornerRadius=UDim.new(0,14)
 
-local listLayout = Instance.new("UIListLayout",scroll)
-listLayout.SortOrder = Enum.SortOrder.LayoutOrder
-listLayout.Padding = UDim.new(0,8)
+local q=Instance.new("TextLabel",confirm)
+q.Size=UDim2.new(1,-20,0,54)
+q.Position=UDim2.new(0,10,0,8)
+q.BackgroundTransparency=1
+q.TextColor3=Color3.fromRGB(255,238,170)
+q.Font=Enum.Font.GothamBlack
+q.TextSize=14
+q.TextWrapped=true
+q.ZIndex=6
+q.Text="Есть нужный пет?"
 
-local inst = Instance.new("TextLabel",right)
-inst.Size = UDim2.new(1,-24,0,94)
-inst.Position = UDim2.new(0,12,1,-104)
-inst.BackgroundColor3 = Color3.fromRGB(8,8,21)
-inst.TextColor3 = Color3.fromRGB(255,238,170)
-inst.Font = Enum.Font.GothamBold
-inst.TextSize = 12
-inst.TextWrapped = true
-inst.TextYAlignment = Enum.TextYAlignment.Top
-inst.TextXAlignment = Enum.TextXAlignment.Left
-inst.Text = "Инструкция появится после ввода ребов."
-Instance.new("UICorner",inst).CornerRadius = UDim.new(0,12)
+local yes=Instance.new("TextButton",confirm)
+yes.Size=UDim2.new(.48,-8,0,34)
+yes.Position=UDim2.new(0,10,1,-44)
+yes.Text="Да, ровняй"
+yes.TextColor3=Color3.new(1,1,1)
+yes.BackgroundColor3=Color3.fromRGB(30,135,80)
+yes.Font=Enum.Font.GothamBlack
+yes.TextSize=13
+yes.ZIndex=6
+Instance.new("UICorner",yes).CornerRadius=UDim.new(0,10)
 
-local rarityChoices = {"Auto","Unique","Epic","Rare","Uncommon","Basic"}
-local rarityIndex = 1
+local no=Instance.new("TextButton",confirm)
+no.Size=UDim2.new(.48,-8,0,34)
+no.Position=UDim2.new(.52,-2,1,-44)
+no.Text="Нет"
+no.TextColor3=Color3.new(1,1,1)
+no.BackgroundColor3=Color3.fromRGB(80,40,55)
+no.Font=Enum.Font.GothamBlack
+no.TextSize=13
+no.ZIndex=6
+Instance.new("UICorner",no).CornerRadius=UDim.new(0,10)
 
-local rockChoices = {"Auto","Legends","MuscleKing","AncientJungle","Inferno","Mystic","Frozen","Golden","Large","Punching","Tiny"}
-local rockIndex = 1
+local rarityIndex=1
+local current=nil
+local running=false
 
-local suggestions = {}
-local chosen = nil
-local busy = false
-
-local function currentRarity()
-	return rarityChoices[rarityIndex]
-end
-
-local function currentRock()
-	return rockChoices[rockIndex]
-end
-
-local function updateInstruction(s)
-	if not s then
-		inst.Text = "Инструкция:\n1) Впиши ребы.\n2) Оставь Auto или выбери pet/камень.\n3) Впиши текущий lvl/XP пета.\n4) Нажми карточку результата."
-		return
-	end
-
-	local manualLvl = tonumber(lvlBox.Text) or 1
-	local manualXp = tonumber(xpBox.Text) or 0
-	local nowTotal = currentPetTotal(s.rarity,manualLvl,manualXp)
-	local plan = treadmillPlan(s.startTotal - nowTotal)
-
-	inst.Text =
-		"ИНСТРУКЦИЯ\n" ..
-		"1) Возьми pet: "..s.rarityLabel.."\n" ..
-		"2) Выставь: "..fmt(s.setLvl).." lvl, "..fmt(s.setXp).." XP\n" ..
-		"3) Дорожки:\n"..plan.."\n" ..
-		"4) Ударь: "..s.rockLabel.." камень\n" ..
-		"5) Проверь статы. Ожидание: +"..fmt(s.bonus)
-end
-
-local function clearCards()
-	for _,v in ipairs(scroll:GetChildren()) do
-		if v:IsA("TextButton") then v:Destroy() end
-	end
-end
-
-local function makeCard(s,i)
-	local card = Instance.new("TextButton",scroll)
-	card.Size = UDim2.new(1,-4,0,74)
-	card.BackgroundColor3 = i == 1 and Color3.fromRGB(18,45,35) or Color3.fromRGB(20,20,43)
-	card.BorderSizePixel = 0
-	card.AutoButtonColor = true
-	card.Text = ""
-	card.LayoutOrder = i
-	Instance.new("UICorner",card).CornerRadius = UDim.new(0,13)
-
-	local st = Instance.new("UIStroke",card)
-	st.Color = i == 1 and Color3.fromRGB(86,255,154) or Color3.fromRGB(80,65,125)
-	st.Thickness = i == 1 and 2 or 1
-
-	local name = Instance.new("TextLabel",card)
-	name.Size = UDim2.new(1,-92,0,24)
-	name.Position = UDim2.new(0,12,0,8)
-	name.BackgroundTransparency = 1
-	name.Text = s.rarityLabel.." • "..s.rockLabel
-	name.TextColor3 = Color3.new(1,1,1)
-	name.Font = Enum.Font.GothamBlack
-	name.TextSize = 14
-	name.TextXAlignment = Enum.TextXAlignment.Left
-
-	local set = Instance.new("TextLabel",card)
-	set.Size = UDim2.new(1,-92,0,22)
-	set.Position = UDim2.new(0,12,0,36)
-	set.BackgroundTransparency = 1
-	set.Text = "Поставь: "..fmt(s.setLvl).." lvl, "..fmt(s.setXp).." XP"
-	set.TextColor3 = Color3.fromRGB(255,226,122)
-	set.Font = Enum.Font.GothamBold
-	set.TextSize = 12
-	set.TextXAlignment = Enum.TextXAlignment.Left
-
-	local bonus = Instance.new("TextLabel",card)
-	bonus.Size = UDim2.new(0,74,0,48)
-	bonus.Position = UDim2.new(1,-82,0,13)
-	bonus.BackgroundColor3 = Color3.fromRGB(12,26,22)
-	bonus.Text = "+"..fmt(s.bonus).."\nстат"
-	bonus.TextColor3 = Color3.fromRGB(86,255,154)
-	bonus.Font = Enum.Font.GothamBlack
-	bonus.TextSize = 14
-	Instance.new("UICorner",bonus).CornerRadius = UDim.new(0,10)
-
-	card.MouseButton1Click:Connect(function()
-		chosen = s
-		updateInstruction(s)
-	end)
-end
-
-local function recalc()
-	if busy then return end
-	busy = true
-
-	local reb = parseNum(rebBox.Text)
-
-	clearCards()
-
+local function render()
+	local reb=parseNum(rebBox.Text)
 	if not reb then
-		suggestions = {}
-		chosen = nil
-		mini.Text = "введи ребы"
-		updateInstruction(nil)
-		busy = false
+		current=nil
+		cardText.Text="Впиши ребы — лучший баг появится тут."
+		status.Text="Например: 45164 или 45k"
+		return
+	end
+	local filter=RAR_CHOICES[rarityIndex]
+	current=getBest(reb,filter)
+	if not current then
+		cardText.Text="Нет точного варианта на этих ребах."
+		status.Text="Попробуй другую редкость или Auto."
+		return
+	end
+	cardText.Text="✅ Лучший баг\nПет: "..current.rarity.."  |  Камень: "..current.rockLabel.."\nПоставить: "..fmt(current.setLvl).." lvl, "..fmt(current.setXp).." XP\nHit: "..fmt(current.hit).." XP  |  Cap: "..fmt(current.capLvl).." lvl\nОжидание: +"..fmt(current.bonus).." статов"
+	status.Text="Нажми карточку → подтверждение → авто-ровнение"
+end
+
+local function useTreadmill(gain,count)
+	if count<=0 then return true end
+	if _G.PetAPI and _G.PetAPI.UseTreadmill then
+		local ok=pcall(_G.PetAPI.UseTreadmill,gain,count)
+		if ok then return true end
+	end
+	local part=findByNames(TREAD_NAMES[gain])
+	if not part then status.Text="Не нашёл дорожку +"..gain..". Нужен PetAPI.UseTreadmill." return false end
+	for i=1,count do
+		tpTo(part)
+		task.wait(0.18)
+	end
+	return true
+end
+
+local function hitRock(rockId)
+	if _G.PetAPI and _G.PetAPI.HitRock then
+		local ok=pcall(_G.PetAPI.HitRock,rockId)
+		if ok then return true end
+	end
+	local names=nil
+	for _,r in ipairs(ROCKS)do if r.id==rockId then names=r.names break end end
+	local part=names and findByNames(names)
+	if part then tpTo(part) status.Text="Тепнул к камню. Бей "..rockId.."." return true end
+	status.Text="Камень не найден. Нужен PetAPI.HitRock или объект камня."
+	return false
+end
+
+local function runAlign()
+	if running or not current then return end
+	running=true
+	confirm.Visible=false
+	local has=hasPet(current.rarity)
+	if has==false then status.Text="У тебя нет "..current.rarity.." pet." running=false return end
+	selectPet(current.rarity)
+
+	if _G.PetAPI and _G.PetAPI.SetPetXP then
+		local pet=selectedPet()
+		pcall(_G.PetAPI.SetPetXP,pet,current.setLvl,current.setXp,current.startTotal)
+		status.Text="XP выставлен. Тепаю к камню..."
+		task.wait(.25)
+		hitRock(current.rock)
+		running=false
 		return
 	end
 
-	suggestions = getSuggestions(reb,currentRarity(),currentRock())
-	mini.Text = tostring(#suggestions).." вариантов • "..fmt(reb).." ребов"
-
-	if #suggestions == 0 then
-		chosen = nil
-		inst.Text = "Нет точных вариантов под выбранные фильтры.\nПоставь Pet = Auto и Rock = Auto."
-		busy = false
-		return
+	local pet=selectedPet()
+	if not pet then status.Text="Пет не выбран. Нужен _G.SelectedPet или PetAPI." running=false return end
+	local now=petTotal(pet,current.rarity)
+	local plan,err=makePlan(current.startTotal-now)
+	if err then status.Text=err running=false return end
+	status.Text="Ровняю: "..planText(plan)
+	for _,p in ipairs(plan)do
+		local ok=useTreadmill(p.gain,p.count)
+		if not ok then running=false return end
 	end
-
-	for i = 1,math.min(#suggestions,12) do
-		makeCard(suggestions[i],i)
-	end
-
-	scroll.CanvasSize = UDim2.new(0,0,0,math.min(#suggestions,12) * 82)
-
-	chosen = suggestions[1]
-	updateInstruction(chosen)
-
-	busy = false
+	setNumber(pet,{"Level","Lvl","level","lvl"},current.setLvl)
+	setNumber(pet,{"XP","Exp","Experience","xp"},current.setXp)
+	setNumber(pet,{"TotalXP","TotalExp","totalXP"},current.startTotal)
+	status.Text="Ровно. Тепаю к камню..."
+	task.wait(.25)
+	hitRock(current.rock)
+	running=false
 end
 
 rarityBtn.MouseButton1Click:Connect(function()
-	rarityIndex = rarityIndex + 1
-	if rarityIndex > #rarityChoices then rarityIndex = 1 end
-	rarityBtn.Text = rarityChoices[rarityIndex]
-	recalc()
+	rarityIndex+=1
+	if rarityIndex>#RAR_CHOICES then rarityIndex=1 end
+	rarityBtn.Text=RAR_CHOICES[rarityIndex]
+	render()
 end)
 
-rockBtn.MouseButton1Click:Connect(function()
-	rockIndex = rockIndex + 1
-	if rockIndex > #rockChoices then rockIndex = 1 end
-	rockBtn.Text = rockChoices[rockIndex]
-	recalc()
+rebBox:GetPropertyChangedSignal("Text"):Connect(render)
+
+card.MouseButton1Click:Connect(function()
+	if not current then return end
+	q.Text="У тебя есть "..current.rarity.." pet?\nНужно: "..fmt(current.setLvl).." lvl, "..fmt(current.setXp).." XP"
+	confirm.Visible=true
 end)
 
-readBtn.MouseButton1Click:Connect(function()
-	local d = detectRebirths()
-	if d then
-		rebBox.Text = tostring(d)
-	else
-		mini.Text = "Read не нашёл ребы"
-	end
-	recalc()
+no.MouseButton1Click:Connect(function()
+	confirm.Visible=false
+	status.Text="Отменено."
 end)
 
-rebBox:GetPropertyChangedSignal("Text"):Connect(recalc)
-lvlBox:GetPropertyChangedSignal("Text"):Connect(function()
-	if chosen then updateInstruction(chosen) end
-end)
-xpBox:GetPropertyChangedSignal("Text"):Connect(function()
-	if chosen then updateInstruction(chosen) end
-end)
+yes.MouseButton1Click:Connect(runAlign)
 
-local d = detectRebirths()
-if d then rebBox.Text = tostring(d) end
-recalc()
+local d=detectRebirths()
+if d then rebBox.Text=tostring(d) end
+render()
