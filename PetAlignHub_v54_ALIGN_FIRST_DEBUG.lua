@@ -1,4 +1,4 @@
--- PetAlignHub v54_ALIGN_FIRST_DEBUG
+-- PetAlignHub v55_ALIGN_NIL_CARD_FIX
 -- Удобный дизайн + проверенная математика по всем редкостям.
 -- ALIGN: сам ровняет дорожками и останавливается на нужном Total XP.
 -- BUG: сам тепает в нужный камень через neededDurability и реально бьёт/активирует.
@@ -123,41 +123,99 @@ local function levelFromTotal(base,total)
 end
 
 local function selectedPet()
+	local cand=nil
+
 	if _G.PetAPI and _G.PetAPI.GetSelectedPet then
 		local ok,res=pcall(_G.PetAPI.GetSelectedPet)
-		if ok and res then return res end
+		if ok and res then cand=res end
 	end
-	return _G.SelectedPet or _G.Pet
+
+	if not cand then cand=_G.SelectedPet or _G.Pet end
+	if not cand then return nil end
+
+	-- Если глобал случайно указывает на ParticleEmitter/Weight/эффект, просто игнорим.
+	if typeof(cand)=="Instance"then
+		local path=tostring(cand:GetFullName()):lower()
+		local name=tostring(cand.Name):lower()
+		if path:find("weight",1,true)and not path:find("pet",1,true)and not path:find("питом",1,true)then
+			return nil
+		end
+		if cand:IsA("ParticleEmitter")or cand:IsA("Trail")or cand:IsA("Beam")then
+			return nil
+		end
+	end
+
+	return cand
 end
 
-local function readNumber(obj,names)
-	if not obj then return nil end
-	for _,n in ipairs(names)do
-		local v=obj[n]
-		if type(v)=="number"then return v end
-		if typeof(v)=="Instance"and(v:IsA("NumberValue")or v:IsA("IntValue"))then return v.Value end
-	end
-	for _,d in ipairs(obj:GetDescendants())do
-		for _,n in ipairs(names)do
-			if d.Name==n then
-				if d:IsA("NumberValue")or d:IsA("IntValue")then return d.Value end
-				if d:IsA("StringValue")then return parseNum(d.Value)end
-			end
-		end
+
+local function safeChildNumber(child)
+	if not child then return nil end
+	if typeof(child)=="number"then return child end
+	if typeof(child)=="string"then return parseNum(child)end
+	if typeof(child)=="Instance"then
+		if child:IsA("NumberValue")or child:IsA("IntValue")then return child.Value end
+		if child:IsA("StringValue")then return parseNum(child.Value)end
 	end
 	return nil
 end
 
-local function setNumber(obj,names,val)
-	if not obj then return false end
+local function readNumber(obj,names)
+	if not obj then return nil end
+
+	-- Table API support.
+	if typeof(obj)=="table"then
+		for _,n in ipairs(names)do
+			local ok,v=pcall(function()return obj[n]end)
+			if ok then
+				local num=safeChildNumber(v)
+				if num then return num end
+			end
+		end
+		return nil
+	end
+
+	-- Instance support. Важно: НЕ делаем obj[n].
+	-- У Roblox Instance прямой индекс несуществующего свойства кидает ошибку:
+	-- "Level is not a valid member of ParticleEmitter".
+	if typeof(obj)~="Instance"then return nil end
+
 	for _,n in ipairs(names)do
-		local v=obj[n]
-		if typeof(v)=="Instance"and(v:IsA("NumberValue")or v:IsA("IntValue"))then
-			v.Value=val
+		local child=nil
+		pcall(function()child=obj:FindFirstChild(n)end)
+		local num=safeChildNumber(child)
+		if num then return num end
+	end
+
+	local desc={}
+	pcall(function()desc=obj:GetDescendants()end)
+	for _,d in ipairs(desc)do
+		for _,n in ipairs(names)do
+			if d.Name==n then
+				local num=safeChildNumber(d)
+				if num then return num end
+			end
+		end
+	end
+
+	return nil
+end
+
+local function setNumber(obj,names,val)
+	if not obj or typeof(obj)~="Instance"then return false end
+
+	for _,n in ipairs(names)do
+		local child=nil
+		pcall(function()child=obj:FindFirstChild(n)end)
+		if typeof(child)=="Instance"and(child:IsA("NumberValue")or child:IsA("IntValue"))then
+			child.Value=val
 			return true
 		end
 	end
-	for _,d in ipairs(obj:GetDescendants())do
+
+	local desc={}
+	pcall(function()desc=obj:GetDescendants()end)
+	for _,d in ipairs(desc)do
 		for _,n in ipairs(names)do
 			if d.Name==n and(d:IsA("NumberValue")or d:IsA("IntValue"))then
 				d.Value=val
@@ -165,8 +223,10 @@ local function setNumber(obj,names,val)
 			end
 		end
 	end
+
 	return false
 end
+
 
 local function objHasWord(obj,words)
 	local p=obj
@@ -608,7 +668,7 @@ local function makeRockReport()
 	rockRowsCache=rows
 
 	local lines={}
-	table.insert(lines,"PetAlign v54 rock scan")
+	table.insert(lines,"PetAlign v55 rock scan")
 	table.insert(lines,"place: "..tostring(game.PlaceId))
 	table.insert(lines,"count: "..tostring(#rows))
 	table.insert(lines,"")
@@ -1261,7 +1321,7 @@ local function render()
 		bugText.Text="BUG: теп в "..data.rockLabel.."\nRemote punch + touch руками."
 
 		lastReport=
-			"PetAlign v54\n"..
+			"PetAlign v55\n"..
 			"Selected card: #"..tostring(selectedCard).."\n"..
 			"Pet: "..data.rarity.."\n"..
 			"Rock: "..data.rockLabel.."\n"..
@@ -1298,15 +1358,19 @@ local function render()
 				card.TextYAlignment=Enum.TextYAlignment.Top
 				card.TextColor3=Color3.fromRGB(255,238,170)
 				card.LayoutOrder=idx
+				card.ZIndex=21
 				Instance.new("UICorner",card).CornerRadius=UDim.new(0,10)
 				local st=Instance.new("UIStroke",card)
 				st.Color=Color3.fromRGB(95,75,180)
 				st.Thickness=1
-				card.MouseButton1Click:Connect(function()
+				local function chooseCard()
 					selectedCard=idx
-					render()
+					current=choiceRows[idx]
 					statusText("Выбрана карточка #"..idx)
-				end)
+					render()
+				end
+				card.MouseButton1Click:Connect(chooseCard)
+				card.Activated:Connect(chooseCard)
 				choiceCards[idx]=card
 			end
 			card.Visible=true
@@ -1496,7 +1560,7 @@ end
 
 -- UI REBUILD v49 — simple mobile layout, no clipping
 gui=Instance.new("ScreenGui")
-gui.Name="PetAlignSimpleV54"
+gui.Name="PetAlignSimpleV55"
 gui.ResetOnSpawn=false
 gui.DisplayOrder=999999
 gui.IgnoreGuiInset=true
@@ -1567,7 +1631,7 @@ top.BackgroundColor3=Color3.fromRGB(15,14,34)
 top.BorderSizePixel=0
 makeCorner(top,14)
 
-mkLabel(top,"Pet Align v54",12,0,190,42,16,Color3.fromRGB(255,255,255),true)
+mkLabel(top,"Pet Align v55",12,0,190,42,16,Color3.fromRGB(255,255,255),true)
 mkLabel(top,"mobile",204,0,70,42,10,Color3.fromRGB(170,140,255),true)
 
 local minBtn=Instance.new("TextButton",top)
@@ -1653,6 +1717,9 @@ resultsScroll.Position=UDim2.new(0,12,0,358)
 resultsScroll.BackgroundColor3=Color3.fromRGB(15,16,32)
 resultsScroll.BorderSizePixel=0
 resultsScroll.ScrollBarThickness=5
+resultsScroll.Active=true
+resultsScroll.ScrollingEnabled=true
+resultsScroll.ZIndex=20
 resultsScroll.CanvasSize=UDim2.new(0,0,0,0)
 makeCorner(resultsScroll,11)
 makeStroke(resultsScroll,Color3.fromRGB(70,58,130),1,.25)
@@ -1789,7 +1856,7 @@ function render()
 		bugText.Text="Теп в "..data.rockLabel.."\nRemote punch + touch руками."
 
 		lastReport=
-			"PetAlign v54\n"..
+			"PetAlign v55\n"..
 			"Card #"..tostring(selectedCard).."\n"..
 			"Pet: "..data.rarity.."\n"..
 			"Rock: "..data.rockLabel.."\n"..
@@ -1952,5 +2019,5 @@ if d and tonumber(d) and tonumber(d)>0 then
 else
 	rebBox.Text=""
 end
-statusText("v54: простой дизайн, без обрезания и центра.")
+statusText("v55: простой дизайн, без обрезания и центра.")
 render()
