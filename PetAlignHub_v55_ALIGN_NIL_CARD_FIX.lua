@@ -1,11 +1,12 @@
--- PetAlignHub v57_MOBILE_ACTIVATED_CARD_FIX
+-- PetAlignHub v59_FINAL_LUA_RECHECKED
 -- Удобный дизайн + проверенная математика по всем редкостям.
 -- ALIGN: сам ровняет дорожками и останавливается на нужном Total XP.
 -- BUG: сам тепает в нужный камень через neededDurability и реально бьёт/активирует.
 
 local Players=game:GetService("Players")
 local RunService=game:GetService("RunService")
-local VirtualInputManager=game:GetService("VirtualInputManager")
+local VirtualInputManager=nil
+pcall(function() VirtualInputManager=game:GetService("VirtualInputManager") end)
 local ReplicatedStorage=game:GetService("ReplicatedStorage")
 local UserInputService=game:GetService("UserInputService")
 local lp=Players.LocalPlayer
@@ -71,7 +72,7 @@ local choiceRows={}
 _G.PetAlignStop=false
 
 local gui,frame,status,targetText,currentText,planTextUi,bugText,rebBox,rarityBtn,resultsScroll,resultsLabel
-local readPetStable,chooseTreadmillForDiff,getPetTotalAny,bindPress
+local readPetStable,chooseTreadmillForDiff,getPetTotalAny,bindPress,render
 local uiFront=function()end
 local rockLockConn=nil
 local rockLockedCF=nil
@@ -93,12 +94,42 @@ local function fmt(n)
 end
 
 local function parseNum(s)
-	s=tostring(s or ""):lower():gsub(",","."):gsub("%s+","")
+	s=tostring(s or ""):lower():gsub("%s+","")
+	if s=="" then return nil end
+
 	local mult=1
-	if s:find("k",1,true)then mult=1e3 s=s:gsub("k","")end
-	if s:find("m",1,true)then mult=1e6 s=s:gsub("m","")end
-	if s:find("b",1,true)then mult=1e9 s=s:gsub("b","")end
-	local n=tonumber(s:match("[%d%.]+"))
+	if s:find("k",1,true)or s:find("к",1,true)then mult=1e3 end
+	if s:find("m",1,true)or s:find("м",1,true)then mult=1e6 end
+	if s:find("b",1,true)then mult=1e9 end
+
+	local raw=s:match("[%d%.,]+")
+	if not raw then return nil end
+
+	local hasComma=raw:find(",",1,true)~=nil
+	local hasDot=raw:find(".",1,true)~=nil
+
+	if hasComma and hasDot then
+		-- Если есть оба разделителя, последний считается десятичным, остальные — тысячными.
+		local lastComma=raw:match("^.*(),") or 0
+		local lastDot=raw:match("^.*()%.") or 0
+		local dec=(lastComma>lastDot)and","or"."
+		local thou=(dec==",")and"%."or","
+		raw=raw:gsub(thou,"")
+		if dec==","then raw=raw:gsub(",",".")end
+	elseif hasComma or hasDot then
+		local sep=hasComma and "," or "."
+		local before,after=raw:match("^(.*)%"..sep.."([^"..sep.."]*)$")
+		local digitsBefore=(before or ""):gsub("%D","")
+		local digitsAfter=(after or ""):gsub("%D","")
+		local looksThousands=(mult==1 and #digitsAfter==3 and #digitsBefore>=1)
+		if looksThousands then
+			raw=raw:gsub("%,",""):gsub("%.","")
+		elseif sep==","then
+			raw=raw:gsub(",",".")
+		end
+	end
+
+	local n=tonumber(raw)
 	return n and n*mult or nil
 end
 
@@ -326,7 +357,7 @@ local function parsePetGuiTotal(rarity)
 			local txt=tostring(v.Text or "")
 			local low=txt:lower()
 
-			local a,b=low:match("([%d%s%.%,]+)%s*/%s*([%d%s%.%,]+)")
+			local a,b=low:match("([%d%s%.%,kкmмb]+)%s*/%s*([%d%s%.%,kкmмb]+)")
 			if a and b and (low:find("эксп",1,true)or low:find("опыт",1,true)or low:find("xp",1,true)or low:find("exp",1,true))then
 				local xp=parseNum(a)
 				local cap=parseNum(b)
@@ -439,7 +470,8 @@ local function bestForHit(rawHit,rarity,rock,allowApprox,minStartTotal)
 
 	local needTotal=math.max(minStartTotal+hit,hit)
 	local approxLvl=math.ceil((math.sqrt(1+(8*needTotal/base))-1)/2)+35
-	local maxLvl=math.clamp(approxLvl,60,_G.PetAlignMaxCalcLevel or 700)
+	local hardCap=_G.PetAlignMaxCalcLevel or math.max(900,approxLvl+80)
+	local maxLvl=math.clamp(approxLvl,60,hardCap)
 
 	for endLvl=1,maxLvl do
 		local cand=makeCandidateForEnd(rawHit,rarity,rock,endLvl,allowApprox)
@@ -570,9 +602,9 @@ end
 local function valOf(v)
 	if not v then return nil end
 	if v:IsA("IntValue")or v:IsA("NumberValue")then return tonumber(v.Value)end
-	if v:IsA("StringValue")then return tonumber(v.Value)end
-	local ok,res=pcall(function()return tonumber(v.Value)end)
-	return ok and res or nil
+	if v:IsA("StringValue")then return parseNum(v.Value)end
+	local ok,res=pcall(function()return v.Value end)
+	return ok and parseNum(res) or nil
 end
 
 local function rockModelFromNeeded(v)
@@ -609,7 +641,7 @@ local function scanNeededRocks()
 		scanned+=1
 		if scanned%500==0 then task.wait()end
 
-		if v.Name=="neededDurability"then
+		if tostring(v.Name):lower()=="neededdurability"then
 			local req=valOf(v)
 			if req then
 				local model,lh,rh=rockModelFromNeeded(v)
@@ -672,7 +704,7 @@ local function makeRockReport()
 	rockRowsCache=rows
 
 	local lines={}
-	table.insert(lines,"PetAlign v57 rock scan")
+	table.insert(lines,"PetAlign v59 rock scan")
 	table.insert(lines,"place: "..tostring(game.PlaceId))
 	table.insert(lines,"count: "..tostring(#rows))
 	table.insert(lines,"")
@@ -855,7 +887,7 @@ local function pressW(down)
 	end)
 
 	pcall(function()
-		VirtualInputManager:SendKeyEvent(down,Enum.KeyCode.W,false,game)
+		if VirtualInputManager then VirtualInputManager:SendKeyEvent(down,Enum.KeyCode.W,false,game) end
 	end)
 end
 
@@ -1155,7 +1187,7 @@ end
 
 local function getData()
 	local reb=parseNum(rebBox.Text)
-	if not reb or reb<=0 then return nil,nil,"Впиши ребы вручную, например 63.4k.",{} end
+	if not reb or reb<0 then return nil,nil,"Впиши ребы вручную, например 63.4k или 0.",{} end
 
 	local filter=RAR_CHOICES[rarityIndex]
 	local now=nil
@@ -1280,149 +1312,18 @@ function bindPress(btn,callback)
 	-- Activated работает и мышью, и тачем, и геймпадом.
 	-- MouseButton1Click оставлен как запасной вариант, но с защитой от двойного вызова.
 	if not btn or not callback then return end
+	pcall(function() btn.Active=true end)
+	pcall(function() btn.Selectable=true end)
 	local last=0
 	local function fire()
 		local now=os.clock()
-		if now-last<0.10 then return end
+		if now-last<0.12 then return end
 		last=now
 		callback()
 	end
 	pcall(function()btn.Activated:Connect(fire)end)
 	pcall(function()btn.MouseButton1Click:Connect(fire)end)
 end
-
-function uiFront()
-	-- Важно: больше НЕ вызываем updateAdaptive тут.
-	-- Иначе при ALIGN/BUG окно центрилось/двигалось вместо нормального действия.
-	if gui then
-		gui.DisplayOrder=999999
-		gui.IgnoreGuiInset=true
-		gui.ResetOnSpawn=false
-	end
-	if frame then
-		frame.Visible=true
-		frame.Active=true
-		setZ(frame,20)
-	end
-end
-
-local function render()
-	uiFront()
-
-	local data,now,err,rows=getData()
-
-	if err then
-		targetText.Text=err
-		currentText.Text="Открой нужного питомца, чтобы читался XP."
-		planTextUi.Text="-"
-		bugText.Text="-"
-		lastReport=err
-	else
-		local diff=now and (data.startTotal-now) or nil
-		local plan=nil
-		local planErr=nil
-
-		if diff and diff>=0 then
-			plan,planErr=makePlan(diff)
-		end
-
-		targetText.Text=
-			"Пет: "..data.rarity..
-			"\nКамень: "..data.rockLabel..
-			"\nЦель: "..fmt(data.setLvl).." lvl, "..fmt(data.setXp).." XP"..
-			"\nTotal: "..fmt(data.startTotal).." | hit +"..fmt(data.hit)
-
-		if now then
-			currentText.Text="Сейчас: "..fmt(now).." XP\nДо цели: "..(diff and fmt(diff)or"?").." XP"
-		else
-			currentText.Text="Сейчас: XP не прочитан\nОткрой окно питомца."
-		end
-
-		if diff then
-			if diff<0 then
-				planTextUi.Text="Этот вариант ниже текущего XP на "..fmt(math.abs(diff))..".\nВыбери другую карточку."
-			else
-				planTextUi.Text="Дорожки: "..planToString(plan).."\nАвтостоп после 5 стабильных чтений XP."
-			end
-		else
-			planTextUi.Text="План появится после чтения XP."
-		end
-
-		bugText.Text="BUG: теп в "..data.rockLabel.."\nRemote punch + touch руками."
-
-		lastReport=
-			"PetAlign v57\n"..
-			"Selected card: #"..tostring(selectedCard).."\n"..
-			"Pet: "..data.rarity.."\n"..
-			"Rock: "..data.rockLabel.."\n"..
-			"Set: "..fmt(data.setLvl).." lvl, "..fmt(data.setXp).." XP\n"..
-			"TargetTotal: "..fmt(data.startTotal).."\n"..
-			"Hit: +"..fmt(data.hit).."\n"..
-			"Bonus: +"..fmt(data.bonus).." stats\n"..
-			"Now: "..fmt(now or 0).."\n"..
-			"Align: "..(plan and planToString(plan) or "-")
-	end
-
-	if resultsLabel then
-		resultsLabel.Text="Вариантов: "..tostring(rows and #rows or 0)
-	end
-
-	if choiceCards and resultsScroll then
-		local count=(rows and #rows) or 0
-		for i=1,count do
-			local row=rows[i]
-			local card=choiceCards[i]
-			if not card then
-				local idx=i
-				card=Instance.new("TextButton")
-				card.Name="ChoiceCard"..idx
-				card.Parent=resultsScroll
-				card.Size=UDim2.new(1,-4,0,64)
-				card.BackgroundColor3=Color3.fromRGB(28,29,55)
-				card.BorderSizePixel=0
-				card.AutoButtonColor=false
-				card.Font=Enum.Font.GothamBlack
-				card.TextSize=9
-				card.TextWrapped=true
-				card.TextXAlignment=Enum.TextXAlignment.Left
-				card.TextYAlignment=Enum.TextYAlignment.Top
-				card.TextColor3=Color3.fromRGB(255,238,170)
-				card.LayoutOrder=idx
-				card.ZIndex=21
-				Instance.new("UICorner",card).CornerRadius=UDim.new(0,10)
-				local st=Instance.new("UIStroke",card)
-				st.Color=Color3.fromRGB(95,75,180)
-				st.Thickness=1
-				local function chooseCard()
-					selectedCard=idx
-					current=choiceRows[idx]
-					statusText("Выбрана карточка #"..idx)
-					render()
-				end
-				bindPress(card,chooseCard)
-				choiceCards[idx]=card
-			end
-			card.Visible=true
-			card.LayoutOrder=i
-			card.Text=("#%d  %s  •  +%s статов\n%s\nПоставить: %s lvl, %s XP  |  Hit +%s  |  Total %s"):format(
-				i,row.rarity,fmt(row.bonus),row.rockLabel,fmt(row.setLvl),fmt(row.setXp),fmt(row.hit),fmt(row.startTotal)
-			)
-			if i==selectedCard then
-				card.BackgroundColor3=Color3.fromRGB(72,58,145)
-			else
-				card.BackgroundColor3=Color3.fromRGB(28,29,55)
-			end
-		end
-		for i=count+1,#choiceCards do
-			choiceCards[i].Visible=false
-		end
-		resultsScroll.CanvasSize=UDim2.new(0,0,0,count*70+8)
-	end
-
-	uiFront()
-end
-
-
 
 function readPetStable(rarity,tries,delay)
 	tries=tries or 5
@@ -1594,7 +1495,7 @@ end
 
 -- UI REBUILD v49 — simple mobile layout, no clipping
 gui=Instance.new("ScreenGui")
-gui.Name="PetAlignSimpleV57"
+gui.Name="PetAlignSimpleV59"
 gui.ResetOnSpawn=false
 gui.DisplayOrder=999999
 gui.IgnoreGuiInset=true
@@ -1665,7 +1566,7 @@ top.BackgroundColor3=Color3.fromRGB(15,14,34)
 top.BorderSizePixel=0
 makeCorner(top,14)
 
-mkLabel(top,"Pet Align v57",12,0,190,42,16,Color3.fromRGB(255,255,255),true)
+mkLabel(top,"Pet Align v59",12,0,190,42,16,Color3.fromRGB(255,255,255),true)
 mkLabel(top,"mobile",204,0,70,42,10,Color3.fromRGB(170,140,255),true)
 
 local minBtn=Instance.new("TextButton",top)
@@ -1806,17 +1707,39 @@ function uiFront()
 	end
 	if frame then
 		frame.Visible=true
+		frame.Active=true
 	end
 end
 
+local function clampFramePos(pos)
+	local cam=workspace.CurrentCamera
+	local vp=cam and cam.ViewportSize or Vector2.new(900,600)
+	local scale=(uiScale and uiScale.Scale) or 1
+	local w=BASE_W*scale
+	local h=BASE_H*scale
+	local minX=4
+	local minY=36
+	local maxX=math.max(minX,vp.X-w-4)
+	local maxY=math.max(minY,vp.Y-h-4)
+	local x=math.clamp(pos.X.Offset,minX,maxX)
+	local y=math.clamp(pos.Y.Offset,minY,maxY)
+	return UDim2.new(0,math.floor(x),0,math.floor(y))
+end
+
+local function setFramePos(pos)
+	local p=clampFramePos(pos)
+	frame.Position=p
+	mini.Position=p
+end
+
 local function fitToScreen()
+	if not frame or not frame.Parent then return end
 	local cam=workspace.CurrentCamera
 	local vp=cam and cam.ViewportSize or Vector2.new(900,600)
 	local s=math.min(1,(vp.X-16)/BASE_W,(vp.Y-74)/BASE_H)
 	if s<.65 then s=.65 end
 	uiScale.Scale=s
-	frame.Position=UDim2.new(0,8,0,math.max(45,math.floor(vp.Y*.12)))
-	mini.Position=frame.Position
+	setFramePos(UDim2.new(0,8,0,math.max(45,math.floor(vp.Y*.12))))
 end
 
 pcall(function()
@@ -1831,6 +1754,10 @@ local dragStart=nil
 local startPos=nil
 top.InputBegan:Connect(function(input)
 	if input.UserInputType==Enum.UserInputType.MouseButton1 or input.UserInputType==Enum.UserInputType.Touch then
+		-- Верхняя панель двигает окно, но зона кнопок справа не начинает drag.
+		local localX=input.Position.X-top.AbsolutePosition.X
+		local buttonZone=80*((uiScale and uiScale.Scale)or 1)
+		if localX>top.AbsoluteSize.X-buttonZone then return end
 		dragging=true
 		dragStart=input.Position
 		startPos=frame.Position
@@ -1846,12 +1773,10 @@ end)
 UserInputService.InputChanged:Connect(function(input)
 	if dragging and (input.UserInputType==Enum.UserInputType.MouseMovement or input.UserInputType==Enum.UserInputType.Touch)then
 		local delta=input.Position-dragStart
-		frame.Position=UDim2.new(startPos.X.Scale,startPos.X.Offset+delta.X,startPos.Y.Scale,startPos.Y.Offset+delta.Y)
-		mini.Position=frame.Position
+		setFramePos(UDim2.new(0,startPos.X.Offset+delta.X,0,startPos.Y.Offset+delta.Y))
 	end
 end)
 
-local oldRender=render
 function render()
 	local data,now,err,rows=getData()
 
@@ -1890,7 +1815,7 @@ function render()
 		bugText.Text="Теп в "..data.rockLabel.."\nRemote punch + touch руками."
 
 		lastReport=
-			"PetAlign v57\n"..
+			"PetAlign v59\n"..
 			"Card #"..tostring(selectedCard).."\n"..
 			"Pet: "..data.rarity.."\n"..
 			"Rock: "..data.rockLabel.."\n"..
@@ -2056,10 +1981,10 @@ pcall(function()
 	end
 end)
 
-if d and tonumber(d) and tonumber(d)>0 then
+if d and tonumber(d) and tonumber(d)>=0 then
 	rebBox.Text=tostring(d)
 else
 	rebBox.Text=""
 end
-statusText("v57: карточки/кнопки работают через Activated + Mouse fallback.")
+statusText("v59: перепроверено, дублей render/uiFront нет, кнопки/карточки через Activated.")
 render()
