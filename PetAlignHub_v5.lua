@@ -1,9 +1,9 @@
--- PetAlignHub v6
--- Мини-режим: ребы + редкость + лучший баг. Клик по карточке = спросить pet и запустить ровнение.
--- Для твоей тестовой сборки. Без RemoteEvent-спама.
+-- PetAlignHub v7
+-- Мини-режим + РЕАЛЬНОЕ авто-ровнение через телепорт к дорожкам/камню.
+-- Важно: если в твоей сборке другие названия объектов, добавь их в TREAD_NAMES / ROCK names.
 
-local Players=game:GetService("Players")
-local lp=Players.LocalPlayer
+local Players = game:GetService("Players")
+local lp = Players.LocalPlayer
 
 local BASE={Basic=250,Uncommon=500,Rare=750,Epic=1000,Unique=1250}
 local STAT={Basic=1,Uncommon=2,Rare=3,Epic=4,Unique=5}
@@ -11,26 +11,29 @@ local RAR_ORDER={"Unique","Epic","Rare","Uncommon","Basic"}
 local RAR_CHOICES={"Auto","Unique","Epic","Rare","Uncommon","Basic"}
 
 local ROCKS={
-{id="AncientJungle",label="Древний лес",value=16.25,names={"AncientJungle","Ancient Jungle","Jungle"}},
-{id="MuscleKing",label="Король мышц",value=12.5,names={"MuscleKing","Muscle King","King"}},
-{id="Legends",label="Легенды",value=2.5,names={"Legends","Legend"}},
-{id="Inferno",label="Инферно",value=1.125,names={"Inferno"}},
-{id="Mystic",label="Мистический",value=.75,names={"Mystic"}},
-{id="Frozen",label="Ледяной",value=.375,names={"Frozen","Ice"}},
-{id="Golden",label="Золотой",value=.2,names={"Golden","Gold"}},
-{id="Large",label="Большой",value=.075,names={"Large"}},
-{id="Punching",label="Груша",value=.05,names={"Punching","PunchingBag"}},
-{id="Tiny",label="Малый",value=.025,names={"Tiny","Small"}},
+{id="AncientJungle",label="Древний лес",value=16.25,names={"AncientJungle","Ancient Jungle","Jungle","Древний"}},
+{id="MuscleKing",label="Король мышц",value=12.5,names={"MuscleKing","Muscle King","King","Король"}},
+{id="Legends",label="Легенды",value=2.5,names={"Legends","Legend","Легенды"}},
+{id="Inferno",label="Инферно",value=1.125,names={"Inferno","Инферно"}},
+{id="Mystic",label="Мистический",value=.75,names={"Mystic","Мистический"}},
+{id="Frozen",label="Ледяной",value=.375,names={"Frozen","Ice","Ледяной"}},
+{id="Golden",label="Золотой",value=.2,names={"Golden","Gold","Золотой"}},
+{id="Large",label="Большой",value=.075,names={"Large","Большой"}},
+{id="Punching",label="Груша",value=.05,names={"Punching","PunchingBag","Punching Bag","Груша"}},
+{id="Tiny",label="Малый",value=.025,names={"Tiny","Small","Малый"}},
 }
 
+-- сюда добавлены более широкие варианты имён. Если у тебя объекты названы иначе — кинь скрин Explorer/названия.
 local TREAD_NAMES={
-[1]={"Treadmill1","Treadmill +1","+1","XP1"},
-[2]={"Treadmill2","Treadmill +2","+2","XP2"},
-[3]={"Treadmill3","Treadmill +3","+3","XP3"},
-[4]={"Treadmill4","Treadmill +4","+4","XP4"},
-[5]={"Treadmill5","Treadmill +5","+5","XP5"},
-[6]={"Treadmill6","Treadmill +6","+6","XP6"},
+[1]={"Treadmill1","Treadmill 1","Treadmill+1","+1","XP1","Gain1","Дорожка1","Дорожка 1"},
+[2]={"Treadmill2","Treadmill 2","Treadmill+2","+2","XP2","Gain2","Дорожка2","Дорожка 2"},
+[3]={"Treadmill3","Treadmill 3","Treadmill+3","+3","XP3","Gain3","Дорожка3","Дорожка 3"},
+[4]={"Treadmill4","Treadmill 4","Treadmill+4","+4","XP4","Gain4","Дорожка4","Дорожка 4"},
+[5]={"Treadmill5","Treadmill 5","Treadmill+5","+5","XP5","Gain5","Дорожка5","Дорожка 5"},
+[6]={"Treadmill6","Treadmill 6","Treadmill+6","+6","XP6","Gain6","Дорожка6","Дорожка 6"},
 }
+
+local HIT_WAIT = 0.23
 
 local function round(n)return math.floor((tonumber(n)or 0)+.5)end
 local function whole(n)return math.abs((tonumber(n)or 0)-round(n))<1e-7 end
@@ -100,6 +103,7 @@ local function root()
 end
 
 local function findByNames(names)
+	local best=nil
 	for _,obj in ipairs(workspace:GetDescendants())do
 		local low=obj.Name:lower()
 		for _,n in ipairs(names)do
@@ -111,7 +115,7 @@ local function findByNames(names)
 			end
 		end
 	end
-	return nil
+	return best
 end
 
 local function tpTo(part)
@@ -119,6 +123,16 @@ local function tpTo(part)
 	if not r or not part then return false end
 	r.CFrame=part.CFrame+Vector3.new(0,4,0)
 	return true
+end
+
+local function touchPart(part)
+	local r=root()
+	if not r or not part then return end
+	pcall(function()
+		firetouchinterest(r,part,0)
+		task.wait(0.04)
+		firetouchinterest(r,part,1)
+	end)
 end
 
 local function selectedPet()
@@ -212,8 +226,9 @@ local function planText(plan)
 	return table.concat(t,"  ")
 end
 
+-- UI
 local gui=Instance.new("ScreenGui")
-gui.Name="PetAlignHubV6"
+gui.Name="PetAlignHubV7"
 gui.ResetOnSpawn=false
 gui.Parent=lp:WaitForChild("PlayerGui")
 
@@ -233,7 +248,7 @@ local title=Instance.new("TextLabel",frame)
 title.Size=UDim2.new(1,-54,0,36)
 title.Position=UDim2.new(0,14,0,8)
 title.BackgroundTransparency=1
-title.Text="Pet Align Hub v6"
+title.Text="Pet Align Hub v7"
 title.TextColor3=Color3.new(1,1,1)
 title.Font=Enum.Font.GothamBlack
 title.TextSize=19
@@ -301,7 +316,7 @@ local status=Instance.new("TextLabel",frame)
 status.Size=UDim2.new(1,-28,0,22)
 status.Position=UDim2.new(0,14,1,-28)
 status.BackgroundTransparency=1
-status.Text="Клик по карточке = начать авто-ровнение"
+status.Text="Клик по карточке = реально ровнять"
 status.TextColor3=Color3.fromRGB(175,165,210)
 status.Font=Enum.Font.GothamBold
 status.TextSize=11
@@ -374,27 +389,36 @@ end
 local function useTreadmill(gain,count)
 	if count<=0 then return true end
 	if _G.PetAPI and _G.PetAPI.UseTreadmill then
+		status.Text="PetAPI: дорожка +"..gain.." × "..count
 		local ok=pcall(_G.PetAPI.UseTreadmill,gain,count)
 		if ok then return true end
 	end
 	local part=findByNames(TREAD_NAMES[gain])
-	if not part then status.Text="Не нашёл дорожку +"..gain..". Нужен PetAPI.UseTreadmill." return false end
+	if not part then status.Text="Не нашёл дорожку +"..gain..". Нужны названия объектов или PetAPI.UseTreadmill." return false end
 	for i=1,count do
+		status.Text="Дорожка +"..gain..": "..i.."/"..count
 		tpTo(part)
-		task.wait(0.18)
+		touchPart(part)
+		task.wait(HIT_WAIT)
 	end
 	return true
 end
 
 local function hitRock(rockId)
 	if _G.PetAPI and _G.PetAPI.HitRock then
+		status.Text="PetAPI: бью камень "..rockId
 		local ok=pcall(_G.PetAPI.HitRock,rockId)
 		if ok then return true end
 	end
 	local names=nil
 	for _,r in ipairs(ROCKS)do if r.id==rockId then names=r.names break end end
 	local part=names and findByNames(names)
-	if part then tpTo(part) status.Text="Тепнул к камню. Бей "..rockId.."." return true end
+	if part then
+		tpTo(part)
+		touchPart(part)
+		status.Text="Тепнул/коснулся камня: "..rockId
+		return true
+	end
 	status.Text="Камень не найден. Нужен PetAPI.HitRock или объект камня."
 	return false
 end
@@ -403,34 +427,49 @@ local function runAlign()
 	if running or not current then return end
 	running=true
 	confirm.Visible=false
+
 	local has=hasPet(current.rarity)
 	if has==false then status.Text="У тебя нет "..current.rarity.." pet." running=false return end
 	selectPet(current.rarity)
 
+	local pet=selectedPet()
+
+	-- Лучший режим: прямое выставление XP через твою тестовую API.
 	if _G.PetAPI and _G.PetAPI.SetPetXP then
-		local pet=selectedPet()
+		status.Text="Выставляю XP через PetAPI..."
 		pcall(_G.PetAPI.SetPetXP,pet,current.setLvl,current.setXp,current.startTotal)
-		status.Text="XP выставлен. Тепаю к камню..."
 		task.wait(.25)
 		hitRock(current.rock)
 		running=false
 		return
 	end
 
-	local pet=selectedPet()
-	if not pet then status.Text="Пет не выбран. Нужен _G.SelectedPet или PetAPI." running=false return end
-	local now=petTotal(pet,current.rarity)
+	-- Второй режим: реально тепаемся на дорожки нужное число раз.
+	local now=0
+	if pet then
+		now=petTotal(pet,current.rarity)
+	else
+		-- если пета нельзя прочитать, считаем что он свежий 1 lvl 0 XP
+		now=0
+		status.Text="Пет не прочитан. Ровняю как с 1 lvl 0 XP."
+		task.wait(.7)
+	end
+
 	local plan,err=makePlan(current.startTotal-now)
 	if err then status.Text=err running=false return end
-	status.Text="Ровняю: "..planText(plan)
+
+	status.Text="Ровняю через телепорт: "..planText(plan)
 	for _,p in ipairs(plan)do
 		local ok=useTreadmill(p.gain,p.count)
 		if not ok then running=false return end
 	end
-	setNumber(pet,{"Level","Lvl","level","lvl"},current.setLvl)
-	setNumber(pet,{"XP","Exp","Experience","xp"},current.setXp)
-	setNumber(pet,{"TotalXP","TotalExp","totalXP"},current.startTotal)
-	status.Text="Ровно. Тепаю к камню..."
+
+	if pet then
+		setNumber(pet,{"Level","Lvl","level","lvl"},current.setLvl)
+		setNumber(pet,{"XP","Exp","Experience","xp"},current.setXp)
+		setNumber(pet,{"TotalXP","TotalExp","totalXP"},current.startTotal)
+	end
+
 	task.wait(.25)
 	hitRock(current.rock)
 	running=false
