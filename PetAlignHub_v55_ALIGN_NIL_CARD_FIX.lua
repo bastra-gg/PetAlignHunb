@@ -1,4 +1,4 @@
--- PetAlignHub v55_ALIGN_NIL_CARD_FIX
+-- PetAlignHub v57_MOBILE_ACTIVATED_CARD_FIX
 -- Удобный дизайн + проверенная математика по всем редкостям.
 -- ALIGN: сам ровняет дорожками и останавливается на нужном Total XP.
 -- BUG: сам тепает в нужный камень через neededDurability и реально бьёт/активирует.
@@ -71,7 +71,7 @@ local choiceRows={}
 _G.PetAlignStop=false
 
 local gui,frame,status,targetText,currentText,planTextUi,bugText,rebBox,rarityBtn,resultsScroll,resultsLabel
-local readPetStable,chooseTreadmillForDiff,getPetTotalAny
+local readPetStable,chooseTreadmillForDiff,getPetTotalAny,bindPress
 local uiFront=function()end
 local rockLockConn=nil
 local rockLockedCF=nil
@@ -394,46 +394,62 @@ local function detectGuiRarity()
 end
 
 
-local function bestForHit(rawHit,rarity,rock,allowApprox)
+local function makeCandidateForEnd(rawHit,rarity,rock,endLvl,allowApprox)
 	local exact=whole(rawHit)
 	if not exact and not allowApprox then return nil end
 
 	local base,stat=BASE[rarity],STAT[rarity]
 	local hit=round(rawHit)
 	if hit<=0 then return nil end
+
+	local endTotal=cum(base,endLvl)
+	local startTotal=endTotal-hit
+	if startTotal<0 then return nil end
+
+	local sl,sx=levelFromTotal(base,startTotal)
+	local cross=endLvl-sl+1
+	if cross<1 then return nil end
+
+	return {
+		rarity=rarity,
+		rock=rock.id,
+		rockLabel=rock.label,
+		rockValue=rock.value,
+		hit=hit,
+		rawHit=rawHit,
+		approx=not exact,
+		setLvl=sl,
+		setXp=sx,
+		startTotal=startTotal,
+		capLvl=endLvl,
+		endTotal=endTotal,
+		bonus=cross*stat,
+		crossed=cross,
+		stat=stat,
+		valid=true,
+	}
+end
+
+local function bestForHit(rawHit,rarity,rock,allowApprox,minStartTotal)
+	minStartTotal=minStartTotal or 0
 	local best=nil
+	local base=BASE[rarity] or 250
+	local hit=round(rawHit)
+	if hit<=0 then return nil end
 
-	for endLvl=1,60 do
-		local endTotal=cum(base,endLvl)
-		local startTotal=endTotal-hit
+	local needTotal=math.max(minStartTotal+hit,hit)
+	local approxLvl=math.ceil((math.sqrt(1+(8*needTotal/base))-1)/2)+35
+	local maxLvl=math.clamp(approxLvl,60,_G.PetAlignMaxCalcLevel or 700)
 
-		if startTotal>=0 then
-			local sl,sx=levelFromTotal(base,startTotal)
-			local cross=endLvl-sl+1
-
-			if cross>=1 then
-				local cand={
-					rarity=rarity,
-					rock=rock.id,
-					rockLabel=rock.label,
-					rockValue=rock.value,
-					hit=hit,
-					rawHit=rawHit,
-					approx=not exact,
-					setLvl=sl,
-					setXp=sx,
-					startTotal=startTotal,
-					capLvl=endLvl,
-					endTotal=endTotal,
-					bonus=cross*stat,
-					crossed=cross,
-					stat=stat,
-					valid=true,
-				}
-
-				if not best or cand.bonus>best.bonus or(cand.bonus==best.bonus and cand.startTotal<best.startTotal)then
-					best=cand
-				end
+	for endLvl=1,maxLvl do
+		local cand=makeCandidateForEnd(rawHit,rarity,rock,endLvl,allowApprox)
+		if cand and cand.startTotal>=minStartTotal then
+			if not best
+				or cand.bonus>best.bonus
+				or (cand.bonus==best.bonus and cand.startTotal<best.startTotal)
+				or (cand.bonus==best.bonus and cand.startTotal==best.startTotal and cand.hit>best.hit)
+			then
+				best=cand
 			end
 		end
 	end
@@ -441,39 +457,36 @@ local function bestForHit(rawHit,rarity,rock,allowApprox)
 	return best
 end
 
-
 local function sortCandidates(rows)
 	table.sort(rows,function(a,b)
 		if (a.approx and 1 or 0)~=(b.approx and 1 or 0) then return not a.approx end
 		if a.bonus~=b.bonus then return a.bonus>b.bonus end
+		if a.startTotal~=b.startTotal then return a.startTotal<b.startTotal end
 		if a.stat~=b.stat then return a.stat>b.stat end
-		if a.hit~=b.hit then return a.hit>b.hit end
-		return a.startTotal<b.startTotal
+		return a.hit>b.hit
 	end)
 end
 
-local function allCandidates(reb,filter)
+local function allCandidates(reb,filter,minStartTotal)
 	local rows={}
+	minStartTotal=round(minStartTotal or 0)
 
-	-- Сначала строго точные варианты.
 	for _,rarity in ipairs(RAR_ORDER)do
 		if filter=="Auto"or filter==rarity then
 			for _,rock in ipairs(ROCKS)do
 				local hit=(reb+20)*rock.value
-				local cand=bestForHit(hit,rarity,rock,false)
+				local cand=bestForHit(hit,rarity,rock,false,minStartTotal)
 				if cand then table.insert(rows,cand)end
 			end
 		end
 	end
 
-	-- Если строгих нет, не оставляем пустоту: берём ближайшее округление.
-	-- В карточке будет знак ≈, чтобы было видно что это не идеальный математический hit.
 	if #rows==0 and _G.PetAlignAllowApprox~=false then
 		for _,rarity in ipairs(RAR_ORDER)do
 			if filter=="Auto"or filter==rarity then
 				for _,rock in ipairs(ROCKS)do
 					local hit=(reb+20)*rock.value
-					local cand=bestForHit(hit,rarity,rock,true)
+					local cand=bestForHit(hit,rarity,rock,true,minStartTotal)
 					if cand then table.insert(rows,cand)end
 				end
 			end
@@ -484,21 +497,12 @@ local function allCandidates(reb,filter)
 	return rows
 end
 
-
 local function chooseCandidate(reb,filter,now)
-	local rows=allCandidates(reb,filter)
+	local rows=allCandidates(reb,filter,(now and now+1) or 0)
 	if #rows==0 then return nil,rows end
-
-	if now then
-		for _,r in ipairs(rows)do
-			if r.startTotal>=now then
-				return r,rows
-			end
-		end
-	end
-
 	return rows[1],rows
 end
+
 
 local function makePlan(diff)
 	diff=round(diff)
@@ -668,7 +672,7 @@ local function makeRockReport()
 	rockRowsCache=rows
 
 	local lines={}
-	table.insert(lines,"PetAlign v55 rock scan")
+	table.insert(lines,"PetAlign v57 rock scan")
 	table.insert(lines,"place: "..tostring(game.PlaceId))
 	table.insert(lines,"count: "..tostring(#rows))
 	table.insert(lines,"")
@@ -1166,53 +1170,64 @@ local function getData()
 		now=getPetTotalAny(filter)
 	end
 
-	local rows=allCandidates(reb,filter)
-	if #rows==0 then return nil,nil,"Нет вариантов. Проверь ребы/редкость.",{} end
+	local rows=allCandidates(reb,filter,(now and now+1) or 0)
+	if #rows==0 then return nil,now,"Нет вариантов выше текущего XP. Проверь ребы/редкость.",{} end
 
-	-- Карточки должны быть именно вариантами выбора.
 	choiceRows=rows
 
 	if selectedCard<1 then selectedCard=1 end
 	if selectedCard>#rows then selectedCard=1 end
 
 	local data=rows[selectedCard]
-
-	-- Если выбранная карточка уже ниже текущего XP, но юзер сам её выбрал — показываем её,
-	-- а не перескакиваем молча. Для Auto по умолчанию первая карточка обычно лучшая.
-	if not data then
-		data=chooseCandidate(reb,filter,now)
-	end
-
-	if data and not now then
-		now=getPetTotalAny(data.rarity)
-	end
-
-	if not data then return nil,now,"Не нашёл достижимый баг.",rows end
+	if not data then data=rows[1] selectedCard=1 end
 
 	current=data
 	return data,now,nil,rows
 end
 
-local function alignPickRow(rows,now,preferIndex)
+
+local function alignPickRow(rows,now,preferIndex,preferData)
 	if not rows or #rows==0 then return nil,nil,"noRows" end
 	now=round(now or 0)
 
-	local preferred=rows[preferIndex or 1]
-	if preferred and preferred.startTotal and preferred.startTotal>now then
-		return preferred,preferIndex,"selected"
+	-- Если игрок выбрал конкретную карточку в Auto-списке, после перечитывания XP
+	-- не выбираем тупо тот же номер в уже отфильтрованном списке. Сначала ищем тот же вариант.
+	if preferData then
+		for i,row in ipairs(rows)do
+			if row.startTotal and row.startTotal>now
+				and row.rarity==preferData.rarity
+				and row.rock==preferData.rock
+				and round(row.hit or 0)==round(preferData.hit or 0)
+				and round(row.startTotal or 0)==round(preferData.startTotal or 0)
+			then
+				return row,i,"selectedExact"
+			end
+		end
+
+		for i,row in ipairs(rows)do
+			if row.startTotal and row.startTotal>now
+				and row.rarity==preferData.rarity
+				and row.rock==preferData.rock
+			then
+				return row,i,"selectedSameRock"
+			end
+		end
 	end
 
-	-- Если выбранная карточка уже ниже XP, НЕ пишем "уже достиг",
-	-- а автоматически берём первую карточку, которую ещё реально можно выровнять.
+	local preferred=rows[preferIndex or 1]
+	if preferred and preferred.startTotal and preferred.startTotal>now then
+		return preferred,preferIndex,"selectedIndex"
+	end
+
 	for i,row in ipairs(rows)do
 		if row.startTotal and row.startTotal>now then
 			return row,i,"autoAbove"
 		end
 	end
 
-	-- Нет варианта выше текущего XP.
 	return nil,nil,"allBelow"
 end
+
 
 local function readPetStableInfo(rarity,tries,delay)
 	tries=tries or 5
@@ -1259,6 +1274,21 @@ local function setZ(obj,z)
 	for _,ch in ipairs(obj:GetChildren())do
 		setZ(ch,z)
 	end
+end
+
+function bindPress(btn,callback)
+	-- Activated работает и мышью, и тачем, и геймпадом.
+	-- MouseButton1Click оставлен как запасной вариант, но с защитой от двойного вызова.
+	if not btn or not callback then return end
+	local last=0
+	local function fire()
+		local now=os.clock()
+		if now-last<0.10 then return end
+		last=now
+		callback()
+	end
+	pcall(function()btn.Activated:Connect(fire)end)
+	pcall(function()btn.MouseButton1Click:Connect(fire)end)
 end
 
 function uiFront()
@@ -1321,7 +1351,7 @@ local function render()
 		bugText.Text="BUG: теп в "..data.rockLabel.."\nRemote punch + touch руками."
 
 		lastReport=
-			"PetAlign v55\n"..
+			"PetAlign v57\n"..
 			"Selected card: #"..tostring(selectedCard).."\n"..
 			"Pet: "..data.rarity.."\n"..
 			"Rock: "..data.rockLabel.."\n"..
@@ -1369,8 +1399,7 @@ local function render()
 					statusText("Выбрана карточка #"..idx)
 					render()
 				end
-				card.MouseButton1Click:Connect(chooseCard)
-				card.Activated:Connect(chooseCard)
+				bindPress(card,chooseCard)
 				choiceCards[idx]=card
 			end
 			card.Visible=true
@@ -1452,9 +1481,14 @@ local function doAlign()
 		return
 	end
 
-	local data,pickedIndex,why=alignPickRow(rows,now,selectedCard)
+	local reb=parseNum(rebBox.Text)
+	local filter=baseData.rarity
+	rows=allCandidates(reb,filter,now+1)
+	choiceRows=rows
+
+	local data,pickedIndex,why=alignPickRow(rows,now,selectedCard,baseData)
 	if not data then
-		statusText("ALIGN: текущий XP выше всех карточек. Выбери другую редкость/ребы.")
+		statusText("ALIGN: нет карточек выше текущего XP. Проверь редкость/ребы.")
 		lastReport=makeAlignDebugLine(baseData,now,src,lvl,xp,why)
 		running=false
 		pcall(uiFront)
@@ -1560,7 +1594,7 @@ end
 
 -- UI REBUILD v49 — simple mobile layout, no clipping
 gui=Instance.new("ScreenGui")
-gui.Name="PetAlignSimpleV55"
+gui.Name="PetAlignSimpleV57"
 gui.ResetOnSpawn=false
 gui.DisplayOrder=999999
 gui.IgnoreGuiInset=true
@@ -1631,7 +1665,7 @@ top.BackgroundColor3=Color3.fromRGB(15,14,34)
 top.BorderSizePixel=0
 makeCorner(top,14)
 
-mkLabel(top,"Pet Align v55",12,0,190,42,16,Color3.fromRGB(255,255,255),true)
+mkLabel(top,"Pet Align v57",12,0,190,42,16,Color3.fromRGB(255,255,255),true)
 mkLabel(top,"mobile",204,0,70,42,10,Color3.fromRGB(170,140,255),true)
 
 local minBtn=Instance.new("TextButton",top)
@@ -1856,7 +1890,7 @@ function render()
 		bugText.Text="Теп в "..data.rockLabel.."\nRemote punch + touch руками."
 
 		lastReport=
-			"PetAlign v55\n"..
+			"PetAlign v57\n"..
 			"Card #"..tostring(selectedCard).."\n"..
 			"Pet: "..data.rarity.."\n"..
 			"Rock: "..data.rockLabel.."\n"..
@@ -1871,6 +1905,12 @@ function render()
 	local count=(rows and #rows)or 0
 	if resultsLabel then resultsLabel.Text=tostring(count).." вариантов" end
 
+	for _,child in ipairs(resultsScroll:GetChildren())do
+		if child:IsA("TextButton")then child:Destroy()end
+	end
+	choiceCards={}
+	pcall(function()resultsScroll.CanvasPosition=Vector2.new(0,0)end)
+
 	for i=1,count do
 		local row=rows[i]
 		local card=choiceCards[i]
@@ -1878,7 +1918,7 @@ function render()
 			local idx=i
 			card=Instance.new("TextButton",resultsScroll)
 			card.Name="ChoiceCard"..idx
-			card.Size=UDim2.new(1,-4,0,54)
+			card.Size=UDim2.new(1,-4,0,62)
 			card.BackgroundColor3=Color3.fromRGB(25,26,50)
 			card.BorderSizePixel=0
 			card.AutoButtonColor=false
@@ -1889,10 +1929,12 @@ function render()
 			card.TextYAlignment=Enum.TextYAlignment.Center
 			card.TextColor3=Color3.fromRGB(255,238,170)
 			card.LayoutOrder=idx
+			card.ZIndex=21
 			makeCorner(card,9)
 			makeStroke(card,Color3.fromRGB(85,65,150),1,.25)
-			card.MouseButton1Click:Connect(function()
+			bindPress(card,function()
 				selectedCard=idx
+				current=choiceRows[idx]
 				render()
 				statusText("Выбрана карточка #"..idx)
 			end)
@@ -1914,35 +1956,35 @@ function render()
 	for i=count+1,#choiceCards do
 		choiceCards[i].Visible=false
 	end
-	resultsScroll.CanvasSize=UDim2.new(0,0,0,count*60+8)
+	resultsScroll.CanvasSize=UDim2.new(0,0,0,count*68+8)
 	uiFront()
 end
 
-minBtn.MouseButton1Click:Connect(function()
+bindPress(minBtn,function()
 	frame.Visible=false
 	mini.Visible=true
 end)
 
-mini.MouseButton1Click:Connect(function()
+bindPress(mini,function()
 	frame.Visible=true
 	mini.Visible=false
 end)
 
-alignBtn.MouseButton1Click:Connect(function()
+bindPress(alignBtn,function()
 	task.spawn(function()
 		local ok,err=pcall(doAlign)
 		if not ok then statusText("ALIGN error: "..tostring(err):sub(1,95)) running=false stopRockLock() end
 	end)
 end)
 
-bugBtn.MouseButton1Click:Connect(function()
+bindPress(bugBtn,function()
 	task.spawn(function()
 		local ok,err=pcall(doBug)
 		if not ok then statusText("BUG error: "..tostring(err):sub(1,95)) running=false stopRockLock() end
 	end)
 end)
 
-scanBtn.MouseButton1Click:Connect(function()
+bindPress(scanBtn,function()
 	task.spawn(function()
 		statusText("Скан скал...")
 		local ok,err=pcall(function()
@@ -1955,7 +1997,7 @@ scanBtn.MouseButton1Click:Connect(function()
 	end)
 end)
 
-copyBtn.MouseButton1Click:Connect(function()
+bindPress(copyBtn,function()
 	render()
 	if setclipboard then
 		pcall(setclipboard,lastReport)
@@ -1965,7 +2007,7 @@ copyBtn.MouseButton1Click:Connect(function()
 	end
 end)
 
-stopBtn.MouseButton1Click:Connect(function()
+bindPress(stopBtn,function()
 	_G.PetAlignStop=true
 	running=false
 	stopRockLock()
@@ -1973,7 +2015,7 @@ stopBtn.MouseButton1Click:Connect(function()
 	statusText("Остановлено.")
 end)
 
-rarityBtn.MouseButton1Click:Connect(function()
+bindPress(rarityBtn,function()
 	rarityIndex+=1
 	if rarityIndex>#RAR_CHOICES then rarityIndex=1 end
 	rarityBtn.Text=RAR_CHOICES[rarityIndex]
@@ -1986,7 +2028,7 @@ rebBox:GetPropertyChangedSignal("Text"):Connect(function()
 	render()
 end)
 
-close.MouseButton1Click:Connect(function()
+bindPress(close,function()
 	_G.PetAlignStop=true
 	running=false
 	stopRockLock()
@@ -2019,5 +2061,5 @@ if d and tonumber(d) and tonumber(d)>0 then
 else
 	rebBox.Text=""
 end
-statusText("v55: простой дизайн, без обрезания и центра.")
+statusText("v57: карточки/кнопки работают через Activated + Mouse fallback.")
 render()
