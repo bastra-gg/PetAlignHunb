@@ -1,11 +1,11 @@
--- Muscle Legends RockBug Hub v13 COMPACT ULTRA FIX
+-- Muscle Legends RockBug Hub v14 REAL ULTRA OPT
 -- Standalone: без Speed Hub. Камни через neededDurability + TP LOCK + BUG HIT + Anti AFK.
 
 local Players=game:GetService("Players")
 local RunService=game:GetService("RunService")
 local VirtualUser=game:GetService("VirtualUser")
 local lp=Players.LocalPlayer
-local HUB_VERSION="RockBugHub_v13_1_UltraSmallUI"
+local HUB_VERSION="RockBugHub_v14_RealUltraOpt"
 
 -- Anti AFK
 local antiAfkEnabled=true
@@ -24,7 +24,7 @@ startAntiAfk()
 
 -- Анти-дубль.
 pcall(function()
-	local old=lp:WaitForChild("PlayerGui"):FindFirstChild("RockBugHub_v13_1_UltraSmallUI")
+	local old=lp:WaitForChild("PlayerGui"):FindFirstChild("RockBugHub_v14_RealUltraOpt")
 	if old then old:Destroy() end
 end)
 
@@ -165,13 +165,22 @@ local lowMapState={
 	on=false,
 	saved={},
 	count=0,
+	removed=0,
 	lighting={},
+	settings={},
 }
 
-local function isProtectedFromLowMap(obj,keepModel)
-	local c=lp.Character
-	if c and obj:IsDescendantOf(c)then return true end
-	if keepModel and obj:IsDescendantOf(keepModel)then return true end
+local function getKeepChar()
+	return lp.Character
+end
+
+local function protectObj(obj,keepModel)
+	if not obj then return false end
+	local c=getKeepChar()
+	if c and (obj==c or obj:IsDescendantOf(c) or c:IsDescendantOf(obj))then return true end
+	if keepModel and (obj==keepModel or obj:IsDescendantOf(keepModel) or keepModel:IsDescendantOf(obj))then return true end
+	if obj==workspace.CurrentCamera then return true end
+	if workspace:FindFirstChildOfClass("Terrain") and obj==workspace:FindFirstChildOfClass("Terrain")then return true end
 	return false
 end
 
@@ -184,73 +193,225 @@ local function lowSave(obj,key,val)
 	if rec[key]==nil then rec[key]=val end
 end
 
+local function safeSet(obj,key,val)
+	pcall(function()obj[key]=val end)
+end
+
+local function ultraPartOff(obj)
+	lowSave(obj,"LocalTransparencyModifier",obj.LocalTransparencyModifier)
+	lowSave(obj,"CastShadow",obj.CastShadow)
+	pcall(function()lowSave(obj,"CanCollide",obj.CanCollide)end)
+	pcall(function()lowSave(obj,"CanTouch",obj.CanTouch)end)
+	pcall(function()lowSave(obj,"CanQuery",obj.CanQuery)end)
+	pcall(function()lowSave(obj,"Massless",obj.Massless)end)
+
+	safeSet(obj,"LocalTransparencyModifier",1)
+	safeSet(obj,"CastShadow",false)
+	safeSet(obj,"CanCollide",false)
+	safeSet(obj,"CanTouch",false)
+	safeSet(obj,"CanQuery",false)
+	safeSet(obj,"Massless",true)
+end
+
+local function ultraEffectOff(obj)
+	if obj:IsA("ParticleEmitter")or obj:IsA("Trail")or obj:IsA("Beam")or obj:IsA("Fire")or obj:IsA("Smoke")or obj:IsA("Sparkles")then
+		lowSave(obj,"Enabled",obj.Enabled)
+		safeSet(obj,"Enabled",false)
+		return true
+	end
+	if obj:IsA("Decal")or obj:IsA("Texture")then
+		lowSave(obj,"Transparency",obj.Transparency)
+		safeSet(obj,"Transparency",1)
+		return true
+	end
+	if obj:IsA("PointLight")or obj:IsA("SpotLight")or obj:IsA("SurfaceLight")then
+		lowSave(obj,"Enabled",obj.Enabled)
+		safeSet(obj,"Enabled",false)
+		return true
+	end
+	if obj:IsA("BillboardGui")or obj:IsA("SurfaceGui")then
+		lowSave(obj,"Enabled",obj.Enabled)
+		safeSet(obj,"Enabled",false)
+		return true
+	end
+	if obj:IsA("Highlight")then
+		lowSave(obj,"Enabled",obj.Enabled)
+		safeSet(obj,"Enabled",false)
+		return true
+	end
+	if obj:IsA("Sound")then
+		pcall(function()
+			lowSave(obj,"Volume",obj.Volume)
+			obj.Volume=0
+		end)
+		return true
+	end
+	return false
+end
+
+local function applyQualityUltra()
+	local lighting=game:GetService("Lighting")
+	pcall(function()
+		lowMapState.lighting.GlobalShadows=lighting.GlobalShadows
+		lowMapState.lighting.Brightness=lighting.Brightness
+		lowMapState.lighting.FogEnd=lighting.FogEnd
+		lowMapState.lighting.EnvironmentDiffuseScale=lighting.EnvironmentDiffuseScale
+		lowMapState.lighting.EnvironmentSpecularScale=lighting.EnvironmentSpecularScale
+		lowMapState.lighting.Technology=lighting.Technology
+
+		lighting.GlobalShadows=false
+		lighting.Brightness=0
+		lighting.FogEnd=25
+		lighting.EnvironmentDiffuseScale=0
+		lighting.EnvironmentSpecularScale=0
+		pcall(function()lighting.Technology=Enum.Technology.Compatibility end)
+	end)
+
+	pcall(function()
+		local terrain=workspace:FindFirstChildOfClass("Terrain")
+		if terrain then
+			lowSave(terrain,"Decoration",terrain.Decoration)
+			lowSave(terrain,"WaterWaveSize",terrain.WaterWaveSize)
+			lowSave(terrain,"WaterWaveSpeed",terrain.WaterWaveSpeed)
+			lowSave(terrain,"WaterReflectance",terrain.WaterReflectance)
+			lowSave(terrain,"WaterTransparency",terrain.WaterTransparency)
+			terrain.Decoration=false
+			terrain.WaterWaveSize=0
+			terrain.WaterWaveSpeed=0
+			terrain.WaterReflectance=0
+			terrain.WaterTransparency=1
+		end
+	end)
+
+	pcall(function()
+		local ugs=UserSettings():GetService("UserGameSettings")
+		lowMapState.settings.SavedQualityLevel=ugs.SavedQualityLevel
+		ugs.SavedQualityLevel=Enum.SavedQualitySetting.QualityLevel1
+	end)
+
+	pcall(function()
+		local rs=settings().Rendering
+		lowMapState.settings.QualityLevel=rs.QualityLevel
+		rs.QualityLevel=Enum.QualityLevel.Level01
+	end)
+
+	-- Настоящая экономия: отключаем 3D-рендер. ScreenGui остаётся, баг-процесс продолжает идти.
+	pcall(function()
+		RunService:Set3dRenderingEnabled(false)
+		lowMapState.settings.Render3DDisabled=true
+	end)
+end
+
+local function restoreQualityUltra()
+	pcall(function()
+		if lowMapState.settings.Render3DDisabled then
+			RunService:Set3dRenderingEnabled(true)
+		end
+	end)
+
+	pcall(function()
+		local ugs=UserSettings():GetService("UserGameSettings")
+		if lowMapState.settings.SavedQualityLevel~=nil then
+			ugs.SavedQualityLevel=lowMapState.settings.SavedQualityLevel
+		end
+	end)
+
+	pcall(function()
+		local rs=settings().Rendering
+		if lowMapState.settings.QualityLevel~=nil then
+			rs.QualityLevel=lowMapState.settings.QualityLevel
+		end
+	end)
+
+	local lighting=game:GetService("Lighting")
+	pcall(function()
+		for k,v in pairs(lowMapState.lighting)do
+			lighting[k]=v
+		end
+	end)
+	lowMapState.lighting={}
+	lowMapState.settings={}
+end
+
 local function setLowMap(enabled,keepModel,statusFn)
 	if enabled then
 		if lowMapState.on then return end
 		lowMapState.on=true
 		lowMapState.saved={}
 		lowMapState.count=0
+		lowMapState.removed=0
 
-		local lighting=game:GetService("Lighting")
-		pcall(function()
-			lowMapState.lighting.GlobalShadows=lighting.GlobalShadows
-			lighting.GlobalShadows=false
-		end)
+		applyQualityUltra()
 
-		for _,obj in ipairs(workspace:GetDescendants())do
-			if not isProtectedFromLowMap(obj,keepModel)then
-				if obj:IsA("BasePart")then
-					lowSave(obj,"LocalTransparencyModifier",obj.LocalTransparencyModifier)
-					lowSave(obj,"CastShadow",obj.CastShadow)
+		-- Удаляем с клиента целые верхние объекты Workspace, если они не нужны процессу.
+		for _,obj in ipairs(workspace:GetChildren())do
+			if obj~=workspace.CurrentCamera and not protectObj(obj,keepModel)then
+				if obj:IsA("Camera") or obj:IsA("Terrain") then
+					-- skip
+				else
+					lowSave(obj,"Parent",obj.Parent)
 					pcall(function()
-						obj.LocalTransparencyModifier=math.max(obj.LocalTransparencyModifier,_G.RockBugLowMapTransparency or 1)
-						obj.CastShadow=false
+						obj.Parent=nil
+						lowMapState.removed+=1
 					end)
-					lowMapState.count+=1
-
-				elseif obj:IsA("ParticleEmitter")or obj:IsA("Trail")or obj:IsA("Beam")or obj:IsA("Fire")or obj:IsA("Smoke")or obj:IsA("Sparkles")then
-					lowSave(obj,"Enabled",obj.Enabled)
-					pcall(function()obj.Enabled=false end)
-					lowMapState.count+=1
-
-				elseif obj:IsA("Decal")or obj:IsA("Texture")then
-					lowSave(obj,"Transparency",obj.Transparency)
-					pcall(function()obj.Transparency=1 end)
-					lowMapState.count+=1
-
-				elseif obj:IsA("PointLight")or obj:IsA("SpotLight")or obj:IsA("SurfaceLight")then
-					lowSave(obj,"Enabled",obj.Enabled)
-					pcall(function()obj.Enabled=false end)
-					lowMapState.count+=1
 				end
+			end
+			if lowMapState.removed%40==0 then task.wait() end
+		end
+
+		-- В оставшихся контейнерах гасим всё, кроме персонажа и выбранного камня.
+		local n=0
+		for _,obj in ipairs(workspace:GetDescendants())do
+			if not protectObj(obj,keepModel)then
+				if obj:IsA("BasePart")then
+					ultraPartOff(obj)
+					n+=1
+				elseif ultraEffectOff(obj)then
+					n+=1
+				end
+			end
+			if n%300==0 then task.wait() end
+		end
+
+		for _,obj in ipairs(game:GetService("Lighting"):GetDescendants())do
+			if obj:IsA("PostEffect")then
+				lowSave(obj,"Enabled",obj.Enabled)
+				safeSet(obj,"Enabled",false)
+				n+=1
 			end
 		end
 
-		if statusFn then statusFn("LOW MAP ON: карта приглушена ("..lowMapState.count..")")end
+		lowMapState.count=n
+		if statusFn then
+			statusFn("ULTRA ON: 3D off, снято "..lowMapState.removed..", погашено "..lowMapState.count)
+		end
 	else
 		if not lowMapState.on then return end
 		lowMapState.on=false
 
+		restoreQualityUltra()
+
 		for obj,rec in pairs(lowMapState.saved)do
-			if obj and obj.Parent then
+			if obj then
+				-- Parent восстанавливаем первым, чтобы объект вернулся в Workspace.
+				if rec.Parent~=nil then
+					safeSet(obj,"Parent",rec.Parent)
+				end
 				for k,v in pairs(rec)do
-					pcall(function()obj[k]=v end)
+					if k~="Parent"then
+						safeSet(obj,k,v)
+					end
 				end
 			end
 		end
+
 		lowMapState.saved={}
-
-		local lighting=game:GetService("Lighting")
-		pcall(function()
-			if lowMapState.lighting.GlobalShadows~=nil then
-				lighting.GlobalShadows=lowMapState.lighting.GlobalShadows
-			end
-		end)
-		lowMapState.lighting={}
-
-		if statusFn then statusFn("LOW MAP OFF: карта восстановлена")end
+		lowMapState.count=0
+		lowMapState.removed=0
+		if statusFn then statusFn("ULTRA OFF: карта восстановлена")end
 	end
 end
+
 
 local function stopLock()
 	if lockConn then lockConn:Disconnect() lockConn=nil end
@@ -630,7 +791,7 @@ end
 
 -- UI v12: новый компактный дизайн без SCAN/COPY/лишних надписей
 local gui=Instance.new("ScreenGui")
-gui.Name="RockBugHub_v13_1_UltraSmallUI"
+gui.Name="RockBugHub_v14_RealUltraOpt"
 gui.ResetOnSpawn=false
 gui.IgnoreGuiInset=true
 gui.DisplayOrder=999999
@@ -721,7 +882,7 @@ local title=makeText(top,"BUG HUB",18,Enum.Font.GothamBlack,Color3.fromRGB(248,2
 title.Size=UDim2.new(1,-108,0,22)
 title.Position=UDim2.new(0,46,0,6)
 
-local sub=makeText(top,"камень • lock • punch",10,Enum.Font.GothamBold,Color3.fromRGB(165,172,205))
+local sub=makeText(top,HUB_VERSION.." • 3D off",10,Enum.Font.GothamBold,Color3.fromRGB(165,172,205))
 sub.Size=UDim2.new(1,-108,0,16)
 sub.Position=UDim2.new(0,47,0,26)
 
@@ -736,7 +897,7 @@ close.Position=UDim2.new(1,-33,0,9)
 close.TextSize=18
 close.TextColor3=Color3.fromRGB(255,210,218)
 
-local mini=makeBtn(gui,"BUG HUB",Color3.fromRGB(46,42,120))
+local mini=makeBtn(gui,"BUG v14",Color3.fromRGB(46,42,120))
 mini.Size=UDim2.new(0,90,0,36)
 mini.Position=main.Position
 mini.Visible=false
@@ -764,11 +925,6 @@ local status=makeText(main,"Готово",11,Enum.Font.GothamBold,Color3.fromRGB
 status.Size=UDim2.new(1,-14,0,28)
 status.Position=UDim2.new(0,7,0,114)
 
-local versionText=makeText(main,HUB_VERSION,9,Enum.Font.GothamBlack,Color3.fromRGB(150,158,190))
-versionText.Name="VersionText"
-versionText.Size=UDim2.new(1,-18,0,14)
-versionText.Position=UDim2.new(0,9,0,396)
-versionText.TextXAlignment=Enum.TextXAlignment.Center
 status.BackgroundColor3=Color3.fromRGB(9,11,24)
 status.BackgroundTransparency=0.20
 status.BorderSizePixel=0
@@ -910,7 +1066,7 @@ local unlockBtn=makeBtn(row2,"UNLOCK",Color3.fromRGB(120,70,38))
 unlockBtn.Size=UDim2.new(0.5,-5,1,0)
 unlockBtn.Position=UDim2.new(0,0,0,0)
 
-local ultraBtn=makeBtn(row2,"ULTRA",Color3.fromRGB(82,58,135))
+local ultraBtn=makeBtn(row2,"ULTRA 3D",Color3.fromRGB(82,58,135))
 ultraBtn.Size=UDim2.new(0.5,-5,1,0)
 ultraBtn.Position=UDim2.new(0.5,5,0,0)
 
@@ -966,7 +1122,7 @@ end)
 
 ultraBtn.Activated:Connect(function()
 	ultraOptEnabled=not ultraOptEnabled
-	ultraBtn.Text=ultraOptEnabled and "ULTRA ON" or "ULTRA"
+	ultraBtn.Text=ultraOptEnabled and "ULTRA ON" or "ULTRA 3D"
 	ultraBtn.BackgroundColor3=ultraOptEnabled and Color3.fromRGB(118,65,160) or Color3.fromRGB(82,58,135)
 
 	if ultraOptEnabled then
@@ -991,7 +1147,7 @@ stopBtn.Activated:Connect(function()
 	stopHit()
 	stopLock()
 	ultraOptEnabled=false
-	ultraBtn.Text="ULTRA"
+	ultraBtn.Text="ULTRA 3D"
 	ultraBtn.BackgroundColor3=Color3.fromRGB(82,58,135)
 	setLowMap(false,nil,nil)
 	setStatus("Остановлено")
@@ -1051,4 +1207,4 @@ local count=0
 for _,row in ipairs(ROCKS)do
 	if found[row.req]then count+=1 end
 end
-setStatus("Готово • "..count.."/"..#ROCKS.." • "..HUB_VERSION)
+setStatus("Готово • "..count.."/"..#ROCKS.." • ULTRA вручную")
