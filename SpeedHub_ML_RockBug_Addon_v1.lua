@@ -1,4 +1,4 @@
--- Muscle Legends RockBug Hub v4
+-- Muscle Legends RockBug Hub v5
 -- Standalone: без Speed Hub. Камни через neededDurability + TP LOCK + BUG HIT + Anti AFK.
 
 local Players=game:GetService("Players")
@@ -23,7 +23,7 @@ startAntiAfk()
 
 -- Анти-дубль.
 pcall(function()
-	local old=lp:WaitForChild("PlayerGui"):FindFirstChild("RockBugHubStandaloneV4")
+	local old=lp:WaitForChild("PlayerGui"):FindFirstChild("RockBugHubStandaloneV5")
 	if old then old:Destroy() end
 end)
 
@@ -49,7 +49,7 @@ local oldSpeed=nil
 local oldAuto=nil
 local hitting=false
 local fastHitEnabled=true
-local fastHitPower=4 -- сколько раз за тик пробовать удар/remote. Если лагает: _G.RockBugFastHitPower=2
+local fastHitPower=6 -- сколько раз за цикл пробовать punch remote. Если лагает: _G.RockBugFastHitPower=2
 
 local function root()
 	local c=lp.Character
@@ -223,9 +223,11 @@ local function tpInsideRock(row)
 end
 
 local function firePunchRemote()
+	-- Основной рабочий вариант для Muscle Legends: punch + rightHand.
 	pcall(function()
 		if lp:FindFirstChild("muscleEvent")then
 			lp.muscleEvent:FireServer("punch","rightHand")
+			lp.muscleEvent:FireServer("punch","leftHand")
 		end
 	end)
 
@@ -235,15 +237,9 @@ local function firePunchRemote()
 		local ev=re and re:FindFirstChild("muscleEvent")
 		if ev and ev.FireServer then
 			ev:FireServer("punch","rightHand")
+			ev:FireServer("punch","leftHand")
+			ev:FireServer("punch")
 		end
-	end)
-
-	-- Иногда сила/удары идут через rep/action. Если сервер не принимает — просто игнор.
-	pcall(function()
-		local rs=game:GetService("ReplicatedStorage")
-		local re=rs:FindFirstChild("rEvents")
-		local ev=re and re:FindFirstChild("liftWeightRemote")
-		if ev and ev.FireServer then ev:FireServer() end
 	end)
 end
 
@@ -252,28 +248,48 @@ local selectedPunchToolName=nil
 
 local function toolScore(tool)
 	if not tool or not tool:IsA("Tool")then return -999 end
+
 	local n=tostring(tool.Name):lower()
+	local full=""
+	pcall(function() full=tostring(tool:GetFullName()):lower() end)
 
-	local badWords={
-		"dumb","weight","barbell","bench","pushup","situp",
-		"гант","гир","штанг","вес","тяж"
+	-- Для багов по камню нужен именно Punch. Вес/гантели/штанги/тренировки не подходят.
+	local hardBad={
+		"weight","dumb","barbell","bench","push","sit","handstand",
+		"гант","гир","штанг","вес","отжим","пресс"
 	}
-	for _,w in ipairs(badWords)do
-		if n:find(w,1,true)then return -999 end
+	for _,w in ipairs(hardBad)do
+		if n:find(w,1,true) or full:find(w,1,true) then
+			return -999
+		end
 	end
 
-	local score=1
-
-	local bestWords={
-		"fist","punch","combat","strike","hit","hand",
-		"кулак","удар","бой","рука"
-	}
-	for _,w in ipairs(bestWords)do
-		if n:find(w,1,true)then score+=100 end
+	-- Лучший вариант: точное имя Punch.
+	if n=="punch" or n=="punches" or n=="удар" or n=="кулак" then
+		return 10000
 	end
 
-	return score
+	-- Потом любые варианты с punch/кулак.
+	if n:find("punch",1,true) or n:find("кулак",1,true) or n:find("удар",1,true) then
+		return 9000
+	end
+
+	-- Если внутри Tool есть скрипты/ремоуты с punch — тоже вероятно правильный инструмент.
+	for _,d in ipairs(tool:GetDescendants())do
+		local dn=tostring(d.Name):lower()
+		if dn:find("punch",1,true) or dn:find("кулак",1,true) or dn:find("удар",1,true) then
+			return 7500
+		end
+	end
+
+	-- Fist оставляем только как запасной вариант, если Punch реально не найден.
+	if n:find("fist",1,true) or n:find("combat",1,true) or n:find("hand",1,true) then
+		return 1200
+	end
+
+	return -999
 end
+
 
 local function clearToolCooldowns(tool)
 	if not tool then return end
@@ -395,7 +411,7 @@ local function ensurePunchTool(statusFn)
 	if best then
 		clearToolCooldowns(best)
 		selectedPunchToolName=best.Name
-		if statusFn then statusFn("BUG HIT: предмет выбран → "..best.Name)end
+		if statusFn then statusFn("BUG HIT: выбран Punch → "..best.Name)end
 		return best
 	end
 
@@ -450,43 +466,56 @@ local function touchRock(row)
 	end
 end
 
+local hitLoopId=0
+
 local function startHit(row,statusFn)
 	hitting=true
+	hitLoopId+=1
+	local myId=hitLoopId
+
 	if hitConn then hitConn:Disconnect() hitConn=nil end
 
 	ensurePunchTool(statusFn)
 
+	-- Heartbeat держит touch/lock стабильно.
 	hitConn=RunService.Heartbeat:Connect(function()
 		if not hitting then return end
+		if fastHitEnabled then clearAllLocalCooldowns() end
+		touchRock(row)
+	end)
 
-		if fastHitEnabled then
-			clearAllLocalCooldowns()
-		end
+	-- Быстрый отдельный цикл для punch. Он не убирает серверный КД, но обходит локальную задержку Tool.
+	task.spawn(function()
+		while hitting and myId==hitLoopId do
+			if fastHitEnabled then clearAllLocalCooldowns() end
 
-		local loops=fastHitEnabled and (_G.RockBugFastHitPower or fastHitPower) or 1
-		loops=math.clamp(tonumber(loops)or 1,1,10)
+			local loops=fastHitEnabled and (_G.RockBugFastHitPower or fastHitPower) or 1
+			loops=math.clamp(tonumber(loops)or 1,1,12)
 
-		for _=1,loops do
-			firePunchRemote()
-			activateFistTool(statusFn)
-			touchRock(row)
+			for _=1,loops do
+				firePunchRemote()
+				activateFistTool(statusFn)
+			end
+
+			task.wait(_G.RockBugHitDelay or 0.025)
 		end
 	end)
 
 	if statusFn then
-		statusFn("BUG HIT: включён | FAST "..(fastHitEnabled and "ON" or "OFF")..(selectedPunchToolName and (" | "..selectedPunchToolName) or ""))
+		statusFn("BUG HIT: Punch режим | FAST "..(fastHitEnabled and "ON" or "OFF")..(selectedPunchToolName and (" | "..selectedPunchToolName) or ""))
 	end
 end
 
 local function stopHit(statusFn)
 	hitting=false
+	hitLoopId+=1
 	if hitConn then hitConn:Disconnect() hitConn=nil end
 	if statusFn then statusFn("BUG HIT: остановлен")end
 end
 
 -- UI
 local gui=Instance.new("ScreenGui")
-gui.Name="RockBugHubStandaloneV4"
+gui.Name="RockBugHubStandaloneV5"
 gui.ResetOnSpawn=false
 gui.IgnoreGuiInset=true
 gui.DisplayOrder=999999
@@ -728,7 +757,7 @@ fastBtn.Activated:Connect(function()
 	fastHitEnabled=not fastHitEnabled
 	fastBtn.Text=fastHitEnabled and "FAST ON" or "FAST OFF"
 	fastBtn.BackgroundColor3=fastHitEnabled and Color3.fromRGB(90,72,155) or Color3.fromRGB(74,74,86)
-	setStatus("Fast hit: "..(fastHitEnabled and "включён" or "выключен").." | множитель "..tostring(_G.RockBugFastHitPower or fastHitPower))
+	setStatus("Fast hit: "..(fastHitEnabled and "включён" or "выключен").." | если КД серверный, он не снимется")
 	if fastHitEnabled then clearAllLocalCooldowns() end
 end)
 
@@ -788,4 +817,4 @@ end)
 -- First scan
 scanRocks()
 refreshButtons()
-setStatus("Готово. FAST ON пробует убрать локальный кулдаун ударов.")
+setStatus("Готово. Для камней нужен Punch. FAST спамит punch remote.")
