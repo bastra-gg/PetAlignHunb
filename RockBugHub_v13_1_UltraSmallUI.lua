@@ -1,11 +1,11 @@
--- Muscle Legends RockBug Hub v15 REAL ULTRA OPT HIT FIX
+-- Muscle Legends RockBug Hub v16 STABLE ULTRA OPT
 -- Standalone: без Speed Hub. Камни через neededDurability + TP LOCK + BUG HIT + Anti AFK.
 
 local Players=game:GetService("Players")
 local RunService=game:GetService("RunService")
 local VirtualUser=game:GetService("VirtualUser")
 local lp=Players.LocalPlayer
-local HUB_VERSION="RockBugHub_v15_RealUltraOpt_HitFix"
+local HUB_VERSION="RockBugHub_v16_StableUltraOpt"
 
 -- Anti AFK
 local antiAfkEnabled=true
@@ -24,7 +24,7 @@ startAntiAfk()
 
 -- Анти-дубль.
 pcall(function()
-	local old=lp:WaitForChild("PlayerGui"):FindFirstChild("RockBugHub_v15_RealUltraOpt_HitFix")
+	local old=lp:WaitForChild("PlayerGui"):FindFirstChild("RockBugHub_v16_StableUltraOpt")
 	if old then old:Destroy() end
 end)
 
@@ -165,7 +165,6 @@ local lowMapState={
 	on=false,
 	saved={},
 	count=0,
-	removed=0,
 	lighting={},
 	settings={},
 }
@@ -180,7 +179,6 @@ local function protectObj(obj,keepModel)
 	if c and (obj==c or obj:IsDescendantOf(c) or c:IsDescendantOf(obj))then return true end
 	if keepModel and (obj==keepModel or obj:IsDescendantOf(keepModel) or keepModel:IsDescendantOf(obj))then return true end
 	if obj==workspace.CurrentCamera then return true end
-	if workspace:FindFirstChildOfClass("Terrain") and obj==workspace:FindFirstChildOfClass("Terrain")then return true end
 	return false
 end
 
@@ -197,23 +195,19 @@ local function safeSet(obj,key,val)
 	pcall(function()obj[key]=val end)
 end
 
-local function ultraPartOff(obj)
+local function visualPartOff(obj)
+	-- Стабильно: НЕ трогаем CanCollide/CanTouch/CanQuery/Massless.
+	-- Именно физика в v15 могла ломать процесс/поведение карты.
 	lowSave(obj,"LocalTransparencyModifier",obj.LocalTransparencyModifier)
 	lowSave(obj,"CastShadow",obj.CastShadow)
-	pcall(function()lowSave(obj,"CanCollide",obj.CanCollide)end)
-	pcall(function()lowSave(obj,"CanTouch",obj.CanTouch)end)
-	pcall(function()lowSave(obj,"CanQuery",obj.CanQuery)end)
-	pcall(function()lowSave(obj,"Massless",obj.Massless)end)
+	pcall(function()lowSave(obj,"Reflectance",obj.Reflectance)end)
 
 	safeSet(obj,"LocalTransparencyModifier",1)
 	safeSet(obj,"CastShadow",false)
-	safeSet(obj,"CanCollide",false)
-	safeSet(obj,"CanTouch",false)
-	safeSet(obj,"CanQuery",false)
-	safeSet(obj,"Massless",true)
+	pcall(function()obj.Reflectance=0 end)
 end
 
-local function ultraEffectOff(obj)
+local function visualEffectOff(obj)
 	if obj:IsA("ParticleEmitter")or obj:IsA("Trail")or obj:IsA("Beam")or obj:IsA("Fire")or obj:IsA("Smoke")or obj:IsA("Sparkles")then
 		lowSave(obj,"Enabled",obj.Enabled)
 		safeSet(obj,"Enabled",false)
@@ -249,7 +243,7 @@ local function ultraEffectOff(obj)
 	return false
 end
 
-local function applyQualityUltra()
+local function applyStableQuality()
 	local lighting=game:GetService("Lighting")
 	pcall(function()
 		lowMapState.lighting.GlobalShadows=lighting.GlobalShadows
@@ -257,14 +251,12 @@ local function applyQualityUltra()
 		lowMapState.lighting.FogEnd=lighting.FogEnd
 		lowMapState.lighting.EnvironmentDiffuseScale=lighting.EnvironmentDiffuseScale
 		lowMapState.lighting.EnvironmentSpecularScale=lighting.EnvironmentSpecularScale
-		lowMapState.lighting.Technology=lighting.Technology
 
 		lighting.GlobalShadows=false
-		lighting.Brightness=0
-		lighting.FogEnd=25
+		lighting.Brightness=1
+		lighting.FogEnd=70
 		lighting.EnvironmentDiffuseScale=0
 		lighting.EnvironmentSpecularScale=0
-		pcall(function()lighting.Technology=Enum.Technology.Compatibility end)
 	end)
 
 	pcall(function()
@@ -294,12 +286,9 @@ local function applyQualityUltra()
 		lowMapState.settings.QualityLevel=rs.QualityLevel
 		rs.QualityLevel=Enum.QualityLevel.Level01
 	end)
-
-	-- 3D полностью НЕ выключаем: на части устройств от этого удар/Tool:Activate становится медленным.
-	-- Вместо этого гасим карту, физику лишних частей, эффекты, свет и качество рендера.
 end
 
-local function restoreQualityUltra()
+local function restoreStableQuality()
 	pcall(function()
 		local ugs=UserSettings():GetService("UserGameSettings")
 		if lowMapState.settings.SavedQualityLevel~=nil then
@@ -330,23 +319,20 @@ local function setLowMap(enabled,keepModel,statusFn)
 		lowMapState.on=true
 		lowMapState.saved={}
 		lowMapState.count=0
-		lowMapState.removed=0
 
-		applyQualityUltra()
+		applyStableQuality()
 
-		-- Не выкидываем объекты из Workspace, чтобы не ломать процесс удара.
-		-- Оптимизация теперь через отключение рендера/физики/эффектов у лишних объектов.
 		local n=0
 		for _,obj in ipairs(workspace:GetDescendants())do
 			if not protectObj(obj,keepModel)then
 				if obj:IsA("BasePart")then
-					ultraPartOff(obj)
+					visualPartOff(obj)
 					n+=1
-				elseif ultraEffectOff(obj)then
+				elseif visualEffectOff(obj)then
 					n+=1
 				end
 			end
-			if n%300==0 then task.wait() end
+			if n%350==0 then task.wait() end
 		end
 
 		for _,obj in ipairs(game:GetService("Lighting"):GetDescendants())do
@@ -359,31 +345,24 @@ local function setLowMap(enabled,keepModel,statusFn)
 
 		lowMapState.count=n
 		if statusFn then
-			statusFn("ULTRA ON: рендер/физика погашены: "..lowMapState.count)
+			statusFn("ULTRA ON: стабильная оптимизация, без физики")
 		end
 	else
 		if not lowMapState.on then return end
 		lowMapState.on=false
 
-		restoreQualityUltra()
+		restoreStableQuality()
 
 		for obj,rec in pairs(lowMapState.saved)do
-			if obj then
-				-- Parent восстанавливаем первым, чтобы объект вернулся в Workspace.
-				if rec.Parent~=nil then
-					safeSet(obj,"Parent",rec.Parent)
-				end
+			if obj and obj.Parent then
 				for k,v in pairs(rec)do
-					if k~="Parent"then
-						safeSet(obj,k,v)
-					end
+					safeSet(obj,k,v)
 				end
 			end
 		end
 
 		lowMapState.saved={}
 		lowMapState.count=0
-		lowMapState.removed=0
 		if statusFn then statusFn("ULTRA OFF: карта восстановлена")end
 	end
 end
@@ -771,7 +750,7 @@ end
 
 -- UI v12: новый компактный дизайн без SCAN/COPY/лишних надписей
 local gui=Instance.new("ScreenGui")
-gui.Name="RockBugHub_v15_RealUltraOpt_HitFix"
+gui.Name="RockBugHub_v16_StableUltraOpt"
 gui.ResetOnSpawn=false
 gui.IgnoreGuiInset=true
 gui.DisplayOrder=999999
@@ -862,7 +841,7 @@ local title=makeText(top,"BUG HUB",18,Enum.Font.GothamBlack,Color3.fromRGB(248,2
 title.Size=UDim2.new(1,-108,0,22)
 title.Position=UDim2.new(0,46,0,6)
 
-local sub=makeText(top,HUB_VERSION.." • render opt",10,Enum.Font.GothamBold,Color3.fromRGB(165,172,205))
+local sub=makeText(top,HUB_VERSION.." • stable opt",10,Enum.Font.GothamBold,Color3.fromRGB(165,172,205))
 sub.Size=UDim2.new(1,-108,0,16)
 sub.Position=UDim2.new(0,47,0,26)
 
