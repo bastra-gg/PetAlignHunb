@@ -1,11 +1,11 @@
--- Muscle Legends RockBug Hub v16 STABLE ULTRA OPT
+-- Muscle Legends RockBug Hub v17 AGGRESSIVE OPT SAFE HIT
 -- Standalone: без Speed Hub. Камни через neededDurability + TP LOCK + BUG HIT + Anti AFK.
 
 local Players=game:GetService("Players")
 local RunService=game:GetService("RunService")
 local VirtualUser=game:GetService("VirtualUser")
 local lp=Players.LocalPlayer
-local HUB_VERSION="RockBugHub_v16_StableUltraOpt"
+local HUB_VERSION="RockBugHub_v17_AggressiveOptSafeHit"
 
 -- Anti AFK
 local antiAfkEnabled=true
@@ -24,7 +24,7 @@ startAntiAfk()
 
 -- Анти-дубль.
 pcall(function()
-	local old=lp:WaitForChild("PlayerGui"):FindFirstChild("RockBugHub_v16_StableUltraOpt")
+	local old=lp:WaitForChild("PlayerGui"):FindFirstChild("RockBugHub_v17_AggressiveOptSafeHit")
 	if old then old:Destroy() end
 end)
 
@@ -165,6 +165,7 @@ local lowMapState={
 	on=false,
 	saved={},
 	count=0,
+	removed=0,
 	lighting={},
 	settings={},
 }
@@ -179,6 +180,7 @@ local function protectObj(obj,keepModel)
 	if c and (obj==c or obj:IsDescendantOf(c) or c:IsDescendantOf(obj))then return true end
 	if keepModel and (obj==keepModel or obj:IsDescendantOf(keepModel) or keepModel:IsDescendantOf(obj))then return true end
 	if obj==workspace.CurrentCamera then return true end
+	if workspace:FindFirstChildOfClass("Terrain") and obj==workspace:FindFirstChildOfClass("Terrain")then return true end
 	return false
 end
 
@@ -195,9 +197,9 @@ local function safeSet(obj,key,val)
 	pcall(function()obj[key]=val end)
 end
 
-local function visualPartOff(obj)
-	-- Стабильно: НЕ трогаем CanCollide/CanTouch/CanQuery/Massless.
-	-- Именно физика в v15 могла ломать процесс/поведение карты.
+local function ultraPartOff(obj)
+	-- Агрессивная оптимизация, но без поломки функционала:
+	-- физику/касания не трогаем, чтобы удар/камень не отваливались.
 	lowSave(obj,"LocalTransparencyModifier",obj.LocalTransparencyModifier)
 	lowSave(obj,"CastShadow",obj.CastShadow)
 	pcall(function()lowSave(obj,"Reflectance",obj.Reflectance)end)
@@ -207,7 +209,7 @@ local function visualPartOff(obj)
 	pcall(function()obj.Reflectance=0 end)
 end
 
-local function visualEffectOff(obj)
+local function ultraEffectOff(obj)
 	if obj:IsA("ParticleEmitter")or obj:IsA("Trail")or obj:IsA("Beam")or obj:IsA("Fire")or obj:IsA("Smoke")or obj:IsA("Sparkles")then
 		lowSave(obj,"Enabled",obj.Enabled)
 		safeSet(obj,"Enabled",false)
@@ -243,7 +245,7 @@ local function visualEffectOff(obj)
 	return false
 end
 
-local function applyStableQuality()
+local function applyQualityUltra()
 	local lighting=game:GetService("Lighting")
 	pcall(function()
 		lowMapState.lighting.GlobalShadows=lighting.GlobalShadows
@@ -251,12 +253,14 @@ local function applyStableQuality()
 		lowMapState.lighting.FogEnd=lighting.FogEnd
 		lowMapState.lighting.EnvironmentDiffuseScale=lighting.EnvironmentDiffuseScale
 		lowMapState.lighting.EnvironmentSpecularScale=lighting.EnvironmentSpecularScale
+		lowMapState.lighting.Technology=lighting.Technology
 
 		lighting.GlobalShadows=false
-		lighting.Brightness=1
-		lighting.FogEnd=70
+		lighting.Brightness=0
+		lighting.FogEnd=25
 		lighting.EnvironmentDiffuseScale=0
 		lighting.EnvironmentSpecularScale=0
+		pcall(function()lighting.Technology=Enum.Technology.Compatibility end)
 	end)
 
 	pcall(function()
@@ -286,9 +290,21 @@ local function applyStableQuality()
 		lowMapState.settings.QualityLevel=rs.QualityLevel
 		rs.QualityLevel=Enum.QualityLevel.Level01
 	end)
+
+	-- Настоящая экономия: отключаем 3D-рендер. ScreenGui остаётся, баг-процесс продолжает идти.
+	pcall(function()
+		RunService:Set3dRenderingEnabled(false)
+		lowMapState.settings.Render3DDisabled=true
+	end)
 end
 
-local function restoreStableQuality()
+local function restoreQualityUltra()
+	pcall(function()
+		if lowMapState.settings.Render3DDisabled then
+			RunService:Set3dRenderingEnabled(true)
+		end
+	end)
+
 	pcall(function()
 		local ugs=UserSettings():GetService("UserGameSettings")
 		if lowMapState.settings.SavedQualityLevel~=nil then
@@ -319,20 +335,38 @@ local function setLowMap(enabled,keepModel,statusFn)
 		lowMapState.on=true
 		lowMapState.saved={}
 		lowMapState.count=0
+		lowMapState.removed=0
 
-		applyStableQuality()
+		applyQualityUltra()
 
+		-- Удаляем с клиента целые верхние объекты Workspace, если они не нужны процессу.
+		for _,obj in ipairs(workspace:GetChildren())do
+			if obj~=workspace.CurrentCamera and not protectObj(obj,keepModel)then
+				if obj:IsA("Camera") or obj:IsA("Terrain") then
+					-- skip
+				else
+					lowSave(obj,"Parent",obj.Parent)
+					pcall(function()
+						obj.Parent=nil
+						lowMapState.removed+=1
+					end)
+				end
+			end
+			if lowMapState.removed%40==0 then task.wait() end
+		end
+
+		-- В оставшихся контейнерах гасим всё, кроме персонажа и выбранного камня.
 		local n=0
 		for _,obj in ipairs(workspace:GetDescendants())do
 			if not protectObj(obj,keepModel)then
 				if obj:IsA("BasePart")then
-					visualPartOff(obj)
+					ultraPartOff(obj)
 					n+=1
-				elseif visualEffectOff(obj)then
+				elseif ultraEffectOff(obj)then
 					n+=1
 				end
 			end
-			if n%350==0 then task.wait() end
+			if n%300==0 then task.wait() end
 		end
 
 		for _,obj in ipairs(game:GetService("Lighting"):GetDescendants())do
@@ -345,24 +379,31 @@ local function setLowMap(enabled,keepModel,statusFn)
 
 		lowMapState.count=n
 		if statusFn then
-			statusFn("ULTRA ON: стабильная оптимизация, без физики")
+			statusFn("ULTRA ON: агро-опт, процесс сохранён")
 		end
 	else
 		if not lowMapState.on then return end
 		lowMapState.on=false
 
-		restoreStableQuality()
+		restoreQualityUltra()
 
 		for obj,rec in pairs(lowMapState.saved)do
-			if obj and obj.Parent then
+			if obj then
+				-- Parent восстанавливаем первым, чтобы объект вернулся в Workspace.
+				if rec.Parent~=nil then
+					safeSet(obj,"Parent",rec.Parent)
+				end
 				for k,v in pairs(rec)do
-					safeSet(obj,k,v)
+					if k~="Parent"then
+						safeSet(obj,k,v)
+					end
 				end
 			end
 		end
 
 		lowMapState.saved={}
 		lowMapState.count=0
+		lowMapState.removed=0
 		if statusFn then statusFn("ULTRA OFF: карта восстановлена")end
 	end
 end
@@ -431,25 +472,57 @@ local function tpInsideRock(row)
 	return true,info
 end
 
-local function firePunchRemote()
-	-- Основной рабочий вариант для Muscle Legends: punch + rightHand.
-	pcall(function()
-		if lp:FindFirstChild("muscleEvent")then
-			lp.muscleEvent:FireServer("punch","rightHand")
-			lp.muscleEvent:FireServer("punch","leftHand")
+local cachedPunchRemotes=nil
+
+local function collectPunchRemotes()
+	if cachedPunchRemotes then return cachedPunchRemotes end
+	cachedPunchRemotes={}
+
+	local function add(ev)
+		if ev and ev:IsA("RemoteEvent")then
+			for _,old in ipairs(cachedPunchRemotes)do
+				if old==ev then return end
+			end
+			table.insert(cachedPunchRemotes,ev)
 		end
+	end
+
+	pcall(function()
+		if lp:FindFirstChild("muscleEvent")then add(lp.muscleEvent)end
 	end)
 
 	pcall(function()
 		local rs=game:GetService("ReplicatedStorage")
 		local re=rs:FindFirstChild("rEvents")
-		local ev=re and re:FindFirstChild("muscleEvent")
-		if ev and ev.FireServer then
+		if re then add(re:FindFirstChild("muscleEvent"))end
+	end)
+
+	pcall(function()
+		local rs=game:GetService("ReplicatedStorage")
+		for _,d in ipairs(rs:GetDescendants())do
+			if d:IsA("RemoteEvent")then
+				local n=tostring(d.Name):lower()
+				local full=tostring(d:GetFullName()):lower()
+				if n=="muscleevent" or n:find("punch",1,true) or (n:find("muscle",1,true) and full:find("event",1,true))then
+					add(d)
+				end
+			end
+		end
+	end)
+
+	return cachedPunchRemotes
+end
+
+local function firePunchRemote()
+	local remotes=collectPunchRemotes()
+
+	for _,ev in ipairs(remotes)do
+		pcall(function()
 			ev:FireServer("punch","rightHand")
 			ev:FireServer("punch","leftHand")
 			ev:FireServer("punch")
-		end
-	end)
+		end)
+	end
 end
 
 local lastEquipTry=0
@@ -703,22 +776,26 @@ local function startHit(row,statusFn)
 	local lastActivate=0
 	local lastRemote=0
 
+	collectPunchRemotes()
+
 	task.spawn(function()
 		while hitting and myId==hitLoopId do
 			local now=os.clock()
 
-			-- Быстрее, но без старого дикого FAST-спама.
-			if now-lastEquip>1.2 then
+			if now-lastEquip>1.25 then
 				lastEquip=now
 				tool=ensurePunchTool(nil) or currentPunchTool()
 			end
 
-			if now-lastRemote>=(_G.RockBugRemoteDelay or 0.075) then
+			if now-lastRemote>=(_G.RockBugRemoteDelay or 0.055) then
 				lastRemote=now
-				firePunchRemote()
+				local loops=math.clamp(tonumber(_G.RockBugRemoteLoops or 2)or 2,1,4)
+				for _=1,loops do
+					firePunchRemote()
+				end
 			end
 
-			if tool and tool.Parent and now-lastActivate>=(_G.RockBugActivateDelay or 0.10) then
+			if tool and tool.Parent and now-lastActivate>=(_G.RockBugActivateDelay or 0.095) then
 				lastActivate=now
 				pcall(function()tool:Activate()end)
 			elseif not tool or not tool.Parent then
@@ -730,12 +807,12 @@ local function startHit(row,statusFn)
 				touchRock(row)
 			end
 
-			task.wait(_G.RockBugHitDelay or 0.075)
+			task.wait(_G.RockBugHitDelay or 0.06)
 		end
 	end)
 
 	if statusFn then
-		statusFn("BUG HIT: ускоренный КД"..(ultraOptEnabled and " | ULTRA ON" or "")..(selectedPunchToolName and (" | "..selectedPunchToolName) or ""))
+		statusFn("BUG HIT: быстрый safe-hit"..(ultraOptEnabled and " | ULTRA ON" or "")..(selectedPunchToolName and (" | "..selectedPunchToolName) or ""))
 	end
 end
 
@@ -750,7 +827,7 @@ end
 
 -- UI v12: новый компактный дизайн без SCAN/COPY/лишних надписей
 local gui=Instance.new("ScreenGui")
-gui.Name="RockBugHub_v16_StableUltraOpt"
+gui.Name="RockBugHub_v17_AggressiveOptSafeHit"
 gui.ResetOnSpawn=false
 gui.IgnoreGuiInset=true
 gui.DisplayOrder=999999
@@ -841,7 +918,7 @@ local title=makeText(top,"BUG HUB",18,Enum.Font.GothamBlack,Color3.fromRGB(248,2
 title.Size=UDim2.new(1,-108,0,22)
 title.Position=UDim2.new(0,46,0,6)
 
-local sub=makeText(top,HUB_VERSION.." • stable opt",10,Enum.Font.GothamBold,Color3.fromRGB(165,172,205))
+local sub=makeText(top,HUB_VERSION.." • агро opt",10,Enum.Font.GothamBold,Color3.fromRGB(165,172,205))
 sub.Size=UDim2.new(1,-108,0,16)
 sub.Position=UDim2.new(0,47,0,26)
 
@@ -856,7 +933,7 @@ close.Position=UDim2.new(1,-33,0,9)
 close.TextSize=18
 close.TextColor3=Color3.fromRGB(255,210,218)
 
-local mini=makeBtn(gui,"BUG v14",Color3.fromRGB(46,42,120))
+local mini=makeBtn(gui,"BUG v17",Color3.fromRGB(46,42,120))
 mini.Size=UDim2.new(0,90,0,36)
 mini.Position=main.Position
 mini.Visible=false
@@ -1025,7 +1102,7 @@ local unlockBtn=makeBtn(row2,"UNLOCK",Color3.fromRGB(120,70,38))
 unlockBtn.Size=UDim2.new(0.5,-5,1,0)
 unlockBtn.Position=UDim2.new(0,0,0,0)
 
-local ultraBtn=makeBtn(row2,"ULTRA",Color3.fromRGB(82,58,135))
+local ultraBtn=makeBtn(row2,"ULTRA 3D",Color3.fromRGB(82,58,135))
 ultraBtn.Size=UDim2.new(0.5,-5,1,0)
 ultraBtn.Position=UDim2.new(0.5,5,0,0)
 
@@ -1081,10 +1158,12 @@ end)
 
 ultraBtn.Activated:Connect(function()
 	ultraOptEnabled=not ultraOptEnabled
-	ultraBtn.Text=ultraOptEnabled and "ULTRA ON" or "ULTRA"
+	ultraBtn.Text=ultraOptEnabled and "ULTRA ON" or "ULTRA 3D"
 	ultraBtn.BackgroundColor3=ultraOptEnabled and Color3.fromRGB(118,65,160) or Color3.fromRGB(82,58,135)
 
 	if ultraOptEnabled then
+		collectPunchRemotes()
+		pcall(function() ensurePunchTool(nil) end)
 		local old=_G.RockBugLowMapTransparency
 		_G.RockBugLowMapTransparency=1
 		local info=getRock(selected)
@@ -1106,7 +1185,7 @@ stopBtn.Activated:Connect(function()
 	stopHit()
 	stopLock()
 	ultraOptEnabled=false
-	ultraBtn.Text="ULTRA"
+	ultraBtn.Text="ULTRA 3D"
 	ultraBtn.BackgroundColor3=Color3.fromRGB(82,58,135)
 	setLowMap(false,nil,nil)
 	setStatus("Остановлено")
@@ -1166,4 +1245,4 @@ local count=0
 for _,row in ipairs(ROCKS)do
 	if found[row.req]then count+=1 end
 end
-setStatus("Готово • "..count.."/"..#ROCKS.." • ULTRA вручную")
+setStatus("Готово • "..count.."/"..#ROCKS.." • v17")
