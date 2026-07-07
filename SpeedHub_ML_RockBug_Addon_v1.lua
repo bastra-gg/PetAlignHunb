@@ -1,4 +1,4 @@
--- Muscle Legends RockBug Hub v5
+-- Muscle Legends RockBug Hub v6 LITE
 -- Standalone: без Speed Hub. Камни через neededDurability + TP LOCK + BUG HIT + Anti AFK.
 
 local Players=game:GetService("Players")
@@ -23,7 +23,7 @@ startAntiAfk()
 
 -- Анти-дубль.
 pcall(function()
-	local old=lp:WaitForChild("PlayerGui"):FindFirstChild("RockBugHubStandaloneV5")
+	local old=lp:WaitForChild("PlayerGui"):FindFirstChild("RockBugHubStandaloneV6")
 	if old then old:Destroy() end
 end)
 
@@ -48,8 +48,8 @@ local lockCF=nil
 local oldSpeed=nil
 local oldAuto=nil
 local hitting=false
-local fastHitEnabled=true
-local fastHitPower=6 -- сколько раз за цикл пробовать punch remote. Если лагает: _G.RockBugFastHitPower=2
+local fastHitEnabled=false
+local fastHitPower=2 -- LITE: по умолчанию меньше спама. Если надо: _G.RockBugFastHitPower=1..3
 
 local function root()
 	local c=lp.Character
@@ -466,7 +466,18 @@ local function touchRock(row)
 	end
 end
 
-local hitLoopId=0
+local local hitLoopId=0
+
+local function currentPunchTool()
+	local c=lp.Character
+	if not c then return nil end
+	for _,tool in ipairs(c:GetChildren())do
+		if tool:IsA("Tool") and toolScore(tool)>0 then
+			return tool
+		end
+	end
+	return nil
+end
 
 local function startHit(row,statusFn)
 	hitting=true
@@ -475,36 +486,58 @@ local function startHit(row,statusFn)
 
 	if hitConn then hitConn:Disconnect() hitConn=nil end
 
-	ensurePunchTool(statusFn)
+	local tool=ensurePunchTool(statusFn)
+	if fastHitEnabled and tool then
+		clearToolCooldowns(tool)
+	end
 
-	-- Heartbeat держит touch/lock стабильно.
-	hitConn=RunService.Heartbeat:Connect(function()
-		if not hitting then return end
-		if fastHitEnabled then clearAllLocalCooldowns() end
-		touchRock(row)
-	end)
+	local lastTouch=0
+	local lastCooldownClear=0
+	local lastEquip=0
 
-	-- Быстрый отдельный цикл для punch. Он не убирает серверный КД, но обходит локальную задержку Tool.
 	task.spawn(function()
 		while hitting and myId==hitLoopId do
-			if fastHitEnabled then clearAllLocalCooldowns() end
+			local now=os.clock()
 
-			local loops=fastHitEnabled and (_G.RockBugFastHitPower or fastHitPower) or 1
-			loops=math.clamp(tonumber(loops)or 1,1,12)
+			-- Не сканим весь Backpack каждый тик: это и давало дикие лаги.
+			if now-lastEquip>1.5 then
+				lastEquip=now
+				tool=ensurePunchTool(nil) or currentPunchTool()
+			end
+
+			if fastHitEnabled and tool and now-lastCooldownClear>1.0 then
+				lastCooldownClear=now
+				clearToolCooldowns(tool)
+			end
+
+			local loops=1
+			if fastHitEnabled then
+				loops=math.clamp(tonumber(_G.RockBugFastHitPower or fastHitPower)or 1,1,3)
+			end
 
 			for _=1,loops do
 				firePunchRemote()
-				activateFistTool(statusFn)
+				if tool and tool.Parent then
+					pcall(function()tool:Activate()end)
+				else
+					activateFistTool(nil)
+				end
 			end
 
-			task.wait(_G.RockBugHitDelay or 0.025)
+			if now-lastTouch>=(_G.RockBugTouchDelay or 0.28) then
+				lastTouch=now
+				touchRock(row)
+			end
+
+			task.wait(_G.RockBugHitDelay or (fastHitEnabled and 0.08 or 0.14))
 		end
 	end)
 
 	if statusFn then
-		statusFn("BUG HIT: Punch режим | FAST "..(fastHitEnabled and "ON" or "OFF")..(selectedPunchToolName and (" | "..selectedPunchToolName) or ""))
+		statusFn("BUG HIT LITE: включён | FAST "..(fastHitEnabled and "ON" or "OFF")..(selectedPunchToolName and (" | "..selectedPunchToolName) or ""))
 	end
 end
+
 
 local function stopHit(statusFn)
 	hitting=false
@@ -515,7 +548,7 @@ end
 
 -- UI
 local gui=Instance.new("ScreenGui")
-gui.Name="RockBugHubStandaloneV5"
+gui.Name="RockBugHubStandaloneV6"
 gui.ResetOnSpawn=false
 gui.IgnoreGuiInset=true
 gui.DisplayOrder=999999
@@ -687,7 +720,7 @@ local hitBtn=mkBtn("BUG HIT",178,328,82,34,Color3.fromRGB(32,130,70))
 local unlockBtn=mkBtn("UNLOCK",268,328,74,34,Color3.fromRGB(125,72,36))
 
 local antiBtn=mkBtn("AFK ON",10,370,104,34,Color3.fromRGB(45,88,150))
-local fastBtn=mkBtn("FAST ON",124,370,104,34,Color3.fromRGB(90,72,155))
+local fastBtn=mkBtn("FAST OFF",124,370,104,34,Color3.fromRGB(74,74,86))
 local stopBtn=mkBtn("STOP",238,370,104,34,Color3.fromRGB(125,34,46))
 
 local lastReport=""
@@ -757,8 +790,8 @@ fastBtn.Activated:Connect(function()
 	fastHitEnabled=not fastHitEnabled
 	fastBtn.Text=fastHitEnabled and "FAST ON" or "FAST OFF"
 	fastBtn.BackgroundColor3=fastHitEnabled and Color3.fromRGB(90,72,155) or Color3.fromRGB(74,74,86)
-	setStatus("Fast hit: "..(fastHitEnabled and "включён" or "выключен").." | если КД серверный, он не снимется")
-	if fastHitEnabled then clearAllLocalCooldowns() end
+	setStatus("Fast hit: "..(fastHitEnabled and "включён" or "выключен").." | LITE без скана каждый тик")
+	if fastHitEnabled then local t=currentPunchTool() if t then clearToolCooldowns(t) end end
 end)
 
 stopBtn.Activated:Connect(function()
@@ -817,4 +850,4 @@ end)
 -- First scan
 scanRocks()
 refreshButtons()
-setStatus("Готово. Для камней нужен Punch. FAST спамит punch remote.")
+setStatus("v6 LITE: лаги снижены. BUG HIT без дикого спама, FAST по желанию.")
