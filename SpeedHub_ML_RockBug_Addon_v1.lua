@@ -1,4 +1,4 @@
--- Muscle Legends RockBug Hub v6 LITE
+-- Muscle Legends RockBug Hub v7 LOWMAP
 -- Standalone: без Speed Hub. Камни через neededDurability + TP LOCK + BUG HIT + Anti AFK.
 
 local Players=game:GetService("Players")
@@ -23,7 +23,7 @@ startAntiAfk()
 
 -- Анти-дубль.
 pcall(function()
-	local old=lp:WaitForChild("PlayerGui"):FindFirstChild("RockBugHubStandaloneV6")
+	local old=lp:WaitForChild("PlayerGui"):FindFirstChild("RockBugHubStandaloneV7")
 	if old then old:Destroy() end
 end)
 
@@ -49,7 +49,7 @@ local oldSpeed=nil
 local oldAuto=nil
 local hitting=false
 local fastHitEnabled=false
-local fastHitPower=2 -- LITE: по умолчанию меньше спама. Если надо: _G.RockBugFastHitPower=1..3
+local fastHitPower=2 -- LOWMAP: быстро, но без дикого спама. Если лагает: _G.RockBugFastHitPower=1
 
 local function root()
 	local c=lp.Character
@@ -157,6 +157,97 @@ local function getRock(row)
 	if not row then return nil end
 	if not rockCache[row.req]then scanRocks()end
 	return rockCache[row.req]
+end
+
+local lowMapState={
+	on=false,
+	saved={},
+	count=0,
+	lighting={},
+}
+
+local function isProtectedFromLowMap(obj,keepModel)
+	local c=lp.Character
+	if c and obj:IsDescendantOf(c)then return true end
+	if keepModel and obj:IsDescendantOf(keepModel)then return true end
+	return false
+end
+
+local function lowSave(obj,key,val)
+	local rec=lowMapState.saved[obj]
+	if not rec then
+		rec={}
+		lowMapState.saved[obj]=rec
+	end
+	if rec[key]==nil then rec[key]=val end
+end
+
+local function setLowMap(enabled,keepModel,statusFn)
+	if enabled then
+		if lowMapState.on then return end
+		lowMapState.on=true
+		lowMapState.saved={}
+		lowMapState.count=0
+
+		local lighting=game:GetService("Lighting")
+		pcall(function()
+			lowMapState.lighting.GlobalShadows=lighting.GlobalShadows
+			lighting.GlobalShadows=false
+		end)
+
+		for _,obj in ipairs(workspace:GetDescendants())do
+			if not isProtectedFromLowMap(obj,keepModel)then
+				if obj:IsA("BasePart")then
+					lowSave(obj,"LocalTransparencyModifier",obj.LocalTransparencyModifier)
+					lowSave(obj,"CastShadow",obj.CastShadow)
+					pcall(function()
+						obj.LocalTransparencyModifier=math.max(obj.LocalTransparencyModifier,_G.RockBugLowMapTransparency or 0.72)
+						obj.CastShadow=false
+					end)
+					lowMapState.count+=1
+
+				elseif obj:IsA("ParticleEmitter")or obj:IsA("Trail")or obj:IsA("Beam")or obj:IsA("Fire")or obj:IsA("Smoke")or obj:IsA("Sparkles")then
+					lowSave(obj,"Enabled",obj.Enabled)
+					pcall(function()obj.Enabled=false end)
+					lowMapState.count+=1
+
+				elseif obj:IsA("Decal")or obj:IsA("Texture")then
+					lowSave(obj,"Transparency",obj.Transparency)
+					pcall(function()obj.Transparency=1 end)
+					lowMapState.count+=1
+
+				elseif obj:IsA("PointLight")or obj:IsA("SpotLight")or obj:IsA("SurfaceLight")then
+					lowSave(obj,"Enabled",obj.Enabled)
+					pcall(function()obj.Enabled=false end)
+					lowMapState.count+=1
+				end
+			end
+		end
+
+		if statusFn then statusFn("LOW MAP ON: карта приглушена ("..lowMapState.count..")")end
+	else
+		if not lowMapState.on then return end
+		lowMapState.on=false
+
+		for obj,rec in pairs(lowMapState.saved)do
+			if obj and obj.Parent then
+				for k,v in pairs(rec)do
+					pcall(function()obj[k]=v end)
+				end
+			end
+		end
+		lowMapState.saved={}
+
+		local lighting=game:GetService("Lighting")
+		pcall(function()
+			if lowMapState.lighting.GlobalShadows~=nil then
+				lighting.GlobalShadows=lowMapState.lighting.GlobalShadows
+			end
+		end)
+		lowMapState.lighting={}
+
+		if statusFn then statusFn("LOW MAP OFF: карта восстановлена")end
+	end
 end
 
 local function stopLock()
@@ -487,6 +578,10 @@ local function startHit(row,statusFn)
 	if hitConn then hitConn:Disconnect() hitConn=nil end
 
 	local tool=ensurePunchTool(statusFn)
+	local info=getRock(row)
+	if fastHitEnabled then
+		setLowMap(true,info and info.model,statusFn)
+	end
 	if fastHitEnabled and tool then
 		clearToolCooldowns(tool)
 	end
@@ -529,7 +624,7 @@ local function startHit(row,statusFn)
 				touchRock(row)
 			end
 
-			task.wait(_G.RockBugHitDelay or (fastHitEnabled and 0.08 or 0.14))
+			task.wait(_G.RockBugHitDelay or (fastHitEnabled and 0.11 or 0.15))
 		end
 	end)
 
@@ -543,12 +638,13 @@ local function stopHit(statusFn)
 	hitting=false
 	hitLoopId+=1
 	if hitConn then hitConn:Disconnect() hitConn=nil end
+	setLowMap(false,nil,nil)
 	if statusFn then statusFn("BUG HIT: остановлен")end
 end
 
 -- UI
 local gui=Instance.new("ScreenGui")
-gui.Name="RockBugHubStandaloneV6"
+gui.Name="RockBugHubStandaloneV7"
 gui.ResetOnSpawn=false
 gui.IgnoreGuiInset=true
 gui.DisplayOrder=999999
@@ -790,8 +886,19 @@ fastBtn.Activated:Connect(function()
 	fastHitEnabled=not fastHitEnabled
 	fastBtn.Text=fastHitEnabled and "FAST ON" or "FAST OFF"
 	fastBtn.BackgroundColor3=fastHitEnabled and Color3.fromRGB(90,72,155) or Color3.fromRGB(74,74,86)
-	setStatus("Fast hit: "..(fastHitEnabled and "включён" or "выключен").." | LITE без скана каждый тик")
-	if fastHitEnabled then local t=currentPunchTool() if t then clearToolCooldowns(t) end end
+
+	if fastHitEnabled then
+		local t=currentPunchTool()
+		if t then clearToolCooldowns(t) end
+		if hitting then
+			local info=getRock(selected)
+			setLowMap(true,info and info.model,nil)
+		end
+	else
+		setLowMap(false,nil,nil)
+	end
+
+	setStatus("FAST "..(fastHitEnabled and "ON" or "OFF").." | LOW MAP "..(lowMapState.on and "ON" or "OFF"))
 end)
 
 stopBtn.Activated:Connect(function()
@@ -850,4 +957,4 @@ end)
 -- First scan
 scanRocks()
 refreshButtons()
-setStatus("v6 LITE: лаги снижены. BUG HIT без дикого спама, FAST по желанию.")
+setStatus("v7 LOWMAP: при FAST карта приглушается для FPS.")
