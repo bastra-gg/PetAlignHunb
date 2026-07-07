@@ -1,25 +1,29 @@
--- SpeedHub Muscle Legends RockBug Addon v1
--- Wrapper: запускает Speed Hub X, затем добавляет отдельную вкладку/панель Rock Bug.
--- Если нужен прямой встраиваемый таб внутрь Speed Hub — нужен НЕ obfuscated исходник UI.
+-- Muscle Legends RockBug Hub v2
+-- Standalone: без Speed Hub. Камни через neededDurability + TP LOCK + BUG HIT + Anti AFK.
 
 local Players=game:GetService("Players")
 local RunService=game:GetService("RunService")
+local VirtualUser=game:GetService("VirtualUser")
 local lp=Players.LocalPlayer
 
-local SPEED_HUB_URL="https://raw.githubusercontent.com/AhmadV99/Speed-Hub-X/main/Speed%20Hub%20X.lua"
-
--- 1) Запускаем оригинальный Speed Hub.
-task.spawn(function()
-	pcall(function()
-		loadstring(game:HttpGet(SPEED_HUB_URL,true))()
+-- Anti AFK
+local antiAfkEnabled=true
+local antiAfkConn=nil
+local function startAntiAfk()
+	if antiAfkConn then antiAfkConn:Disconnect() antiAfkConn=nil end
+	antiAfkConn=lp.Idled:Connect(function()
+		if not antiAfkEnabled then return end
+		pcall(function()
+			VirtualUser:CaptureController()
+			VirtualUser:ClickButton2(Vector2.new())
+		end)
 	end)
-end)
+end
+startAntiAfk()
 
-task.wait(1.1)
-
--- 2) Анти-дубль.
+-- Анти-дубль.
 pcall(function()
-	local old=lp:WaitForChild("PlayerGui"):FindFirstChild("SpeedHubRockBugAddon")
+	local old=lp:WaitForChild("PlayerGui"):FindFirstChild("RockBugHubStandaloneV2")
 	if old then old:Destroy() end
 end)
 
@@ -300,7 +304,7 @@ end
 
 -- UI
 local gui=Instance.new("ScreenGui")
-gui.Name="SpeedHubRockBugAddon"
+gui.Name="RockBugHubStandaloneV2"
 gui.ResetOnSpawn=false
 gui.IgnoreGuiInset=true
 gui.DisplayOrder=999999
@@ -320,9 +324,10 @@ local function stroke(o,col,t)
 end
 
 local main=Instance.new("Frame",gui)
-main.Size=UDim2.new(0,338,0,420)
+main.Size=UDim2.new(0,352,0,452)
 main.Position=UDim2.new(0,14,0,95)
-main.BackgroundColor3=Color3.fromRGB(12,12,24)
+main.BackgroundColor3=Color3.fromRGB(8,8,18)
+main.BackgroundTransparency=0.16
 main.BorderSizePixel=0
 main.Active=true
 corner(main,16)
@@ -330,7 +335,8 @@ stroke(main,Color3.fromRGB(132,74,255),1.5)
 
 local top=Instance.new("Frame",main)
 top.Size=UDim2.new(1,0,0,42)
-top.BackgroundColor3=Color3.fromRGB(17,16,34)
+top.BackgroundColor3=Color3.fromRGB(12,12,28)
+top.BackgroundTransparency=0.08
 top.BorderSizePixel=0
 corner(top,16)
 
@@ -338,10 +344,10 @@ local title=Instance.new("TextLabel",top)
 title.Size=UDim2.new(1,-84,1,0)
 title.Position=UDim2.new(0,12,0,0)
 title.BackgroundTransparency=1
-title.Text="Speed Hub • Rock Bug"
+title.Text="Rock Bug Hub"
 title.TextColor3=Color3.new(1,1,1)
 title.Font=Enum.Font.GothamBlack
-title.TextSize=15
+title.TextSize=17
 title.TextXAlignment=Enum.TextXAlignment.Left
 
 local min=Instance.new("TextButton",top)
@@ -370,6 +376,7 @@ mini.Position=main.Position
 mini.Text="ROCK BUG"
 mini.TextColor3=Color3.new(1,1,1)
 mini.BackgroundColor3=Color3.fromRGB(75,45,170)
+mini.BackgroundTransparency=0.06
 mini.Font=Enum.Font.GothamBlack
 mini.TextSize=11
 mini.Visible=false
@@ -379,11 +386,12 @@ stroke(mini,Color3.fromRGB(150,92,255),1)
 local status=Instance.new("TextLabel",main)
 status.Size=UDim2.new(1,-20,0,36)
 status.Position=UDim2.new(0,10,0,48)
-status.BackgroundColor3=Color3.fromRGB(18,18,36)
+status.BackgroundColor3=Color3.fromRGB(12,12,30)
+status.BackgroundTransparency=0.10
 status.Text="SCAN → выбери камень → TP LOCK / BUG HIT"
-status.TextColor3=Color3.fromRGB(220,215,255)
+status.TextColor3=Color3.fromRGB(255,245,185)
 status.Font=Enum.Font.GothamBold
-status.TextSize=10
+status.TextSize=12
 status.TextWrapped=true
 status.TextXAlignment=Enum.TextXAlignment.Left
 status.TextYAlignment=Enum.TextYAlignment.Center
@@ -394,9 +402,10 @@ local function setStatus(t)
 end
 
 local list=Instance.new("ScrollingFrame",main)
-list.Size=UDim2.new(1,-20,0,218)
+list.Size=UDim2.new(1,-20,0,226)
 list.Position=UDim2.new(0,10,0,92)
-list.BackgroundColor3=Color3.fromRGB(11,11,22)
+list.BackgroundColor3=Color3.fromRGB(6,6,16)
+list.BackgroundTransparency=0.18
 list.BorderSizePixel=0
 list.ScrollBarThickness=4
 list.CanvasSize=UDim2.new(0,0,0,0)
@@ -423,12 +432,13 @@ local function refreshButtons()
 		local info=rockCache[row.req]
 		local b=Instance.new("TextButton",list)
 		b.Size=UDim2.new(1,-4,0,38)
-		b.BackgroundColor3=(selected.id==row.id) and Color3.fromRGB(70,48,145) or Color3.fromRGB(25,25,50)
-		b.TextColor3=Color3.fromRGB(255,238,170)
+		b.BackgroundColor3=(selected.id==row.id) and Color3.fromRGB(88,58,180) or Color3.fromRGB(18,18,42)
+		b.BackgroundTransparency=(selected.id==row.id) and 0.04 or 0.16
+		b.TextColor3=Color3.fromRGB(255,245,190)
 		b.Font=Enum.Font.GothamBlack
-		b.TextSize=10
+		b.TextSize=12
 		b.TextXAlignment=Enum.TextXAlignment.Left
-		b.Text=("  %s  [%s]  %s"):format(row.label,tostring(row.req),info and "✓" or "×")
+		b.Text=("  %s  [%s]  %s"):format(row.label,tostring(row.req),info and "✓ найден" or "× нет")
 		b.LayoutOrder=i
 		corner(b,9)
 
@@ -455,18 +465,20 @@ local function mkBtn(txt,x,y,w,h,col)
 	b.TextColor3=Color3.new(1,1,1)
 	b.BackgroundColor3=col
 	b.Font=Enum.Font.GothamBlack
-	b.TextSize=10
+	b.TextSize=12
 	corner(b,9)
 	return b
 end
 
-local scanBtn=mkBtn("SCAN",10,320,58,32,Color3.fromRGB(78,60,160))
-local tpBtn=mkBtn("TP LOCK",74,320,78,32,Color3.fromRGB(45,105,200))
-local hitBtn=mkBtn("BUG HIT",158,320,76,32,Color3.fromRGB(32,145,72))
-local unlockBtn=mkBtn("UNLOCK",240,320,88,32,Color3.fromRGB(140,75,35))
+local scanBtn=mkBtn("SCAN",10,328,58,34,Color3.fromRGB(78,60,160))
+local tpBtn=mkBtn("TP LOCK",74,328,82,34,Color3.fromRGB(45,105,200))
+local hitBtn=mkBtn("BUG HIT",162,328,78,34,Color3.fromRGB(32,145,72))
+local unlockBtn=mkBtn("UNLOCK",246,328,96,34,Color3.fromRGB(140,75,35))
 
-local copyBtn=mkBtn("COPY REPORT",10,360,152,32,Color3.fromRGB(120,85,35))
-local stopBtn=mkBtn("STOP ALL",176,360,152,32,Color3.fromRGB(135,34,48))
+local copyBtn=mkBtn("COPY",10,370,72,34,Color3.fromRGB(120,85,35))
+local antiBtn=mkBtn("AFK ON",90,370,82,34,Color3.fromRGB(45,100,160))
+local reportBtn=mkBtn("REPORT",180,370,82,34,Color3.fromRGB(95,70,165))
+local stopBtn=mkBtn("STOP",270,370,72,34,Color3.fromRGB(135,34,48))
 
 local lastReport=""
 
@@ -540,6 +552,29 @@ copyBtn.Activated:Connect(function()
 	end
 end)
 
+antiBtn.Activated:Connect(function()
+	antiAfkEnabled=not antiAfkEnabled
+	antiBtn.Text=antiAfkEnabled and "AFK ON" or "AFK OFF"
+	antiBtn.BackgroundColor3=antiAfkEnabled and Color3.fromRGB(45,100,160) or Color3.fromRGB(120,45,45)
+	setStatus("Anti AFK: "..(antiAfkEnabled and "включён" or "выключен"))
+end)
+
+reportBtn.Activated:Connect(function()
+	scanRocks()
+	local lines={"RockBug report"}
+	for _,row in ipairs(ROCKS)do
+		local info=rockCache[row.req]
+		table.insert(lines,("%s req=%s %s"):format(row.label,row.req,info and ("FOUND model="..tostring(info.name)) or "NO"))
+	end
+	lastReport=table.concat(lines,"\n")
+	if setclipboard then
+		pcall(setclipboard,lastReport)
+		setStatus("REPORT скопирован.")
+	else
+		setStatus("Clipboard недоступен.")
+	end
+end)
+
 stopBtn.Activated:Connect(function()
 	stopHit()
 	stopLock()
@@ -561,7 +596,8 @@ end)
 close.Activated:Connect(function()
 	stopHit()
 	stopLock()
-	gui:Destroy()
+	if antiAfkConn then antiAfkConn:Disconnect() antiAfkConn=nil end
+gui:Destroy()
 end)
 
 -- Drag only top bar
@@ -595,4 +631,4 @@ end)
 -- First scan
 scanRocks()
 refreshButtons()
-setStatus("Готово. Выбери камень и жми TP LOCK или BUG HIT.")
+setStatus("Готово. Anti AFK включён. Выбери камень → TP LOCK / BUG HIT.")
