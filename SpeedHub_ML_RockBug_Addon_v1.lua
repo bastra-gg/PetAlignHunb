@@ -1,4 +1,4 @@
--- Muscle Legends RockBug Hub v2
+-- Muscle Legends RockBug Hub v4
 -- Standalone: без Speed Hub. Камни через neededDurability + TP LOCK + BUG HIT + Anti AFK.
 
 local Players=game:GetService("Players")
@@ -23,7 +23,7 @@ startAntiAfk()
 
 -- Анти-дубль.
 pcall(function()
-	local old=lp:WaitForChild("PlayerGui"):FindFirstChild("RockBugHubStandaloneV2")
+	local old=lp:WaitForChild("PlayerGui"):FindFirstChild("RockBugHubStandaloneV4")
 	if old then old:Destroy() end
 end)
 
@@ -48,6 +48,8 @@ local lockCF=nil
 local oldSpeed=nil
 local oldAuto=nil
 local hitting=false
+local fastHitEnabled=true
+local fastHitPower=4 -- сколько раз за тик пробовать удар/remote. Если лагает: _G.RockBugFastHitPower=2
 
 local function root()
 	local c=lp.Character
@@ -235,23 +237,189 @@ local function firePunchRemote()
 			ev:FireServer("punch","rightHand")
 		end
 	end)
+
+	-- Иногда сила/удары идут через rep/action. Если сервер не принимает — просто игнор.
+	pcall(function()
+		local rs=game:GetService("ReplicatedStorage")
+		local re=rs:FindFirstChild("rEvents")
+		local ev=re and re:FindFirstChild("liftWeightRemote")
+		if ev and ev.FireServer then ev:FireServer() end
+	end)
 end
 
-local function activateFistTool()
-	local c=lp.Character
-	if not c then return end
+local lastEquipTry=0
+local selectedPunchToolName=nil
 
-	for _,tool in ipairs(c:GetChildren())do
-		if tool:IsA("Tool")then
-			local n=tool.Name:lower()
-			local bad=n:find("dumb",1,true)or n:find("weight",1,true)or n:find("barbell",1,true)or n:find("гант",1,true)or n:find("гир",1,true)
-			local good=n:find("fist",1,true)or n:find("punch",1,true)or n:find("combat",1,true)or n:find("кулак",1,true)or n:find("удар",1,true)
-			if good and not bad then
-				pcall(function()tool:Activate()end)
+local function toolScore(tool)
+	if not tool or not tool:IsA("Tool")then return -999 end
+	local n=tostring(tool.Name):lower()
+
+	local badWords={
+		"dumb","weight","barbell","bench","pushup","situp",
+		"гант","гир","штанг","вес","тяж"
+	}
+	for _,w in ipairs(badWords)do
+		if n:find(w,1,true)then return -999 end
+	end
+
+	local score=1
+
+	local bestWords={
+		"fist","punch","combat","strike","hit","hand",
+		"кулак","удар","бой","рука"
+	}
+	for _,w in ipairs(bestWords)do
+		if n:find(w,1,true)then score+=100 end
+	end
+
+	return score
+end
+
+local function clearToolCooldowns(tool)
+	if not tool then return end
+
+	local cooldownNames={
+		"Cooldown","cooldown","CD","cd","Delay","delay",
+		"AttackCooldown","attackCooldown","SwingCooldown","swingCooldown",
+		"LastUse","lastUse","LastSwing","lastSwing","LastAttack","lastAttack",
+		"CanUse","canUse","CanSwing","canSwing","Ready","ready"
+	}
+
+	local function fixObj(obj)
+		for _,name in ipairs(cooldownNames)do
+			local child=nil
+			pcall(function()child=obj:FindFirstChild(name)end)
+			if child then
+				pcall(function()
+					if child:IsA("NumberValue")or child:IsA("IntValue")then child.Value=0 end
+					if child:IsA("BoolValue")then child.Value=true end
+					if child:IsA("StringValue")then child.Value="0" end
+				end)
+			end
+		end
+
+		pcall(function()
+			for _,name in ipairs(cooldownNames)do
+				local v=obj:GetAttribute(name)
+				if v~=nil then
+					if type(v)=="number"then obj:SetAttribute(name,0)end
+					if type(v)=="boolean"then obj:SetAttribute(name,true)end
+					if type(v)=="string"then obj:SetAttribute(name,"0")end
+				end
+			end
+		end)
+	end
+
+	fixObj(tool)
+	for _,d in ipairs(tool:GetDescendants())do
+		fixObj(d)
+	end
+end
+
+local function clearAllLocalCooldowns()
+	local c=lp.Character
+	local bp=lp:FindFirstChildOfClass("Backpack")
+
+	for _,container in ipairs({c,bp})do
+		if container then
+			for _,tool in ipairs(container:GetChildren())do
+				if tool:IsA("Tool")then
+					clearToolCooldowns(tool)
+				end
 			end
 		end
 	end
 end
+
+local function findBestPunchTool()
+	local c=lp.Character
+	local bp=lp:FindFirstChildOfClass("Backpack")
+	local best=nil
+	local bestScore=-999
+
+	local function scan(container,bonus)
+		if not container then return end
+		for _,tool in ipairs(container:GetChildren())do
+			if tool:IsA("Tool")then
+				local sc=toolScore(tool)+bonus
+				if sc>bestScore then
+					bestScore=sc
+					best=tool
+				end
+			end
+		end
+	end
+
+	-- Сначала уже экипнутый нормальный предмет, потом Backpack.
+	scan(c,20)
+	scan(bp,0)
+
+	if bestScore<=0 then return nil end
+	return best,bestScore
+end
+
+local function ensurePunchTool(statusFn)
+	local c=lp.Character
+	local h=hum()
+	if not c or not h then return nil end
+
+	local equipped=nil
+	local equippedBad=false
+
+	for _,tool in ipairs(c:GetChildren())do
+		if tool:IsA("Tool")then
+			if toolScore(tool)>0 then
+				equipped=tool
+			else
+				equippedBad=true
+			end
+		end
+	end
+
+	if equipped then
+		selectedPunchToolName=equipped.Name
+		return equipped
+	end
+
+	if equippedBad then
+		pcall(function()h:UnequipTools()end)
+		task.wait(.05)
+	end
+
+	local best=findBestPunchTool()
+	if best and best.Parent~=c then
+		pcall(function()h:EquipTool(best)end)
+		task.wait(.08)
+	end
+
+	if best then
+		clearToolCooldowns(best)
+		selectedPunchToolName=best.Name
+		if statusFn then statusFn("BUG HIT: предмет выбран → "..best.Name)end
+		return best
+	end
+
+	if statusFn then statusFn("BUG HIT: предмет не найден, бью remote/touch")end
+	return nil
+end
+
+local function activateFistTool(statusFn)
+	if os.clock()-lastEquipTry>1.2 then
+		lastEquipTry=os.clock()
+		ensurePunchTool(statusFn)
+	end
+
+	local c=lp.Character
+	if not c then return end
+
+	for _,tool in ipairs(c:GetChildren())do
+		if tool:IsA("Tool") and toolScore(tool)>0 then
+			clearToolCooldowns(tool)
+			pcall(function()tool:Activate()end)
+		end
+	end
+end
+
 
 local function touchRock(row)
 	local info=getRock(row)
@@ -286,14 +454,28 @@ local function startHit(row,statusFn)
 	hitting=true
 	if hitConn then hitConn:Disconnect() hitConn=nil end
 
+	ensurePunchTool(statusFn)
+
 	hitConn=RunService.Heartbeat:Connect(function()
 		if not hitting then return end
-		firePunchRemote()
-		activateFistTool()
-		touchRock(row)
+
+		if fastHitEnabled then
+			clearAllLocalCooldowns()
+		end
+
+		local loops=fastHitEnabled and (_G.RockBugFastHitPower or fastHitPower) or 1
+		loops=math.clamp(tonumber(loops)or 1,1,10)
+
+		for _=1,loops do
+			firePunchRemote()
+			activateFistTool(statusFn)
+			touchRock(row)
+		end
 	end)
 
-	if statusFn then statusFn("BUG HIT: включён")end
+	if statusFn then
+		statusFn("BUG HIT: включён | FAST "..(fastHitEnabled and "ON" or "OFF")..(selectedPunchToolName and (" | "..selectedPunchToolName) or ""))
+	end
 end
 
 local function stopHit(statusFn)
@@ -304,7 +486,7 @@ end
 
 -- UI
 local gui=Instance.new("ScreenGui")
-gui.Name="RockBugHubStandaloneV2"
+gui.Name="RockBugHubStandaloneV4"
 gui.ResetOnSpawn=false
 gui.IgnoreGuiInset=true
 gui.DisplayOrder=999999
@@ -324,10 +506,10 @@ local function stroke(o,col,t)
 end
 
 local main=Instance.new("Frame",gui)
-main.Size=UDim2.new(0,352,0,452)
+main.Size=UDim2.new(0,352,0,418)
 main.Position=UDim2.new(0,14,0,95)
 main.BackgroundColor3=Color3.fromRGB(8,8,18)
-main.BackgroundTransparency=0.16
+main.BackgroundTransparency=0.20
 main.BorderSizePixel=0
 main.Active=true
 corner(main,16)
@@ -336,7 +518,7 @@ stroke(main,Color3.fromRGB(132,74,255),1.5)
 local top=Instance.new("Frame",main)
 top.Size=UDim2.new(1,0,0,42)
 top.BackgroundColor3=Color3.fromRGB(12,12,28)
-top.BackgroundTransparency=0.08
+top.BackgroundTransparency=0.14
 top.BorderSizePixel=0
 corner(top,16)
 
@@ -345,9 +527,9 @@ title.Size=UDim2.new(1,-84,1,0)
 title.Position=UDim2.new(0,12,0,0)
 title.BackgroundTransparency=1
 title.Text="Rock Bug Hub"
-title.TextColor3=Color3.new(1,1,1)
+title.TextColor3=Color3.fromRGB(235,238,255)
 title.Font=Enum.Font.GothamBlack
-title.TextSize=17
+title.TextSize=16
 title.TextXAlignment=Enum.TextXAlignment.Left
 
 local min=Instance.new("TextButton",top)
@@ -374,9 +556,9 @@ local mini=Instance.new("TextButton",gui)
 mini.Size=UDim2.new(0,86,0,34)
 mini.Position=main.Position
 mini.Text="ROCK BUG"
-mini.TextColor3=Color3.new(1,1,1)
+mini.TextColor3=Color3.fromRGB(235,238,255)
 mini.BackgroundColor3=Color3.fromRGB(75,45,170)
-mini.BackgroundTransparency=0.06
+mini.BackgroundTransparency=0.16
 mini.Font=Enum.Font.GothamBlack
 mini.TextSize=11
 mini.Visible=false
@@ -387,11 +569,11 @@ local status=Instance.new("TextLabel",main)
 status.Size=UDim2.new(1,-20,0,36)
 status.Position=UDim2.new(0,10,0,48)
 status.BackgroundColor3=Color3.fromRGB(12,12,30)
-status.BackgroundTransparency=0.10
+status.BackgroundTransparency=0.16
 status.Text="SCAN → выбери камень → TP LOCK / BUG HIT"
-status.TextColor3=Color3.fromRGB(255,245,185)
+status.TextColor3=Color3.fromRGB(225,230,255)
 status.Font=Enum.Font.GothamBold
-status.TextSize=12
+status.TextSize=11
 status.TextWrapped=true
 status.TextXAlignment=Enum.TextXAlignment.Left
 status.TextYAlignment=Enum.TextYAlignment.Center
@@ -402,10 +584,10 @@ local function setStatus(t)
 end
 
 local list=Instance.new("ScrollingFrame",main)
-list.Size=UDim2.new(1,-20,0,226)
+list.Size=UDim2.new(1,-20,0,224)
 list.Position=UDim2.new(0,10,0,92)
 list.BackgroundColor3=Color3.fromRGB(6,6,16)
-list.BackgroundTransparency=0.18
+list.BackgroundTransparency=0.24
 list.BorderSizePixel=0
 list.ScrollBarThickness=4
 list.CanvasSize=UDim2.new(0,0,0,0)
@@ -434,11 +616,11 @@ local function refreshButtons()
 		b.Size=UDim2.new(1,-4,0,38)
 		b.BackgroundColor3=(selected.id==row.id) and Color3.fromRGB(88,58,180) or Color3.fromRGB(18,18,42)
 		b.BackgroundTransparency=(selected.id==row.id) and 0.04 or 0.16
-		b.TextColor3=Color3.fromRGB(255,245,190)
+		b.TextColor3=Color3.fromRGB(230,234,255)
 		b.Font=Enum.Font.GothamBlack
-		b.TextSize=12
+		b.TextSize=11
 		b.TextXAlignment=Enum.TextXAlignment.Left
-		b.Text=("  %s  [%s]  %s"):format(row.label,tostring(row.req),info and "✓ найден" or "× нет")
+		b.Text=("  %s  [%s]  %s"):format(row.label,tostring(row.req),info and "✓" or "×")
 		b.LayoutOrder=i
 		corner(b,9)
 
@@ -462,23 +644,22 @@ local function mkBtn(txt,x,y,w,h,col)
 	b.Size=UDim2.new(0,w,0,h)
 	b.Position=UDim2.new(0,x,0,y)
 	b.Text=txt
-	b.TextColor3=Color3.new(1,1,1)
+	b.TextColor3=Color3.fromRGB(235,238,255)
 	b.BackgroundColor3=col
 	b.Font=Enum.Font.GothamBlack
-	b.TextSize=12
+	b.TextSize=11
 	corner(b,9)
 	return b
 end
 
-local scanBtn=mkBtn("SCAN",10,328,58,34,Color3.fromRGB(78,60,160))
-local tpBtn=mkBtn("TP LOCK",74,328,82,34,Color3.fromRGB(45,105,200))
-local hitBtn=mkBtn("BUG HIT",162,328,78,34,Color3.fromRGB(32,145,72))
-local unlockBtn=mkBtn("UNLOCK",246,328,96,34,Color3.fromRGB(140,75,35))
+local scanBtn=mkBtn("SCAN",10,328,74,34,Color3.fromRGB(68,54,145))
+local tpBtn=mkBtn("TP LOCK",92,328,78,34,Color3.fromRGB(42,88,170))
+local hitBtn=mkBtn("BUG HIT",178,328,82,34,Color3.fromRGB(32,130,70))
+local unlockBtn=mkBtn("UNLOCK",268,328,74,34,Color3.fromRGB(125,72,36))
 
-local copyBtn=mkBtn("COPY",10,370,72,34,Color3.fromRGB(120,85,35))
-local antiBtn=mkBtn("AFK ON",90,370,82,34,Color3.fromRGB(45,100,160))
-local reportBtn=mkBtn("REPORT",180,370,82,34,Color3.fromRGB(95,70,165))
-local stopBtn=mkBtn("STOP",270,370,72,34,Color3.fromRGB(135,34,48))
+local antiBtn=mkBtn("AFK ON",10,370,104,34,Color3.fromRGB(45,88,150))
+local fastBtn=mkBtn("FAST ON",124,370,104,34,Color3.fromRGB(90,72,155))
+local stopBtn=mkBtn("STOP",238,370,104,34,Color3.fromRGB(125,34,46))
 
 local lastReport=""
 
@@ -516,7 +697,7 @@ hitBtn.Activated:Connect(function()
 	if hitting then
 		stopHit(setStatus)
 		hitBtn.Text="BUG HIT"
-		hitBtn.BackgroundColor3=Color3.fromRGB(32,145,72)
+		hitBtn.BackgroundColor3=Color3.fromRGB(32,130,70)
 	else
 		local ok,msg=tpInsideRock(selected)
 		if not ok then
@@ -525,7 +706,7 @@ hitBtn.Activated:Connect(function()
 		end
 		startHit(selected,setStatus)
 		hitBtn.Text="HITTING"
-		hitBtn.BackgroundColor3=Color3.fromRGB(20,185,95)
+		hitBtn.BackgroundColor3=Color3.fromRGB(28,155,82)
 	end
 end)
 
@@ -534,45 +715,21 @@ unlockBtn.Activated:Connect(function()
 	setStatus("UNLOCK: позиция отпущена")
 end)
 
-copyBtn.Activated:Connect(function()
-	if not lastReport or #lastReport<2 then
-		local found=scanRocks()
-		local lines={"RockBug report"}
-		for _,row in ipairs(ROCKS)do
-			local info=found[row.req]
-			table.insert(lines,("%s req=%s %s"):format(row.label,row.req,info and "FOUND" or "NO"))
-		end
-		lastReport=table.concat(lines,"\n")
-	end
-	if setclipboard then
-		pcall(setclipboard,lastReport)
-		setStatus("Отчёт скопирован.")
-	else
-		setStatus("Clipboard недоступен.")
-	end
-end)
 
 antiBtn.Activated:Connect(function()
 	antiAfkEnabled=not antiAfkEnabled
 	antiBtn.Text=antiAfkEnabled and "AFK ON" or "AFK OFF"
-	antiBtn.BackgroundColor3=antiAfkEnabled and Color3.fromRGB(45,100,160) or Color3.fromRGB(120,45,45)
+	antiBtn.BackgroundColor3=antiAfkEnabled and Color3.fromRGB(45,88,150) or Color3.fromRGB(105,42,48)
 	setStatus("Anti AFK: "..(antiAfkEnabled and "включён" or "выключен"))
 end)
 
-reportBtn.Activated:Connect(function()
-	scanRocks()
-	local lines={"RockBug report"}
-	for _,row in ipairs(ROCKS)do
-		local info=rockCache[row.req]
-		table.insert(lines,("%s req=%s %s"):format(row.label,row.req,info and ("FOUND model="..tostring(info.name)) or "NO"))
-	end
-	lastReport=table.concat(lines,"\n")
-	if setclipboard then
-		pcall(setclipboard,lastReport)
-		setStatus("REPORT скопирован.")
-	else
-		setStatus("Clipboard недоступен.")
-	end
+
+fastBtn.Activated:Connect(function()
+	fastHitEnabled=not fastHitEnabled
+	fastBtn.Text=fastHitEnabled and "FAST ON" or "FAST OFF"
+	fastBtn.BackgroundColor3=fastHitEnabled and Color3.fromRGB(90,72,155) or Color3.fromRGB(74,74,86)
+	setStatus("Fast hit: "..(fastHitEnabled and "включён" or "выключен").." | множитель "..tostring(_G.RockBugFastHitPower or fastHitPower))
+	if fastHitEnabled then clearAllLocalCooldowns() end
 end)
 
 stopBtn.Activated:Connect(function()
@@ -580,7 +737,7 @@ stopBtn.Activated:Connect(function()
 	stopLock()
 	setStatus("STOP ALL: всё остановлено")
 	hitBtn.Text="BUG HIT"
-	hitBtn.BackgroundColor3=Color3.fromRGB(32,145,72)
+	hitBtn.BackgroundColor3=Color3.fromRGB(32,130,70)
 end)
 
 min.Activated:Connect(function()
@@ -631,4 +788,4 @@ end)
 -- First scan
 scanRocks()
 refreshButtons()
-setStatus("Готово. Anti AFK включён. Выбери камень → TP LOCK / BUG HIT.")
+setStatus("Готово. FAST ON пробует убрать локальный кулдаун ударов.")
