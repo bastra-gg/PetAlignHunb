@@ -50,7 +50,7 @@ local oldSpeed=nil
 local oldAuto=nil
 local hitting=false
 local fastHitEnabled=false
-local ultraOptEnabled=false
+local OPTIMOptEnabled=false
 local fastHitPower=1 -- v10: обычный КД, без FAST-спама
 
 local function root()
@@ -197,7 +197,7 @@ local function safeSet(obj,key,val)
 	pcall(function()obj[key]=val end)
 end
 
-local function ultraPartOff(obj)
+local function OPTIMPartOff(obj)
 	-- Агрессивная оптимизация, но без поломки функционала:
 	-- физику/касания не трогаем, чтобы удар/камень не отваливались.
 	lowSave(obj,"LocalTransparencyModifier",obj.LocalTransparencyModifier)
@@ -209,7 +209,7 @@ local function ultraPartOff(obj)
 	pcall(function()obj.Reflectance=0 end)
 end
 
-local function ultraEffectOff(obj)
+local function OPTIMEffectOff(obj)
 	if obj:IsA("ParticleEmitter")or obj:IsA("Trail")or obj:IsA("Beam")or obj:IsA("Fire")or obj:IsA("Smoke")or obj:IsA("Sparkles")then
 		lowSave(obj,"Enabled",obj.Enabled)
 		safeSet(obj,"Enabled",false)
@@ -245,7 +245,7 @@ local function ultraEffectOff(obj)
 	return false
 end
 
-local function applyQualityUltra()
+local function applyQualityOPTIM()
 	local lighting=game:GetService("Lighting")
 	pcall(function()
 		lowMapState.lighting.GlobalShadows=lighting.GlobalShadows
@@ -298,7 +298,7 @@ local function applyQualityUltra()
 	end)
 end
 
-local function restoreQualityUltra()
+local function restoreQualityOPTIM()
 	pcall(function()
 		if lowMapState.settings.Render3DDisabled then
 			RunService:Set3dRenderingEnabled(true)
@@ -337,7 +337,7 @@ local function setLowMap(enabled,keepModel,statusFn)
 		lowMapState.count=0
 		lowMapState.removed=0
 
-		applyQualityUltra()
+		applyQualityOPTIM()
 
 		-- Удаляем с клиента целые верхние объекты Workspace, если они не нужны процессу.
 		for _,obj in ipairs(workspace:GetChildren())do
@@ -360,9 +360,9 @@ local function setLowMap(enabled,keepModel,statusFn)
 		for _,obj in ipairs(workspace:GetDescendants())do
 			if not protectObj(obj,keepModel)then
 				if obj:IsA("BasePart")then
-					ultraPartOff(obj)
+					OPTIMPartOff(obj)
 					n+=1
-				elseif ultraEffectOff(obj)then
+				elseif OPTIMEffectOff(obj)then
 					n+=1
 				end
 			end
@@ -379,13 +379,13 @@ local function setLowMap(enabled,keepModel,statusFn)
 
 		lowMapState.count=n
 		if statusFn then
-			statusFn("ULTRA ON: агро-опт, процесс сохранён")
+			statusFn("OPTIM ON: агро-опт, процесс сохранён")
 		end
 	else
 		if not lowMapState.on then return end
 		lowMapState.on=false
 
-		restoreQualityUltra()
+		restoreQualityOPTIM()
 
 		for obj,rec in pairs(lowMapState.saved)do
 			if obj then
@@ -404,7 +404,7 @@ local function setLowMap(enabled,keepModel,statusFn)
 		lowMapState.saved={}
 		lowMapState.count=0
 		lowMapState.removed=0
-		if statusFn then statusFn("ULTRA OFF: карта восстановлена")end
+		if statusFn then statusFn("OPTIM OFF: карта восстановлена")end
 	end
 end
 
@@ -812,7 +812,7 @@ local function startHit(row,statusFn)
 	end)
 
 	if statusFn then
-		statusFn("BUG HIT: быстрый safe-hit"..(ultraOptEnabled and " | ULTRA ON" or "")..(selectedPunchToolName and (" | "..selectedPunchToolName) or ""))
+		statusFn("BUG HIT: быстрый safe-hit"..(OPTIMOptEnabled and " | OPTIM ON" or "")..(selectedPunchToolName and (" | "..selectedPunchToolName) or ""))
 	end
 end
 
@@ -1060,7 +1060,7 @@ local function refreshButtons()
 			selected=row
 			updateSelected()
 			refreshButtons()
-			if ultraOptEnabled then
+			if OPTIMOptEnabled then
 				setLowMap(false,nil,nil)
 				local old=_G.RockBugLowMapTransparency
 				_G.RockBugLowMapTransparency=1
@@ -1102,9 +1102,9 @@ local unlockBtn=makeBtn(row2,"UNLOCK",Color3.fromRGB(120,70,38))
 unlockBtn.Size=UDim2.new(0.5,-5,1,0)
 unlockBtn.Position=UDim2.new(0,0,0,0)
 
-local ultraBtn=makeBtn(row2,"ULTRA 3D",Color3.fromRGB(82,58,135))
-ultraBtn.Size=UDim2.new(0.5,-5,1,0)
-ultraBtn.Position=UDim2.new(0.5,5,0,0)
+local OPTIMBtn=makeBtn(row2,"OPTIM 3D",Color3.fromRGB(82,58,135))
+OPTIMBtn.Size=UDim2.new(0.5,-5,1,0)
+OPTIMBtn.Position=UDim2.new(0.5,5,0,0)
 
 local row3=Instance.new("Frame")
 row3.Parent=main
@@ -1156,12 +1156,12 @@ unlockBtn.Activated:Connect(function()
 	setStatus("UNLOCK: отпущено")
 end)
 
-ultraBtn.Activated:Connect(function()
-	ultraOptEnabled=not ultraOptEnabled
-	ultraBtn.Text=ultraOptEnabled and "ULTRA ON" or "ULTRA 3D"
-	ultraBtn.BackgroundColor3=ultraOptEnabled and Color3.fromRGB(118,65,160) or Color3.fromRGB(82,58,135)
+OPTIMBtn.Activated:Connect(function()
+	OPTIMOptEnabled=not OPTIMOptEnabled
+	OPTIMBtn.Text=OPTIMOptEnabled and "OPTIM ON" or "OPTIM 3D"
+	OPTIMBtn.BackgroundColor3=OPTIMOptEnabled and Color3.fromRGB(118,65,160) or Color3.fromRGB(82,58,135)
 
-	if ultraOptEnabled then
+	if OPTIMOptEnabled then
 		collectPunchRemotes()
 		pcall(function() ensurePunchTool(nil) end)
 		local old=_G.RockBugLowMapTransparency
@@ -1184,9 +1184,9 @@ end)
 stopBtn.Activated:Connect(function()
 	stopHit()
 	stopLock()
-	ultraOptEnabled=false
-	ultraBtn.Text="ULTRA 3D"
-	ultraBtn.BackgroundColor3=Color3.fromRGB(82,58,135)
+	OPTIMOptEnabled=false
+	OPTIMBtn.Text="OPTIM 3D"
+	OPTIMBtn.BackgroundColor3=Color3.fromRGB(82,58,135)
 	setLowMap(false,nil,nil)
 	setStatus("Остановлено")
 	hitBtn.Text="BUG HIT"
