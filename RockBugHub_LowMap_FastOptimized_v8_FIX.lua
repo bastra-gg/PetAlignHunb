@@ -1,4 +1,4 @@
--- Muscle Legends RockBug Hub v9 FULL OPT FAST
+-- Muscle Legends RockBug Hub v10 NORMAL CD + SAFE OPT
 -- Standalone: без Speed Hub. Камни через neededDurability + TP LOCK + BUG HIT + Anti AFK.
 
 local Players=game:GetService("Players")
@@ -23,7 +23,7 @@ startAntiAfk()
 
 -- Анти-дубль.
 pcall(function()
-	local old=lp:WaitForChild("PlayerGui"):FindFirstChild("RockBugHubStandaloneV9")
+	local old=lp:WaitForChild("PlayerGui"):FindFirstChild("RockBugHubStandaloneV10")
 	if old then old:Destroy() end
 end)
 
@@ -49,7 +49,8 @@ local oldSpeed=nil
 local oldAuto=nil
 local hitting=false
 local fastHitEnabled=false
-local fastHitPower=4 -- v9: FAST сильнее. Если лагает: _G.RockBugFastHitPower=2
+local optEnabled=true
+local fastHitPower=1 -- v10: обычный КД, без FAST-спама
 
 local function root()
 	local c=lp.Character
@@ -164,7 +165,6 @@ local lowMapState={
 	saved={},
 	count=0,
 	lighting={},
-	settings={},
 }
 
 local function isProtectedFromLowMap(obj,keepModel)
@@ -183,10 +183,6 @@ local function lowSave(obj,key,val)
 	if rec[key]==nil then rec[key]=val end
 end
 
-local function safeSet(obj,key,val)
-	pcall(function()obj[key]=val end)
-end
-
 local function setLowMap(enabled,keepModel,statusFn)
 	if enabled then
 		if lowMapState.on then return end
@@ -197,71 +193,39 @@ local function setLowMap(enabled,keepModel,statusFn)
 		local lighting=game:GetService("Lighting")
 		pcall(function()
 			lowMapState.lighting.GlobalShadows=lighting.GlobalShadows
-			lowMapState.lighting.Brightness=lighting.Brightness
-			lowMapState.lighting.FogEnd=lighting.FogEnd
-			lowMapState.lighting.EnvironmentDiffuseScale=lighting.EnvironmentDiffuseScale
-			lowMapState.lighting.EnvironmentSpecularScale=lighting.EnvironmentSpecularScale
-
 			lighting.GlobalShadows=false
-			lighting.Brightness=1
-			lighting.FogEnd=80
-			lighting.EnvironmentDiffuseScale=0
-			lighting.EnvironmentSpecularScale=0
 		end)
 
-		-- Пытаемся снизить качество рендера локально.
-		pcall(function()
-			local ugs=UserSettings():GetService("UserGameSettings")
-			lowMapState.settings.SavedQualityLevel=ugs.SavedQualityLevel
-			ugs.SavedQualityLevel=Enum.SavedQualitySetting.QualityLevel1
-		end)
-
-		local trans=_G.RockBugLowMapTransparency
-		if trans==nil then trans=1 end
-
-		local n=0
 		for _,obj in ipairs(workspace:GetDescendants())do
 			if not isProtectedFromLowMap(obj,keepModel)then
 				if obj:IsA("BasePart")then
 					lowSave(obj,"LocalTransparencyModifier",obj.LocalTransparencyModifier)
 					lowSave(obj,"CastShadow",obj.CastShadow)
-					safeSet(obj,"LocalTransparencyModifier",trans)
-					safeSet(obj,"CastShadow",false)
-					n+=1
+					pcall(function()
+						obj.LocalTransparencyModifier=math.max(obj.LocalTransparencyModifier,_G.RockBugLowMapTransparency or 0.45)
+						obj.CastShadow=false
+					end)
+					lowMapState.count+=1
 
 				elseif obj:IsA("ParticleEmitter")or obj:IsA("Trail")or obj:IsA("Beam")or obj:IsA("Fire")or obj:IsA("Smoke")or obj:IsA("Sparkles")then
 					lowSave(obj,"Enabled",obj.Enabled)
-					safeSet(obj,"Enabled",false)
-					n+=1
+					pcall(function()obj.Enabled=false end)
+					lowMapState.count+=1
 
 				elseif obj:IsA("Decal")or obj:IsA("Texture")then
 					lowSave(obj,"Transparency",obj.Transparency)
-					safeSet(obj,"Transparency",1)
-					n+=1
+					pcall(function()obj.Transparency=1 end)
+					lowMapState.count+=1
 
 				elseif obj:IsA("PointLight")or obj:IsA("SpotLight")or obj:IsA("SurfaceLight")then
 					lowSave(obj,"Enabled",obj.Enabled)
-					safeSet(obj,"Enabled",false)
-					n+=1
-
-				elseif obj:IsA("BillboardGui")or obj:IsA("SurfaceGui")then
-					lowSave(obj,"Enabled",obj.Enabled)
-					safeSet(obj,"Enabled",false)
-					n+=1
-
-				elseif obj:IsA("Highlight")then
-					lowSave(obj,"Enabled",obj.Enabled)
-					safeSet(obj,"Enabled",false)
-					n+=1
+					pcall(function()obj.Enabled=false end)
+					lowMapState.count+=1
 				end
 			end
-
-			-- Чтобы включение LOW MAP не фризило телефон намертво.
-			if n%350==0 then task.wait() end
 		end
 
-		lowMapState.count=n
-		if statusFn then statusFn("FULL OPT ON: карта скрыта ("..n..")")end
+		if statusFn then statusFn("LOW MAP ON: карта приглушена ("..lowMapState.count..")")end
 	else
 		if not lowMapState.on then return end
 		lowMapState.on=false
@@ -269,7 +233,7 @@ local function setLowMap(enabled,keepModel,statusFn)
 		for obj,rec in pairs(lowMapState.saved)do
 			if obj and obj.Parent then
 				for k,v in pairs(rec)do
-					safeSet(obj,k,v)
+					pcall(function()obj[k]=v end)
 				end
 			end
 		end
@@ -277,24 +241,15 @@ local function setLowMap(enabled,keepModel,statusFn)
 
 		local lighting=game:GetService("Lighting")
 		pcall(function()
-			for k,v in pairs(lowMapState.lighting)do
-				lighting[k]=v
+			if lowMapState.lighting.GlobalShadows~=nil then
+				lighting.GlobalShadows=lowMapState.lighting.GlobalShadows
 			end
 		end)
 		lowMapState.lighting={}
 
-		pcall(function()
-			local ugs=UserSettings():GetService("UserGameSettings")
-			if lowMapState.settings.SavedQualityLevel~=nil then
-				ugs.SavedQualityLevel=lowMapState.settings.SavedQualityLevel
-			end
-		end)
-		lowMapState.settings={}
-
-		if statusFn then statusFn("FULL OPT OFF: карта восстановлена")end
+		if statusFn then statusFn("LOW MAP OFF: карта восстановлена")end
 	end
 end
-
 
 local function stopLock()
 	if lockConn then lockConn:Disconnect() lockConn=nil end
@@ -359,71 +314,202 @@ local function tpInsideRock(row)
 	return true,info
 end
 
-local cachedPunchRemotes=nil
-
-local function collectPunchRemotes()
-	if cachedPunchRemotes then return cachedPunchRemotes end
-	cachedPunchRemotes={}
-
-	local function add(remote)
-		if remote and remote:IsA("RemoteEvent")then
-			for _,r in ipairs(cachedPunchRemotes)do
-				if r==remote then return end
-			end
-			table.insert(cachedPunchRemotes,remote)
-		end
-	end
-
+local function firePunchRemote()
+	-- Основной рабочий вариант для Muscle Legends: punch + rightHand.
 	pcall(function()
-		if lp:FindFirstChild("muscleEvent")then add(lp.muscleEvent)end
+		if lp:FindFirstChild("muscleEvent")then
+			lp.muscleEvent:FireServer("punch","rightHand")
+			lp.muscleEvent:FireServer("punch","leftHand")
+		end
 	end)
 
 	pcall(function()
 		local rs=game:GetService("ReplicatedStorage")
 		local re=rs:FindFirstChild("rEvents")
-		if re then
-			local ev=re:FindFirstChild("muscleEvent")
-			if ev then add(ev)end
-		end
-	end)
-
-	-- Запасной поиск, но только один раз, не каждый тик.
-	pcall(function()
-		local rs=game:GetService("ReplicatedStorage")
-		for _,d in ipairs(rs:GetDescendants())do
-			if d:IsA("RemoteEvent")then
-				local n=tostring(d.Name):lower()
-				local p=tostring(d:GetFullName()):lower()
-				if n=="muscleevent" or (n:find("muscle",1,true) and p:find("event",1,true)) or n:find("punch",1,true)then
-					add(d)
-				end
-			end
-		end
-	end)
-
-	return cachedPunchRemotes
-end
-
-local function firePunchRemote()
-	local remotes=collectPunchRemotes()
-
-	for _,ev in ipairs(remotes)do
-		pcall(function()
+		local ev=re and re:FindFirstChild("muscleEvent")
+		if ev and ev.FireServer then
 			ev:FireServer("punch","rightHand")
 			ev:FireServer("punch","leftHand")
-		end)
+			ev:FireServer("punch")
+		end
+	end)
+end
 
-		-- Эти варианты включаются только при FAST, чтобы обычный режим не спамил лишнее.
-		if fastHitEnabled then
-			pcall(function()
-				ev:FireServer("punch")
-				ev:FireServer("rightHand")
-				ev:FireServer("leftHand")
-			end)
+local lastEquipTry=0
+local selectedPunchToolName=nil
+
+local function toolScore(tool)
+	if not tool or not tool:IsA("Tool")then return -999 end
+
+	local n=tostring(tool.Name):lower()
+	local full=""
+	pcall(function() full=tostring(tool:GetFullName()):lower() end)
+
+	-- Для багов по камню нужен именно Punch. Вес/гантели/штанги/тренировки не подходят.
+	local hardBad={
+		"weight","dumb","barbell","bench","push","sit","handstand",
+		"гант","гир","штанг","вес","отжим","пресс"
+	}
+	for _,w in ipairs(hardBad)do
+		if n:find(w,1,true) or full:find(w,1,true) then
+			return -999
+		end
+	end
+
+	-- Лучший вариант: точное имя Punch.
+	if n=="punch" or n=="punches" or n=="удар" or n=="кулак" then
+		return 10000
+	end
+
+	-- Потом любые варианты с punch/кулак.
+	if n:find("punch",1,true) or n:find("кулак",1,true) or n:find("удар",1,true) then
+		return 9000
+	end
+
+	-- Если внутри Tool есть скрипты/ремоуты с punch — тоже вероятно правильный инструмент.
+	for _,d in ipairs(tool:GetDescendants())do
+		local dn=tostring(d.Name):lower()
+		if dn:find("punch",1,true) or dn:find("кулак",1,true) or dn:find("удар",1,true) then
+			return 7500
+		end
+	end
+
+	-- Fist оставляем только как запасной вариант, если Punch реально не найден.
+	if n:find("fist",1,true) or n:find("combat",1,true) or n:find("hand",1,true) then
+		return 1200
+	end
+
+	return -999
+end
+
+
+local function clearToolCooldowns(tool)
+	if not tool then return end
+
+	local cooldownNames={
+		"Cooldown","cooldown","CD","cd","Delay","delay",
+		"AttackCooldown","attackCooldown","SwingCooldown","swingCooldown",
+		"LastUse","lastUse","LastSwing","lastSwing","LastAttack","lastAttack",
+		"CanUse","canUse","CanSwing","canSwing","Ready","ready"
+	}
+
+	local function fixObj(obj)
+		for _,name in ipairs(cooldownNames)do
+			local child=nil
+			pcall(function()child=obj:FindFirstChild(name)end)
+			if child then
+				pcall(function()
+					if child:IsA("NumberValue")or child:IsA("IntValue")then child.Value=0 end
+					if child:IsA("BoolValue")then child.Value=true end
+					if child:IsA("StringValue")then child.Value="0" end
+				end)
+			end
+		end
+
+		pcall(function()
+			for _,name in ipairs(cooldownNames)do
+				local v=obj:GetAttribute(name)
+				if v~=nil then
+					if type(v)=="number"then obj:SetAttribute(name,0)end
+					if type(v)=="boolean"then obj:SetAttribute(name,true)end
+					if type(v)=="string"then obj:SetAttribute(name,"0")end
+				end
+			end
+		end)
+	end
+
+	fixObj(tool)
+	for _,d in ipairs(tool:GetDescendants())do
+		fixObj(d)
+	end
+end
+
+local function clearAllLocalCooldowns()
+	local c=lp.Character
+	local bp=lp:FindFirstChildOfClass("Backpack")
+
+	for _,container in ipairs({c,bp})do
+		if container then
+			for _,tool in ipairs(container:GetChildren())do
+				if tool:IsA("Tool")then
+					clearToolCooldowns(tool)
+				end
+			end
 		end
 	end
 end
 
+local function findBestPunchTool()
+	local c=lp.Character
+	local bp=lp:FindFirstChildOfClass("Backpack")
+	local best=nil
+	local bestScore=-999
+
+	local function scan(container,bonus)
+		if not container then return end
+		for _,tool in ipairs(container:GetChildren())do
+			if tool:IsA("Tool")then
+				local sc=toolScore(tool)+bonus
+				if sc>bestScore then
+					bestScore=sc
+					best=tool
+				end
+			end
+		end
+	end
+
+	-- Сначала уже экипнутый нормальный предмет, потом Backpack.
+	scan(c,20)
+	scan(bp,0)
+
+	if bestScore<=0 then return nil end
+	return best,bestScore
+end
+
+local function ensurePunchTool(statusFn)
+	local c=lp.Character
+	local h=hum()
+	if not c or not h then return nil end
+
+	local equipped=nil
+	local equippedBad=false
+
+	for _,tool in ipairs(c:GetChildren())do
+		if tool:IsA("Tool")then
+			if toolScore(tool)>0 then
+				equipped=tool
+			else
+				equippedBad=true
+			end
+		end
+	end
+
+	if equipped then
+		selectedPunchToolName=equipped.Name
+		return equipped
+	end
+
+	if equippedBad then
+		pcall(function()h:UnequipTools()end)
+		task.wait(.05)
+	end
+
+	local best=findBestPunchTool()
+	if best and best.Parent~=c then
+		pcall(function()h:EquipTool(best)end)
+		task.wait(.08)
+	end
+
+	if best then
+		clearToolCooldowns(best)
+		selectedPunchToolName=best.Name
+		if statusFn then statusFn("BUG HIT: выбран Punch → "..best.Name)end
+		return best
+	end
+
+	if statusFn then statusFn("BUG HIT: предмет не найден, бью remote/touch")end
+	return nil
+end
 
 local function activateFistTool(statusFn)
 	if os.clock()-lastEquipTry>1.2 then
@@ -494,17 +580,12 @@ local function startHit(row,statusFn)
 
 	local tool=ensurePunchTool(statusFn)
 	local info=getRock(row)
-	if fastHitEnabled then
+
+	if optEnabled then
 		setLowMap(true,info and info.model,statusFn)
 	end
-	if fastHitEnabled and tool then
-		clearToolCooldowns(tool)
-	end
-
-	collectPunchRemotes()
 
 	local lastTouch=0
-	local lastCooldownClear=0
 	local lastEquip=0
 	local lastActivate=0
 
@@ -512,45 +593,32 @@ local function startHit(row,statusFn)
 		while hitting and myId==hitLoopId do
 			local now=os.clock()
 
-			-- Не сканим весь Backpack каждый тик.
+			-- Обычный КД: не спамим, не чистим cooldown, не душим телефон.
 			if now-lastEquip>2.0 then
 				lastEquip=now
 				tool=ensurePunchTool(nil) or currentPunchTool()
 			end
 
-			if fastHitEnabled and tool and now-lastCooldownClear>1.6 then
-				lastCooldownClear=now
-				clearToolCooldowns(tool)
-			end
+			firePunchRemote()
 
-			local loops=1
-			if fastHitEnabled then
-				loops=math.clamp(tonumber(_G.RockBugFastHitPower or fastHitPower)or 1,1,6)
-			end
-
-			-- FAST теперь усиливает именно remote punch, а Tool:Activate не спамится каждый повтор.
-			for _=1,loops do
-				firePunchRemote()
-			end
-
-			if tool and tool.Parent and (now-lastActivate>=(_G.RockBugActivateDelay or 0.18)) then
+			if tool and tool.Parent and now-lastActivate>=(_G.RockBugActivateDelay or 0.22) then
 				lastActivate=now
 				pcall(function()tool:Activate()end)
 			elseif not tool or not tool.Parent then
 				activateFistTool(nil)
 			end
 
-			if now-lastTouch>=(_G.RockBugTouchDelay or 0.35) then
+			if now-lastTouch>=(_G.RockBugTouchDelay or 0.40) then
 				lastTouch=now
 				touchRock(row)
 			end
 
-			task.wait(_G.RockBugHitDelay or (fastHitEnabled and 0.055 or 0.14))
+			task.wait(_G.RockBugHitDelay or 0.16)
 		end
 	end)
 
 	if statusFn then
-		statusFn("BUG HIT: включён | FAST "..(fastHitEnabled and "ON" or "OFF").." x"..tostring(_G.RockBugFastHitPower or fastHitPower)..(selectedPunchToolName and (" | "..selectedPunchToolName) or ""))
+		statusFn("BUG HIT: обычный КД | OPT "..(optEnabled and "ON" or "OFF")..(selectedPunchToolName and (" | "..selectedPunchToolName) or ""))
 	end
 end
 
@@ -565,7 +633,7 @@ end
 
 -- UI
 local gui=Instance.new("ScreenGui")
-gui.Name="RockBugHubStandaloneV9"
+gui.Name="RockBugHubStandaloneV10"
 gui.ResetOnSpawn=false
 gui.IgnoreGuiInset=true
 gui.DisplayOrder=999999
@@ -737,7 +805,7 @@ local hitBtn=mkBtn("BUG HIT",178,328,82,34,Color3.fromRGB(32,130,70))
 local unlockBtn=mkBtn("UNLOCK",268,328,74,34,Color3.fromRGB(125,72,36))
 
 local antiBtn=mkBtn("AFK ON",10,370,104,34,Color3.fromRGB(45,88,150))
-local fastBtn=mkBtn("FAST OFF",124,370,104,34,Color3.fromRGB(74,74,86))
+local optBtn=mkBtn("OPT ON",124,370,104,34,Color3.fromRGB(70,82,125))
 local stopBtn=mkBtn("STOP",238,370,104,34,Color3.fromRGB(125,34,46))
 
 local lastReport=""
@@ -803,30 +871,25 @@ antiBtn.Activated:Connect(function()
 end)
 
 
-fastBtn.Activated:Connect(function()
-	fastHitEnabled=not fastHitEnabled
-	fastBtn.Text=fastHitEnabled and "FAST ON" or "FAST OFF"
-	fastBtn.BackgroundColor3=fastHitEnabled and Color3.fromRGB(90,72,155) or Color3.fromRGB(74,74,86)
+optBtn.Activated:Connect(function()
+	optEnabled=not optEnabled
+	optBtn.Text=optEnabled and "OPT ON" or "OPT OFF"
+	optBtn.BackgroundColor3=optEnabled and Color3.fromRGB(70,82,125) or Color3.fromRGB(74,74,86)
 
-	if fastHitEnabled then
-		local t=currentPunchTool()
-		if t then clearToolCooldowns(t) end
-		collectPunchRemotes()
-		if hitting then
-			local info=getRock(selected)
-			setLowMap(true,info and info.model,nil)
-		end
-	else
+	if not optEnabled then
 		setLowMap(false,nil,nil)
+	elseif hitting then
+		local info=getRock(selected)
+		setLowMap(true,info and info.model,nil)
 	end
 
-	setStatus("FAST "..(fastHitEnabled and "ON" or "OFF").." | FULL OPT "..(lowMapState.on and "ON" or "OFF").." | x"..tostring(_G.RockBugFastHitPower or fastHitPower))
+	setStatus("OPT "..(optEnabled and "ON" or "OFF").." | обычный КД")
 end)
 
 stopBtn.Activated:Connect(function()
 	stopHit()
 	stopLock()
-	setStatus("STOP ALL: всё остановлено")
+	setStatus("STOP ALL: всё остановлено, карта восстановлена")
 	hitBtn.Text="BUG HIT"
 	hitBtn.BackgroundColor3=Color3.fromRGB(32,130,70)
 end)
@@ -879,4 +942,4 @@ end)
 -- First scan
 scanRocks()
 refreshButtons()
-setStatus("v9: FAST усилен, FULL OPT скрывает карту почти полностью.")
+setStatus("v10: обычный КД + безопасная оптимизация карты.")
