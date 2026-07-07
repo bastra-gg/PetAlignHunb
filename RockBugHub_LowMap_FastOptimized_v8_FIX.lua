@@ -1,4 +1,4 @@
--- Muscle Legends RockBug Hub v10 NORMAL CD + SAFE OPT
+-- Muscle Legends RockBug Hub v11 NEW UI
 -- Standalone: без Speed Hub. Камни через neededDurability + TP LOCK + BUG HIT + Anti AFK.
 
 local Players=game:GetService("Players")
@@ -23,7 +23,7 @@ startAntiAfk()
 
 -- Анти-дубль.
 pcall(function()
-	local old=lp:WaitForChild("PlayerGui"):FindFirstChild("RockBugHubStandaloneV10")
+	local old=lp:WaitForChild("PlayerGui"):FindFirstChild("RockBugHubStandaloneV11")
 	if old then old:Destroy() end
 end)
 
@@ -631,182 +631,293 @@ local function stopHit(statusFn)
 	if statusFn then statusFn("BUG HIT: остановлен")end
 end
 
--- UI
+-- UI v11: полностью новый дизайн
 local gui=Instance.new("ScreenGui")
-gui.Name="RockBugHubStandaloneV10"
+gui.Name="RockBugHubStandaloneV11"
 gui.ResetOnSpawn=false
 gui.IgnoreGuiInset=true
 gui.DisplayOrder=999999
 gui.Parent=lp:WaitForChild("PlayerGui")
 
+local UserInputService=game:GetService("UserInputService")
+
 local function corner(o,r)
-	local c=Instance.new("UICorner",o)
-	c.CornerRadius=UDim.new(0,r or 10)
+	local c=Instance.new("UICorner")
+	c.CornerRadius=UDim.new(0,r or 12)
+	c.Parent=o
 	return c
 end
 
-local function stroke(o,col,t)
-	local s=Instance.new("UIStroke",o)
-	s.Color=col or Color3.fromRGB(140,90,255)
+local function stroke(o,col,t,trans)
+	local s=Instance.new("UIStroke")
+	s.Color=col or Color3.fromRGB(130,110,255)
 	s.Thickness=t or 1
+	s.Transparency=trans or 0
+	s.Parent=o
 	return s
 end
 
-local main=Instance.new("Frame",gui)
-main.Size=UDim2.new(0,352,0,418)
-main.Position=UDim2.new(0,14,0,95)
-main.BackgroundColor3=Color3.fromRGB(8,8,18)
-main.BackgroundTransparency=0.20
-main.BorderSizePixel=0
-main.Active=true
-corner(main,16)
-stroke(main,Color3.fromRGB(132,74,255),1.5)
-
-local top=Instance.new("Frame",main)
-top.Size=UDim2.new(1,0,0,42)
-top.BackgroundColor3=Color3.fromRGB(12,12,28)
-top.BackgroundTransparency=0.14
-top.BorderSizePixel=0
-corner(top,16)
-
-local title=Instance.new("TextLabel",top)
-title.Size=UDim2.new(1,-84,1,0)
-title.Position=UDim2.new(0,12,0,0)
-title.BackgroundTransparency=1
-title.Text="Rock Bug Hub"
-title.TextColor3=Color3.fromRGB(235,238,255)
-title.Font=Enum.Font.GothamBlack
-title.TextSize=16
-title.TextXAlignment=Enum.TextXAlignment.Left
-
-local min=Instance.new("TextButton",top)
-min.Size=UDim2.new(0,30,0,28)
-min.Position=UDim2.new(1,-68,0,7)
-min.Text="−"
-min.TextColor3=Color3.new(1,1,1)
-min.BackgroundColor3=Color3.fromRGB(47,40,90)
-min.Font=Enum.Font.GothamBlack
-min.TextSize=17
-corner(min,8)
-
-local close=Instance.new("TextButton",top)
-close.Size=UDim2.new(0,30,0,28)
-close.Position=UDim2.new(1,-34,0,7)
-close.Text="×"
-close.TextColor3=Color3.fromRGB(255,190,200)
-close.BackgroundColor3=Color3.fromRGB(78,25,40)
-close.Font=Enum.Font.GothamBlack
-close.TextSize=17
-corner(close,8)
-
-local mini=Instance.new("TextButton",gui)
-mini.Size=UDim2.new(0,86,0,34)
-mini.Position=main.Position
-mini.Text="ROCK BUG"
-mini.TextColor3=Color3.fromRGB(235,238,255)
-mini.BackgroundColor3=Color3.fromRGB(75,45,170)
-mini.BackgroundTransparency=0.16
-mini.Font=Enum.Font.GothamBlack
-mini.TextSize=11
-mini.Visible=false
-corner(mini,10)
-stroke(mini,Color3.fromRGB(150,92,255),1)
-
-local status=Instance.new("TextLabel",main)
-status.Size=UDim2.new(1,-20,0,36)
-status.Position=UDim2.new(0,10,0,48)
-status.BackgroundColor3=Color3.fromRGB(12,12,30)
-status.BackgroundTransparency=0.16
-status.Text="SCAN → выбери камень → TP LOCK / BUG HIT"
-status.TextColor3=Color3.fromRGB(225,230,255)
-status.Font=Enum.Font.GothamBold
-status.TextSize=11
-status.TextWrapped=true
-status.TextXAlignment=Enum.TextXAlignment.Left
-status.TextYAlignment=Enum.TextYAlignment.Center
-corner(status,10)
-
-local function setStatus(t)
-	status.Text=tostring(t)
+local function grad(o,c1,c2,rot)
+	local g=Instance.new("UIGradient")
+	g.Color=ColorSequence.new(c1,c2)
+	g.Rotation=rot or 0
+	g.Parent=o
+	return g
 end
 
-local list=Instance.new("ScrollingFrame",main)
-list.Size=UDim2.new(1,-20,0,224)
-list.Position=UDim2.new(0,10,0,92)
-list.BackgroundColor3=Color3.fromRGB(6,6,16)
-list.BackgroundTransparency=0.24
+local function txt(parent,text,size,pos,font,col)
+	local l=Instance.new("TextLabel")
+	l.Parent=parent
+	l.BackgroundTransparency=1
+	l.Text=text or ""
+	l.TextColor3=col or Color3.fromRGB(235,238,255)
+	l.Font=font or Enum.Font.GothamBold
+	l.TextSize=size or 12
+	l.TextXAlignment=Enum.TextXAlignment.Left
+	l.TextYAlignment=Enum.TextYAlignment.Center
+	l.TextWrapped=true
+	l.Position=pos or UDim2.new()
+	return l
+end
+
+local main=Instance.new("Frame")
+main.Parent=gui
+main.Size=UDim2.new(0,360,0,456)
+main.Position=UDim2.new(0,16,0,86)
+main.BackgroundColor3=Color3.fromRGB(8,9,20)
+main.BackgroundTransparency=0.12
+main.BorderSizePixel=0
+main.Active=true
+corner(main,20)
+stroke(main,Color3.fromRGB(120,95,255),1.4,0.12)
+
+local mainGrad=grad(main,Color3.fromRGB(13,15,34),Color3.fromRGB(7,8,18),90)
+
+local top=Instance.new("Frame")
+top.Parent=main
+top.Size=UDim2.new(1,0,0,58)
+top.BackgroundColor3=Color3.fromRGB(18,18,42)
+top.BackgroundTransparency=0.08
+top.BorderSizePixel=0
+corner(top,20)
+grad(top,Color3.fromRGB(75,50,165),Color3.fromRGB(16,18,42),0)
+
+local title=txt(top,"ROCK BUG",18,UDim2.new(0,16,0,7),Enum.Font.GothamBlack,Color3.fromRGB(255,255,255))
+title.Size=UDim2.new(1,-112,0,24)
+
+local sub=txt(top,"обычный КД • safe opt • punch",10,UDim2.new(0,17,0,31),Enum.Font.GothamBold,Color3.fromRGB(205,208,230))
+sub.Size=UDim2.new(1,-120,0,18)
+
+local min=Instance.new("TextButton")
+min.Parent=top
+min.Size=UDim2.new(0,34,0,32)
+min.Position=UDim2.new(1,-76,0,13)
+min.Text="−"
+min.TextColor3=Color3.fromRGB(245,246,255)
+min.BackgroundColor3=Color3.fromRGB(44,40,80)
+min.BackgroundTransparency=0.08
+min.Font=Enum.Font.GothamBlack
+min.TextSize=18
+min.AutoButtonColor=true
+corner(min,10)
+
+local close=Instance.new("TextButton")
+close.Parent=top
+close.Size=UDim2.new(0,34,0,32)
+close.Position=UDim2.new(1,-38,0,13)
+close.Text="×"
+close.TextColor3=Color3.fromRGB(255,205,215)
+close.BackgroundColor3=Color3.fromRGB(82,30,42)
+close.BackgroundTransparency=0.06
+close.Font=Enum.Font.GothamBlack
+close.TextSize=18
+close.AutoButtonColor=true
+corner(close,10)
+
+local mini=Instance.new("TextButton")
+mini.Parent=gui
+mini.Size=UDim2.new(0,100,0,38)
+mini.Position=main.Position
+mini.Visible=false
+mini.Text="ROCK BUG"
+mini.TextColor3=Color3.fromRGB(240,242,255)
+mini.BackgroundColor3=Color3.fromRGB(58,44,138)
+mini.BackgroundTransparency=0.08
+mini.Font=Enum.Font.GothamBlack
+mini.TextSize=12
+corner(mini,12)
+stroke(mini,Color3.fromRGB(145,115,255),1,0.1)
+
+local selectedBox=Instance.new("Frame")
+selectedBox.Parent=main
+selectedBox.Size=UDim2.new(1,-20,0,58)
+selectedBox.Position=UDim2.new(0,10,0,68)
+selectedBox.BackgroundColor3=Color3.fromRGB(15,17,36)
+selectedBox.BackgroundTransparency=0.13
+selectedBox.BorderSizePixel=0
+corner(selectedBox,16)
+stroke(selectedBox,Color3.fromRGB(90,75,160),1,0.25)
+
+local selectedSmall=txt(selectedBox,"ВЫБРАННЫЙ КАМЕНЬ",10,UDim2.new(0,12,0,8),Enum.Font.GothamBlack,Color3.fromRGB(155,165,205))
+selectedSmall.Size=UDim2.new(1,-24,0,13)
+
+local selectedName=txt(selectedBox,"-",18,UDim2.new(0,12,0,22),Enum.Font.GothamBlack,Color3.fromRGB(255,238,180))
+selectedName.Size=UDim2.new(1,-24,0,25)
+
+local status=txt(main,"SCAN → выбери камень → BUG HIT",11,UDim2.new(0,12,0,132),Enum.Font.GothamBold,Color3.fromRGB(220,225,255))
+status.Size=UDim2.new(1,-24,0,36)
+status.BackgroundColor3=Color3.fromRGB(10,12,28)
+status.BackgroundTransparency=0.18
+status.BorderSizePixel=0
+status.TextXAlignment=Enum.TextXAlignment.Center
+corner(status,12)
+stroke(status,Color3.fromRGB(70,65,130),1,0.45)
+
+local function setStatus(t)
+	status.Text=tostring(t or "")
+end
+
+local list=Instance.new("ScrollingFrame")
+list.Parent=main
+list.Size=UDim2.new(1,-20,0,174)
+list.Position=UDim2.new(0,10,0,176)
+list.BackgroundColor3=Color3.fromRGB(7,8,18)
+list.BackgroundTransparency=0.22
 list.BorderSizePixel=0
-list.ScrollBarThickness=4
+list.ScrollBarThickness=3
+list.ScrollBarImageColor3=Color3.fromRGB(120,100,255)
 list.CanvasSize=UDim2.new(0,0,0,0)
-corner(list,12)
-stroke(list,Color3.fromRGB(65,55,120),1)
+list.Active=true
+corner(list,16)
+stroke(list,Color3.fromRGB(52,48,100),1,0.45)
 
-local pad=Instance.new("UIPadding",list)
-pad.PaddingTop=UDim.new(0,6)
-pad.PaddingLeft=UDim.new(0,6)
-pad.PaddingRight=UDim.new(0,6)
-pad.PaddingBottom=UDim.new(0,6)
+local grid=Instance.new("UIGridLayout")
+grid.Parent=list
+grid.CellSize=UDim2.new(0,160,0,52)
+grid.CellPadding=UDim2.new(0,7,0,7)
+grid.SortOrder=Enum.SortOrder.LayoutOrder
 
-local layout=Instance.new("UIListLayout",list)
-layout.Padding=UDim.new(0,6)
-layout.SortOrder=Enum.SortOrder.LayoutOrder
+local pad=Instance.new("UIPadding")
+pad.Parent=list
+pad.PaddingTop=UDim.new(0,8)
+pad.PaddingLeft=UDim.new(0,8)
+pad.PaddingRight=UDim.new(0,8)
+pad.PaddingBottom=UDim.new(0,8)
 
 local buttons={}
 
+local function updateSelectedBox()
+	selectedName.Text=(selected and selected.label or "?").."  ["..tostring(selected and selected.req or "?").."]"
+end
+
 local function refreshButtons()
-	for _,b in pairs(buttons)do b:Destroy()end
+	for _,b in pairs(buttons)do
+		if b and b.Parent then b:Destroy()end
+	end
 	buttons={}
+
+	local foundCount=0
+	for _,row in ipairs(ROCKS)do
+		if rockCache[row.req]then foundCount+=1 end
+	end
 
 	for i,row in ipairs(ROCKS)do
 		local info=rockCache[row.req]
-		local b=Instance.new("TextButton",list)
-		b.Size=UDim2.new(1,-4,0,38)
-		b.BackgroundColor3=(selected.id==row.id) and Color3.fromRGB(88,58,180) or Color3.fromRGB(18,18,42)
-		b.BackgroundTransparency=(selected.id==row.id) and 0.04 or 0.16
-		b.TextColor3=Color3.fromRGB(230,234,255)
-		b.Font=Enum.Font.GothamBlack
-		b.TextSize=11
-		b.TextXAlignment=Enum.TextXAlignment.Left
-		b.Text=("  %s  [%s]  %s"):format(row.label,tostring(row.req),info and "✓" or "×")
-		b.LayoutOrder=i
-		corner(b,9)
+		local active=selected and selected.id==row.id
 
-		local st=stroke(b,row.color,1)
-		st.Transparency=info and 0 or .55
+		local b=Instance.new("TextButton")
+		b.Parent=list
+		b.Name="Rock_"..row.id
+		b.LayoutOrder=i
+		b.Text=""
+		b.AutoButtonColor=true
+		b.BackgroundColor3=active and Color3.fromRGB(55,42,125) or Color3.fromRGB(16,18,38)
+		b.BackgroundTransparency=active and 0.03 or 0.14
+		b.BorderSizePixel=0
+		corner(b,13)
+		stroke(b,info and row.color or Color3.fromRGB(70,70,95),active and 1.4 or 1,info and 0.12 or 0.55)
+
+		local name=txt(b,row.label,12,UDim2.new(0,9,0,6),Enum.Font.GothamBlack,active and Color3.fromRGB(255,240,190) or Color3.fromRGB(225,230,250))
+		name.Size=UDim2.new(1,-18,0,18)
+
+		local meta=txt(b,"req "..tostring(row.req),9,UDim2.new(0,9,0,27),Enum.Font.GothamBold,Color3.fromRGB(150,158,190))
+		meta.Size=UDim2.new(1,-42,0,16)
+
+		local dot=txt(b,info and "●" or "○",18,UDim2.new(1,-26,0,23),Enum.Font.GothamBlack,info and Color3.fromRGB(90,255,155) or Color3.fromRGB(120,120,145))
+		dot.Size=UDim2.new(0,20,0,20)
+		dot.TextXAlignment=Enum.TextXAlignment.Center
 
 		b.Activated:Connect(function()
 			selected=row
+			updateSelectedBox()
 			refreshButtons()
-			setStatus("Выбран: "..row.label.." | req "..row.req)
+			setStatus("Выбран: "..row.label)
 		end)
 
 		table.insert(buttons,b)
 	end
 
-	list.CanvasSize=UDim2.new(0,0,0,#ROCKS*44+12)
+	local rows=math.ceil(#ROCKS/2)
+	list.CanvasSize=UDim2.new(0,0,0,rows*59+18)
+	updateSelectedBox()
 end
 
-local function mkBtn(txt,x,y,w,h,col)
-	local b=Instance.new("TextButton",main)
-	b.Size=UDim2.new(0,w,0,h)
-	b.Position=UDim2.new(0,x,0,y)
-	b.Text=txt
-	b.TextColor3=Color3.fromRGB(235,238,255)
+local function mkBtn(parent,text,col)
+	local b=Instance.new("TextButton")
+	b.Parent=parent
+	b.Size=UDim2.new(1,0,1,0)
+	b.Text=text
+	b.TextColor3=Color3.fromRGB(238,240,255)
 	b.BackgroundColor3=col
+	b.BackgroundTransparency=0.06
 	b.Font=Enum.Font.GothamBlack
 	b.TextSize=11
-	corner(b,9)
+	b.AutoButtonColor=true
+	b.BorderSizePixel=0
+	corner(b,13)
+	stroke(b,Color3.fromRGB(255,255,255),1,0.88)
 	return b
 end
 
-local scanBtn=mkBtn("SCAN",10,328,74,34,Color3.fromRGB(68,54,145))
-local tpBtn=mkBtn("TP LOCK",92,328,78,34,Color3.fromRGB(42,88,170))
-local hitBtn=mkBtn("BUG HIT",178,328,82,34,Color3.fromRGB(32,130,70))
-local unlockBtn=mkBtn("UNLOCK",268,328,74,34,Color3.fromRGB(125,72,36))
+local actionWrap=Instance.new("Frame")
+actionWrap.Parent=main
+actionWrap.Size=UDim2.new(1,-20,0,88)
+actionWrap.Position=UDim2.new(0,10,0,360)
+actionWrap.BackgroundTransparency=1
 
-local antiBtn=mkBtn("AFK ON",10,370,104,34,Color3.fromRGB(45,88,150))
-local optBtn=mkBtn("OPT ON",124,370,104,34,Color3.fromRGB(70,82,125))
-local stopBtn=mkBtn("STOP",238,370,104,34,Color3.fromRGB(125,34,46))
+local actionGrid=Instance.new("UIGridLayout")
+actionGrid.Parent=actionWrap
+actionGrid.CellSize=UDim2.new(0,105,0,38)
+actionGrid.CellPadding=UDim2.new(0,8,0,8)
+actionGrid.SortOrder=Enum.SortOrder.LayoutOrder
+
+local scanBtn=mkBtn(actionWrap,"SCAN",Color3.fromRGB(62,54,145))
+local tpBtn=mkBtn(actionWrap,"LOCK",Color3.fromRGB(42,84,160))
+local hitBtn=mkBtn(actionWrap,"BUG HIT",Color3.fromRGB(31,120,70))
+local unlockBtn=mkBtn(actionWrap,"UNLOCK",Color3.fromRGB(120,70,38))
+local antiBtn=mkBtn(actionWrap,"AFK ON",Color3.fromRGB(42,84,145))
+local optBtn=mkBtn(actionWrap,"OPT ON",Color3.fromRGB(70,82,125))
+
+scanBtn.LayoutOrder=1
+tpBtn.LayoutOrder=2
+hitBtn.LayoutOrder=3
+unlockBtn.LayoutOrder=4
+antiBtn.LayoutOrder=5
+optBtn.LayoutOrder=6
+
+local stopBtn=Instance.new("TextButton")
+stopBtn.Parent=main
+stopBtn.Size=UDim2.new(1,-20,0,34)
+stopBtn.Position=UDim2.new(0,10,1,-42)
+stopBtn.Text="STOP ALL"
+stopBtn.TextColor3=Color3.fromRGB(255,232,238)
+stopBtn.BackgroundColor3=Color3.fromRGB(120,34,48)
+stopBtn.BackgroundTransparency=0.04
+stopBtn.Font=Enum.Font.GothamBlack
+stopBtn.TextSize=12
+stopBtn.BorderSizePixel=0
+corner(stopBtn,13)
+stroke(stopBtn,Color3.fromRGB(255,120,140),1,0.42)
 
 local lastReport=""
 
@@ -826,13 +937,13 @@ scanBtn.Activated:Connect(function()
 	end
 	lastReport=table.concat(lines,"\n")
 	refreshButtons()
-	setStatus("Скан готов: найдено "..count.."/"..#ROCKS)
+	setStatus("Скан готов: "..count.."/"..#ROCKS)
 end)
 
 tpBtn.Activated:Connect(function()
 	local ok,res=tpInsideRock(selected)
 	if ok then
-		setStatus("LOCK: "..selected.label.." | внутри/центр камня")
+		setStatus("LOCK: "..selected.label.." | внутри камня")
 		lastReport="TP LOCK OK\nRock: "..selected.label.."\nReq: "..selected.req.."\nModel: "..tostring(res.name)
 	else
 		setStatus("TP error: "..tostring(res))
@@ -844,7 +955,7 @@ hitBtn.Activated:Connect(function()
 	if hitting then
 		stopHit(setStatus)
 		hitBtn.Text="BUG HIT"
-		hitBtn.BackgroundColor3=Color3.fromRGB(32,130,70)
+		hitBtn.BackgroundColor3=Color3.fromRGB(31,120,70)
 	else
 		local ok,msg=tpInsideRock(selected)
 		if not ok then
@@ -853,7 +964,7 @@ hitBtn.Activated:Connect(function()
 		end
 		startHit(selected,setStatus)
 		hitBtn.Text="HITTING"
-		hitBtn.BackgroundColor3=Color3.fromRGB(28,155,82)
+		hitBtn.BackgroundColor3=Color3.fromRGB(28,150,82)
 	end
 end)
 
@@ -862,14 +973,12 @@ unlockBtn.Activated:Connect(function()
 	setStatus("UNLOCK: позиция отпущена")
 end)
 
-
 antiBtn.Activated:Connect(function()
 	antiAfkEnabled=not antiAfkEnabled
 	antiBtn.Text=antiAfkEnabled and "AFK ON" or "AFK OFF"
-	antiBtn.BackgroundColor3=antiAfkEnabled and Color3.fromRGB(45,88,150) or Color3.fromRGB(105,42,48)
+	antiBtn.BackgroundColor3=antiAfkEnabled and Color3.fromRGB(42,84,145) or Color3.fromRGB(105,42,48)
 	setStatus("Anti AFK: "..(antiAfkEnabled and "включён" or "выключен"))
 end)
-
 
 optBtn.Activated:Connect(function()
 	optEnabled=not optEnabled
@@ -889,9 +998,9 @@ end)
 stopBtn.Activated:Connect(function()
 	stopHit()
 	stopLock()
-	setStatus("STOP ALL: всё остановлено, карта восстановлена")
+	setStatus("STOP ALL: всё остановлено")
 	hitBtn.Text="BUG HIT"
-	hitBtn.BackgroundColor3=Color3.fromRGB(32,130,70)
+	hitBtn.BackgroundColor3=Color3.fromRGB(31,120,70)
 end)
 
 min.Activated:Connect(function()
@@ -912,7 +1021,6 @@ close.Activated:Connect(function()
 end)
 
 -- Drag only top bar
-local UserInputService=game:GetService("UserInputService")
 local dragging=false
 local dragStart=nil
 local startPos=nil
@@ -942,4 +1050,4 @@ end)
 -- First scan
 scanRocks()
 refreshButtons()
-setStatus("v10: обычный КД + безопасная оптимизация карты.")
+setStatus("v11: дизайн с нуля. Обычный КД + OPT.")
