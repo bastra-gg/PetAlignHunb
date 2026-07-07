@@ -1,11 +1,11 @@
--- Muscle Legends RockBug Hub v14 REAL ULTRA OPT
+-- Muscle Legends RockBug Hub v15 REAL ULTRA OPT HIT FIX
 -- Standalone: без Speed Hub. Камни через neededDurability + TP LOCK + BUG HIT + Anti AFK.
 
 local Players=game:GetService("Players")
 local RunService=game:GetService("RunService")
 local VirtualUser=game:GetService("VirtualUser")
 local lp=Players.LocalPlayer
-local HUB_VERSION="RockBugHub_v14_RealUltraOpt"
+local HUB_VERSION="RockBugHub_v15_RealUltraOpt_HitFix"
 
 -- Anti AFK
 local antiAfkEnabled=true
@@ -24,7 +24,7 @@ startAntiAfk()
 
 -- Анти-дубль.
 pcall(function()
-	local old=lp:WaitForChild("PlayerGui"):FindFirstChild("RockBugHub_v14_RealUltraOpt")
+	local old=lp:WaitForChild("PlayerGui"):FindFirstChild("RockBugHub_v15_RealUltraOpt_HitFix")
 	if old then old:Destroy() end
 end)
 
@@ -295,20 +295,11 @@ local function applyQualityUltra()
 		rs.QualityLevel=Enum.QualityLevel.Level01
 	end)
 
-	-- Настоящая экономия: отключаем 3D-рендер. ScreenGui остаётся, баг-процесс продолжает идти.
-	pcall(function()
-		RunService:Set3dRenderingEnabled(false)
-		lowMapState.settings.Render3DDisabled=true
-	end)
+	-- 3D полностью НЕ выключаем: на части устройств от этого удар/Tool:Activate становится медленным.
+	-- Вместо этого гасим карту, физику лишних частей, эффекты, свет и качество рендера.
 end
 
 local function restoreQualityUltra()
-	pcall(function()
-		if lowMapState.settings.Render3DDisabled then
-			RunService:Set3dRenderingEnabled(true)
-		end
-	end)
-
 	pcall(function()
 		local ugs=UserSettings():GetService("UserGameSettings")
 		if lowMapState.settings.SavedQualityLevel~=nil then
@@ -343,23 +334,8 @@ local function setLowMap(enabled,keepModel,statusFn)
 
 		applyQualityUltra()
 
-		-- Удаляем с клиента целые верхние объекты Workspace, если они не нужны процессу.
-		for _,obj in ipairs(workspace:GetChildren())do
-			if obj~=workspace.CurrentCamera and not protectObj(obj,keepModel)then
-				if obj:IsA("Camera") or obj:IsA("Terrain") then
-					-- skip
-				else
-					lowSave(obj,"Parent",obj.Parent)
-					pcall(function()
-						obj.Parent=nil
-						lowMapState.removed+=1
-					end)
-				end
-			end
-			if lowMapState.removed%40==0 then task.wait() end
-		end
-
-		-- В оставшихся контейнерах гасим всё, кроме персонажа и выбранного камня.
+		-- Не выкидываем объекты из Workspace, чтобы не ломать процесс удара.
+		-- Оптимизация теперь через отключение рендера/физики/эффектов у лишних объектов.
 		local n=0
 		for _,obj in ipairs(workspace:GetDescendants())do
 			if not protectObj(obj,keepModel)then
@@ -383,7 +359,7 @@ local function setLowMap(enabled,keepModel,statusFn)
 
 		lowMapState.count=n
 		if statusFn then
-			statusFn("ULTRA ON: 3D off, снято "..lowMapState.removed..", погашено "..lowMapState.count)
+			statusFn("ULTRA ON: рендер/физика погашены: "..lowMapState.count)
 		end
 	else
 		if not lowMapState.on then return end
@@ -746,37 +722,41 @@ local function startHit(row,statusFn)
 	local lastTouch=0
 	local lastEquip=0
 	local lastActivate=0
+	local lastRemote=0
 
 	task.spawn(function()
 		while hitting and myId==hitLoopId do
 			local now=os.clock()
 
-			-- Обычный КД: не спамим, не чистим cooldown, не душим телефон.
-			if now-lastEquip>2.0 then
+			-- Быстрее, но без старого дикого FAST-спама.
+			if now-lastEquip>1.2 then
 				lastEquip=now
 				tool=ensurePunchTool(nil) or currentPunchTool()
 			end
 
-			firePunchRemote()
+			if now-lastRemote>=(_G.RockBugRemoteDelay or 0.075) then
+				lastRemote=now
+				firePunchRemote()
+			end
 
-			if tool and tool.Parent and now-lastActivate>=(_G.RockBugActivateDelay or 0.22) then
+			if tool and tool.Parent and now-lastActivate>=(_G.RockBugActivateDelay or 0.10) then
 				lastActivate=now
 				pcall(function()tool:Activate()end)
 			elseif not tool or not tool.Parent then
 				activateFistTool(nil)
 			end
 
-			if now-lastTouch>=(_G.RockBugTouchDelay or 0.40) then
+			if now-lastTouch>=(_G.RockBugTouchDelay or 0.22) then
 				lastTouch=now
 				touchRock(row)
 			end
 
-			task.wait(_G.RockBugHitDelay or 0.16)
+			task.wait(_G.RockBugHitDelay or 0.075)
 		end
 	end)
 
 	if statusFn then
-		statusFn("BUG HIT: обычный КД"..(ultraOptEnabled and " | ULTRA ON" or "")..(selectedPunchToolName and (" | "..selectedPunchToolName) or ""))
+		statusFn("BUG HIT: ускоренный КД"..(ultraOptEnabled and " | ULTRA ON" or "")..(selectedPunchToolName and (" | "..selectedPunchToolName) or ""))
 	end
 end
 
@@ -791,7 +771,7 @@ end
 
 -- UI v12: новый компактный дизайн без SCAN/COPY/лишних надписей
 local gui=Instance.new("ScreenGui")
-gui.Name="RockBugHub_v14_RealUltraOpt"
+gui.Name="RockBugHub_v15_RealUltraOpt_HitFix"
 gui.ResetOnSpawn=false
 gui.IgnoreGuiInset=true
 gui.DisplayOrder=999999
@@ -882,7 +862,7 @@ local title=makeText(top,"BUG HUB",18,Enum.Font.GothamBlack,Color3.fromRGB(248,2
 title.Size=UDim2.new(1,-108,0,22)
 title.Position=UDim2.new(0,46,0,6)
 
-local sub=makeText(top,HUB_VERSION.." • 3D off",10,Enum.Font.GothamBold,Color3.fromRGB(165,172,205))
+local sub=makeText(top,HUB_VERSION.." • render opt",10,Enum.Font.GothamBold,Color3.fromRGB(165,172,205))
 sub.Size=UDim2.new(1,-108,0,16)
 sub.Position=UDim2.new(0,47,0,26)
 
@@ -1066,7 +1046,7 @@ local unlockBtn=makeBtn(row2,"UNLOCK",Color3.fromRGB(120,70,38))
 unlockBtn.Size=UDim2.new(0.5,-5,1,0)
 unlockBtn.Position=UDim2.new(0,0,0,0)
 
-local ultraBtn=makeBtn(row2,"ULTRA 3D",Color3.fromRGB(82,58,135))
+local ultraBtn=makeBtn(row2,"ULTRA",Color3.fromRGB(82,58,135))
 ultraBtn.Size=UDim2.new(0.5,-5,1,0)
 ultraBtn.Position=UDim2.new(0.5,5,0,0)
 
@@ -1122,7 +1102,7 @@ end)
 
 ultraBtn.Activated:Connect(function()
 	ultraOptEnabled=not ultraOptEnabled
-	ultraBtn.Text=ultraOptEnabled and "ULTRA ON" or "ULTRA 3D"
+	ultraBtn.Text=ultraOptEnabled and "ULTRA ON" or "ULTRA"
 	ultraBtn.BackgroundColor3=ultraOptEnabled and Color3.fromRGB(118,65,160) or Color3.fromRGB(82,58,135)
 
 	if ultraOptEnabled then
@@ -1147,7 +1127,7 @@ stopBtn.Activated:Connect(function()
 	stopHit()
 	stopLock()
 	ultraOptEnabled=false
-	ultraBtn.Text="ULTRA 3D"
+	ultraBtn.Text="ULTRA"
 	ultraBtn.BackgroundColor3=Color3.fromRGB(82,58,135)
 	setLowMap(false,nil,nil)
 	setStatus("Остановлено")
