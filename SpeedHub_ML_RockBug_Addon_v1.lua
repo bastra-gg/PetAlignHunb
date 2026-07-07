@@ -1,4 +1,4 @@
--- Muscle Legends RockBug Hub v7 LOWMAP
+-- Muscle Legends RockBug Hub v8 LOWMAP FIX
 -- Standalone: без Speed Hub. Камни через neededDurability + TP LOCK + BUG HIT + Anti AFK.
 
 local Players=game:GetService("Players")
@@ -23,7 +23,7 @@ startAntiAfk()
 
 -- Анти-дубль.
 pcall(function()
-	local old=lp:WaitForChild("PlayerGui"):FindFirstChild("RockBugHubStandaloneV7")
+	local old=lp:WaitForChild("PlayerGui"):FindFirstChild("RockBugHubStandaloneV8")
 	if old then old:Destroy() end
 end)
 
@@ -201,7 +201,7 @@ local function setLowMap(enabled,keepModel,statusFn)
 					lowSave(obj,"LocalTransparencyModifier",obj.LocalTransparencyModifier)
 					lowSave(obj,"CastShadow",obj.CastShadow)
 					pcall(function()
-						obj.LocalTransparencyModifier=math.max(obj.LocalTransparencyModifier,_G.RockBugLowMapTransparency or 0.72)
+						obj.LocalTransparencyModifier=math.max(obj.LocalTransparencyModifier,_G.RockBugLowMapTransparency or 0.55)
 						obj.CastShadow=false
 					end)
 					lowMapState.count+=1
@@ -557,7 +557,7 @@ local function touchRock(row)
 	end
 end
 
-local local hitLoopId=0
+local hitLoopId=0
 
 local function currentPunchTool()
 	local c=lp.Character
@@ -644,7 +644,7 @@ end
 
 -- UI
 local gui=Instance.new("ScreenGui")
-gui.Name="RockBugHubStandaloneV7"
+gui.Name="RockBugHubStandaloneV8"
 gui.ResetOnSpawn=false
 gui.IgnoreGuiInset=true
 gui.DisplayOrder=999999
@@ -923,7 +923,7 @@ close.Activated:Connect(function()
 	stopHit()
 	stopLock()
 	if antiAfkConn then antiAfkConn:Disconnect() antiAfkConn=nil end
-gui:Destroy()
+	gui:Destroy()
 end)
 
 -- Drag only top bar
@@ -957,4 +957,4 @@ end)
 -- First scan
 scanRocks()
 refreshButtons()
-setStatus("v7 LOWMAP: при FAST карта приглушается для FPS.")
+setStatus("v8 FIX: запуск исправлен. FAST включает LOW MAP.")
