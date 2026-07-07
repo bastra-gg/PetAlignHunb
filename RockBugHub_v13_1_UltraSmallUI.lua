@@ -1,11 +1,11 @@
--- Muscle Legends RockBug Hub v17 AGGRESSIVE OPT SAFE HIT
+-- Muscle Legends RockBug Hub v18 BUG TIMER
 -- Standalone: без Speed Hub. Камни через neededDurability + TP LOCK + BUG HIT + Anti AFK.
 
 local Players=game:GetService("Players")
 local RunService=game:GetService("RunService")
 local VirtualUser=game:GetService("VirtualUser")
 local lp=Players.LocalPlayer
-local HUB_VERSION="RockBugHub_v17_AggressiveOptSafeHit"
+local HUB_VERSION="RockBugHub_v18_BugTimer"
 
 -- Anti AFK
 local antiAfkEnabled=true
@@ -24,7 +24,7 @@ startAntiAfk()
 
 -- Анти-дубль.
 pcall(function()
-	local old=lp:WaitForChild("PlayerGui"):FindFirstChild("RockBugHub_v17_AggressiveOptSafeHit")
+	local old=lp:WaitForChild("PlayerGui"):FindFirstChild("RockBugHub_v18_BugTimer")
 	if old then old:Destroy() end
 end)
 
@@ -50,7 +50,7 @@ local oldSpeed=nil
 local oldAuto=nil
 local hitting=false
 local fastHitEnabled=false
-local OPTIMOptEnabled=false
+local ultraOptEnabled=false
 local fastHitPower=1 -- v10: обычный КД, без FAST-спама
 
 local function root()
@@ -197,7 +197,7 @@ local function safeSet(obj,key,val)
 	pcall(function()obj[key]=val end)
 end
 
-local function OPTIMPartOff(obj)
+local function ultraPartOff(obj)
 	-- Агрессивная оптимизация, но без поломки функционала:
 	-- физику/касания не трогаем, чтобы удар/камень не отваливались.
 	lowSave(obj,"LocalTransparencyModifier",obj.LocalTransparencyModifier)
@@ -209,7 +209,7 @@ local function OPTIMPartOff(obj)
 	pcall(function()obj.Reflectance=0 end)
 end
 
-local function OPTIMEffectOff(obj)
+local function ultraEffectOff(obj)
 	if obj:IsA("ParticleEmitter")or obj:IsA("Trail")or obj:IsA("Beam")or obj:IsA("Fire")or obj:IsA("Smoke")or obj:IsA("Sparkles")then
 		lowSave(obj,"Enabled",obj.Enabled)
 		safeSet(obj,"Enabled",false)
@@ -245,7 +245,7 @@ local function OPTIMEffectOff(obj)
 	return false
 end
 
-local function applyQualityOPTIM()
+local function applyQualityUltra()
 	local lighting=game:GetService("Lighting")
 	pcall(function()
 		lowMapState.lighting.GlobalShadows=lighting.GlobalShadows
@@ -298,7 +298,7 @@ local function applyQualityOPTIM()
 	end)
 end
 
-local function restoreQualityOPTIM()
+local function restoreQualityUltra()
 	pcall(function()
 		if lowMapState.settings.Render3DDisabled then
 			RunService:Set3dRenderingEnabled(true)
@@ -337,7 +337,7 @@ local function setLowMap(enabled,keepModel,statusFn)
 		lowMapState.count=0
 		lowMapState.removed=0
 
-		applyQualityOPTIM()
+		applyQualityUltra()
 
 		-- Удаляем с клиента целые верхние объекты Workspace, если они не нужны процессу.
 		for _,obj in ipairs(workspace:GetChildren())do
@@ -360,9 +360,9 @@ local function setLowMap(enabled,keepModel,statusFn)
 		for _,obj in ipairs(workspace:GetDescendants())do
 			if not protectObj(obj,keepModel)then
 				if obj:IsA("BasePart")then
-					OPTIMPartOff(obj)
+					ultraPartOff(obj)
 					n+=1
-				elseif OPTIMEffectOff(obj)then
+				elseif ultraEffectOff(obj)then
 					n+=1
 				end
 			end
@@ -379,13 +379,13 @@ local function setLowMap(enabled,keepModel,statusFn)
 
 		lowMapState.count=n
 		if statusFn then
-			statusFn("OPTIM ON: агро-опт, процесс сохранён")
+			statusFn("ULTRA ON: агро-опт, процесс сохранён")
 		end
 	else
 		if not lowMapState.on then return end
 		lowMapState.on=false
 
-		restoreQualityOPTIM()
+		restoreQualityUltra()
 
 		for obj,rec in pairs(lowMapState.saved)do
 			if obj then
@@ -404,7 +404,7 @@ local function setLowMap(enabled,keepModel,statusFn)
 		lowMapState.saved={}
 		lowMapState.count=0
 		lowMapState.removed=0
-		if statusFn then statusFn("OPTIM OFF: карта восстановлена")end
+		if statusFn then statusFn("ULTRA OFF: карта восстановлена")end
 	end
 end
 
@@ -812,7 +812,7 @@ local function startHit(row,statusFn)
 	end)
 
 	if statusFn then
-		statusFn("BUG HIT: быстрый safe-hit"..(OPTIMOptEnabled and " | OPTIM ON" or "")..(selectedPunchToolName and (" | "..selectedPunchToolName) or ""))
+		statusFn("БАГ КАМНЯ: запущен"..(ultraOptEnabled and " | ULTRA ON" or "")..(selectedPunchToolName and (" | "..selectedPunchToolName) or ""))
 	end
 end
 
@@ -827,7 +827,7 @@ end
 
 -- UI v12: новый компактный дизайн без SCAN/COPY/лишних надписей
 local gui=Instance.new("ScreenGui")
-gui.Name="RockBugHub_v17_AggressiveOptSafeHit"
+gui.Name="RockBugHub_v18_BugTimer"
 gui.ResetOnSpawn=false
 gui.IgnoreGuiInset=true
 gui.DisplayOrder=999999
@@ -933,7 +933,7 @@ close.Position=UDim2.new(1,-33,0,9)
 close.TextSize=18
 close.TextColor3=Color3.fromRGB(255,210,218)
 
-local mini=makeBtn(gui,"BUG v17",Color3.fromRGB(46,42,120))
+local mini=makeBtn(gui,"BUG v18",Color3.fromRGB(46,42,120))
 mini.Size=UDim2.new(0,90,0,36)
 mini.Position=main.Position
 mini.Visible=false
@@ -954,8 +954,61 @@ selectedLabel.Size=UDim2.new(1,-24,0,14)
 selectedLabel.Position=UDim2.new(0,10,0,6)
 
 local selectedName=makeText(selectedCard,"-",18,Enum.Font.GothamBlack,Color3.fromRGB(255,238,185))
-selectedName.Size=UDim2.new(1,-20,0,24)
+selectedName.Size=UDim2.new(1,-120,0,24)
 selectedName.Position=UDim2.new(0,10,0,20)
+
+local bugTimerText=makeText(selectedCard,"⏱ 00:00",14,Enum.Font.GothamBlack,Color3.fromRGB(120,255,170))
+bugTimerText.Size=UDim2.new(0,102,0,24)
+bugTimerText.Position=UDim2.new(1,-112,0,21)
+bugTimerText.TextXAlignment=Enum.TextXAlignment.Right
+
+local bugRunTime=0
+local bugTimerStartedAt=nil
+local bugTimerConn=nil
+
+local function formatBugTime(sec)
+	sec=math.max(0,math.floor(sec or 0))
+	local h=math.floor(sec/3600)
+	local m=math.floor((sec%3600)/60)
+	local s=sec%60
+	if h>0 then
+		return string.format("%02d:%02d:%02d",h,m,s)
+	end
+	return string.format("%02d:%02d",m,s)
+end
+
+local function getBugTime()
+	if bugTimerStartedAt then
+		return bugRunTime+(os.clock()-bugTimerStartedAt)
+	end
+	return bugRunTime
+end
+
+local function updateBugTimer()
+	if bugTimerText then
+		bugTimerText.Text="⏱ "..formatBugTime(getBugTime())
+	end
+end
+
+local function startBugTimer()
+	if not bugTimerStartedAt then
+		bugTimerStartedAt=os.clock()
+	end
+	if not bugTimerConn then
+		bugTimerConn=RunService.Heartbeat:Connect(updateBugTimer)
+	end
+	updateBugTimer()
+end
+
+local function pauseBugTimer()
+	if bugTimerStartedAt then
+		bugRunTime+=(os.clock()-bugTimerStartedAt)
+		bugTimerStartedAt=nil
+	end
+	updateBugTimer()
+end
+
+updateBugTimer()
 
 local status=makeText(main,"Готово",11,Enum.Font.GothamBold,Color3.fromRGB(210,216,245))
 status.Size=UDim2.new(1,-14,0,28)
@@ -1060,7 +1113,7 @@ local function refreshButtons()
 			selected=row
 			updateSelected()
 			refreshButtons()
-			if OPTIMOptEnabled then
+			if ultraOptEnabled then
 				setLowMap(false,nil,nil)
 				local old=_G.RockBugLowMapTransparency
 				_G.RockBugLowMapTransparency=1
@@ -1088,7 +1141,7 @@ local lockBtn=makeBtn(row1,"LOCK",Color3.fromRGB(42,84,160))
 lockBtn.Size=UDim2.new(0.5,-5,1,0)
 lockBtn.Position=UDim2.new(0,0,0,0)
 
-local hitBtn=makeBtn(row1,"BUG HIT",Color3.fromRGB(30,125,72))
+local hitBtn=makeBtn(row1,"СТАРТ БАГА",Color3.fromRGB(30,125,72))
 hitBtn.Size=UDim2.new(0.5,-5,1,0)
 hitBtn.Position=UDim2.new(0.5,5,0,0)
 
@@ -1102,9 +1155,9 @@ local unlockBtn=makeBtn(row2,"UNLOCK",Color3.fromRGB(120,70,38))
 unlockBtn.Size=UDim2.new(0.5,-5,1,0)
 unlockBtn.Position=UDim2.new(0,0,0,0)
 
-local OPTIMBtn=makeBtn(row2,"OPTIM 3D",Color3.fromRGB(82,58,135))
-OPTIMBtn.Size=UDim2.new(0.5,-5,1,0)
-OPTIMBtn.Position=UDim2.new(0.5,5,0,0)
+local ultraBtn=makeBtn(row2,"ULTRA 3D",Color3.fromRGB(82,58,135))
+ultraBtn.Size=UDim2.new(0.5,-5,1,0)
+ultraBtn.Position=UDim2.new(0.5,5,0,0)
 
 local row3=Instance.new("Frame")
 row3.Parent=main
@@ -1137,7 +1190,8 @@ end)
 hitBtn.Activated:Connect(function()
 	if hitting then
 		stopHit(setStatus)
-		hitBtn.Text="BUG HIT"
+		pauseBugTimer()
+		hitBtn.Text="СТАРТ БАГА"
 		hitBtn.BackgroundColor3=Color3.fromRGB(30,125,72)
 	else
 		local ok,msg=tpInsideRock(selected)
@@ -1146,7 +1200,8 @@ hitBtn.Activated:Connect(function()
 			return
 		end
 		startHit(selected,setStatus)
-		hitBtn.Text="HITTING"
+		startBugTimer()
+		hitBtn.Text="ПАУЗА БАГА"
 		hitBtn.BackgroundColor3=Color3.fromRGB(28,150,82)
 	end
 end)
@@ -1156,12 +1211,12 @@ unlockBtn.Activated:Connect(function()
 	setStatus("UNLOCK: отпущено")
 end)
 
-OPTIMBtn.Activated:Connect(function()
-	OPTIMOptEnabled=not OPTIMOptEnabled
-	OPTIMBtn.Text=OPTIMOptEnabled and "OPTIM ON" or "OPTIM 3D"
-	OPTIMBtn.BackgroundColor3=OPTIMOptEnabled and Color3.fromRGB(118,65,160) or Color3.fromRGB(82,58,135)
+ultraBtn.Activated:Connect(function()
+	ultraOptEnabled=not ultraOptEnabled
+	ultraBtn.Text=ultraOptEnabled and "ULTRA ON" or "ULTRA 3D"
+	ultraBtn.BackgroundColor3=ultraOptEnabled and Color3.fromRGB(118,65,160) or Color3.fromRGB(82,58,135)
 
-	if OPTIMOptEnabled then
+	if ultraOptEnabled then
 		collectPunchRemotes()
 		pcall(function() ensurePunchTool(nil) end)
 		local old=_G.RockBugLowMapTransparency
@@ -1183,13 +1238,14 @@ end)
 
 stopBtn.Activated:Connect(function()
 	stopHit()
+	pauseBugTimer()
 	stopLock()
-	OPTIMOptEnabled=false
-	OPTIMBtn.Text="OPTIM 3D"
-	OPTIMBtn.BackgroundColor3=Color3.fromRGB(82,58,135)
+	ultraOptEnabled=false
+	ultraBtn.Text="ULTRA 3D"
+	ultraBtn.BackgroundColor3=Color3.fromRGB(82,58,135)
 	setLowMap(false,nil,nil)
-	setStatus("Остановлено")
-	hitBtn.Text="BUG HIT"
+	setStatus("Остановлено • таймер сохранён")
+	hitBtn.Text="СТАРТ БАГА"
 	hitBtn.BackgroundColor3=Color3.fromRGB(30,125,72)
 end)
 
@@ -1207,6 +1263,7 @@ close.Activated:Connect(function()
 	stopHit()
 	stopLock()
 	setLowMap(false,nil,nil)
+	if bugTimerConn then bugTimerConn:Disconnect() bugTimerConn=nil end
 	if antiAfkConn then antiAfkConn:Disconnect() antiAfkConn=nil end
 	gui:Destroy()
 end)
@@ -1245,4 +1302,4 @@ local count=0
 for _,row in ipairs(ROCKS)do
 	if found[row.req]then count+=1 end
 end
-setStatus("Готово • "..count.."/"..#ROCKS.." • v17")
+setStatus("Готово • "..count.."/"..#ROCKS.." • таймер 00:00")
