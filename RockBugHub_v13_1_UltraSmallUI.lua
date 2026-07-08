@@ -1,201 +1,143 @@
--- RebirthCD_TryRemove_v1
--- Окно + одна кнопка ON/OFF. Пытается снять ЛОКАЛЬНЫЙ cooldown/debounce ребирта.
--- Если КД серверный — скрипт не сможет убрать его, но будет чистить всё, что есть на клиенте.
+-- RebirthAnim_Killer_v1
+-- Маленькое окно: ON/OFF + X.
+-- Пробует убрать/срезать ЛОКАЛЬНУЮ анимацию/катсцену ребирта.
+-- Не качает силу и не делает ребирт сам.
 
 local Players=game:GetService("Players")
 local RunService=game:GetService("RunService")
-local ReplicatedStorage=game:GetService("ReplicatedStorage")
+local Lighting=game:GetService("Lighting")
 local UserInputService=game:GetService("UserInputService")
 
 local lp=Players.LocalPlayer
-local VERSION="RebirthCD_TryRemove_v1"
+local VERSION="RebirthAnim_Killer_v1"
 
 pcall(function()
-	local old=lp:WaitForChild("PlayerGui"):FindFirstChild("RebirthCDTryRemoveGui")
+	local pg=lp:WaitForChild("PlayerGui")
+	local old=pg:FindFirstChild("RebirthAnimKillerGui")
 	if old then old:Destroy()end
 end)
 
 local enabled=false
 local loopId=0
+local conns={}
+local hidden={}
+local disabled={}
 local stats={
-	values=0,
-	attrs=0,
-	tables=0,
-	upvalues=0,
-	scans=0,
-	last=""
+	tracks=0,
+	guis=0,
+	effects=0,
+	scripts=0,
+	last="готово"
 }
 
-local KEYWORDS={
-	"cooldown","cool_down","cd","debounce","delay","timer",
-	"lastrebirth","last_rebirth","rebirthcooldown","rebirth_cd",
-	"canrebirth","can_rebirth","rebirthdebounce","rebirth_debounce"
+local WORDS={
+	"rebirth","reborn","re-born","re birth",
+	"cutscene","cut_scene","cinematic","animation",
+	"transition","fade","flash","blur","camera",
+	"рebirth","ребирт","ребёрт","перерожд","возрожд"
 }
 
-local function lower(s)
+local function low(s)
 	return tostring(s or ""):lower()
 end
 
-local function matchKey(s)
-	s=lower(s)
-	for _,k in ipairs(KEYWORDS)do
-		if s:find(k,1,true)then return true end
+local function match(s)
+	s=low(s)
+	for _,w in ipairs(WORDS)do
+		if s:find(w,1,true)then return true end
 	end
 	return false
 end
 
-local function shouldZeroByName(name)
-	name=lower(name)
-	if not matchKey(name)then return false end
-	if name:find("damage",1,true) or name:find("strength",1,true) or name:find("muscle",1,true)then
-		return false
-	end
-	return true
+local function protectGui(obj)
+	if not obj then return true end
+	if obj:IsDescendantOf(gui or nil)then return true end
+	local n=low(obj.Name)
+	-- не трогаем стандартные кнопки/основные UI, только подозрительные overlay/cutscene.
+	if n=="chat" or n=="bubblechat" or n=="touchgui" or n=="playerlist"then return true end
+	return false
 end
 
-local function patchValueObject(obj)
-	local n=obj.Name
-	if not shouldZeroByName(n)then return false end
+local function stopRebirthTracks()
+	local c=lp.Character
+	if not c then return end
+	local hum=c:FindFirstChildWhichIsA("Humanoid")
+	if not hum then return end
 
-	local ok=false
-	if obj:IsA("BoolValue")then
-		pcall(function()obj.Value=false ok=true end)
-	elseif obj:IsA("IntValue")or obj:IsA("NumberValue")then
-		pcall(function()obj.Value=0 ok=true end)
-	elseif obj:IsA("StringValue")then
-		pcall(function()obj.Value="0" ok=true end)
+	local animator=hum:FindFirstChildOfClass("Animator")
+	if not animator then return end
+
+	for _,tr in ipairs(animator:GetPlayingAnimationTracks())do
+		local okName=""
+		pcall(function()
+			okName=tostring(tr.Name).." "..tostring(tr.Animation and tr.Animation.Name or "").." "..tostring(tr.Animation and tr.Animation.AnimationId or "")
+		end)
+
+		-- Если название явное — стопаем. Если включён aggressive, стопаем всё на короткое время после ребирта.
+		if match(okName) or _G.RebirthAnimKillAllTracks then
+			pcall(function()
+				tr:Stop(0)
+				stats.tracks+=1
+			end)
+		end
 	end
-
-	if ok then stats.values+=1 end
-	return ok
 end
 
-local function patchAttributes(obj)
-	local ok=false
+local function killGuiObj(obj)
+	if not obj or hidden[obj] or protectGui(obj)then return end
+
+	local text=""
 	pcall(function()
-		for k,v in pairs(obj:GetAttributes())do
-			if shouldZeroByName(k)then
-				if typeof(v)=="boolean"then
-					obj:SetAttribute(k,false)
-					ok=true
-				elseif typeof(v)=="number"then
-					obj:SetAttribute(k,0)
-					ok=true
-				elseif typeof(v)=="string"then
-					obj:SetAttribute(k,"0")
-					ok=true
-				end
-			end
+		if obj:IsA("TextLabel") or obj:IsA("TextButton") or obj:IsA("TextBox")then
+			text=obj.Text
 		end
 	end)
-	if ok then stats.attrs+=1 end
-	return ok
+
+	local full=low(obj.Name).." "..low(text)
+	if not match(full)then return end
+
+	if obj:IsA("ScreenGui")then
+		hidden[obj]={Enabled=obj.Enabled}
+		pcall(function()obj.Enabled=false end)
+		stats.guis+=1
+	elseif obj:IsA("GuiObject")then
+		hidden[obj]={Visible=obj.Visible,BackgroundTransparency=obj.BackgroundTransparency}
+		pcall(function()
+			obj.Visible=false
+			obj.BackgroundTransparency=1
+		end)
+		stats.guis+=1
+	end
 end
 
-local function scanInstances()
-	local roots={
-		lp,
-		lp:FindFirstChild("PlayerGui"),
-		lp:FindFirstChild("Backpack"),
-		lp.Character,
-		ReplicatedStorage,
-	}
+local function killEffects()
+	for _,e in ipairs(Lighting:GetChildren())do
+		if e:IsA("BlurEffect") or e:IsA("DepthOfFieldEffect") or e:IsA("BloomEffect") or e:IsA("SunRaysEffect") or e:IsA("ColorCorrectionEffect")then
+			if not disabled[e]then
+				disabled[e]={Enabled=e.Enabled}
+			end
+			pcall(function()e.Enabled=false end)
+			stats.effects+=1
+		end
+	end
 
+	pcall(function()
+		Lighting.GlobalShadows=false
+	end)
+end
+
+local function disableRebirthLocalScripts()
+	if not _G.RebirthAnimDisableScripts then return end
+	local roots={lp:FindFirstChild("PlayerGui"),lp.Character,lp:FindFirstChild("Backpack")}
 	for _,root in ipairs(roots)do
 		if root then
-			patchAttributes(root)
 			for _,obj in ipairs(root:GetDescendants())do
-				patchValueObject(obj)
-				patchAttributes(obj)
-			end
-		end
-	end
-end
-
-local function patchTable(t)
-	local changed=false
-
-	for k,v in pairs(t)do
-		local key=lower(k)
-		if shouldZeroByName(key)then
-			if type(v)=="boolean"then
-				pcall(function()t[k]=false changed=true end)
-			elseif type(v)=="number"then
-				pcall(function()t[k]=0 changed=true end)
-			elseif type(v)=="string"then
-				pcall(function()t[k]="0" changed=true end)
-			end
-		end
-	end
-
-	if changed then stats.tables+=1 end
-end
-
-local function patchGcTables()
-	if type(getgc)~="function"then return end
-
-	local ok,gc=pcall(getgc,true)
-	if not ok or type(gc)~="table"then return end
-
-	local checked=0
-	for _,obj in ipairs(gc)do
-		checked+=1
-		if checked>4500 then break end
-
-		if type(obj)=="table"then
-			pcall(function()patchTable(obj)end)
-		end
-	end
-end
-
-local function getUpvalueCompat(fn,i)
-	if debug and debug.getupvalue then
-		return debug.getupvalue(fn,i)
-	end
-	if debug and debug.getupvalues then
-		local ups=debug.getupvalues(fn)
-		if ups then
-			local v=ups[i]
-			return tostring(i),v
-		end
-	end
-	return nil,nil
-end
-
-local function setUpvalueCompat(fn,i,val)
-	if debug and debug.setupvalue then
-		return pcall(debug.setupvalue,fn,i,val)
-	end
-	return false
-end
-
-local function patchGcUpvalues()
-	if type(getgc)~="function"then return end
-	if not debug then return end
-
-	local ok,gc=pcall(getgc,true)
-	if not ok or type(gc)~="table"then return end
-
-	local checked=0
-	for _,obj in ipairs(gc)do
-		checked+=1
-		if checked>4500 then break end
-
-		if type(obj)=="function"then
-			for i=1,24 do
-				local name,val=getUpvalueCompat(obj,i)
-				if not name then break end
-
-				if shouldZeroByName(name)then
-					if type(val)=="boolean"then
-						local okSet=setUpvalueCompat(obj,i,false)
-						if okSet then stats.upvalues+=1 end
-					elseif type(val)=="number"then
-						local okSet=setUpvalueCompat(obj,i,0)
-						if okSet then stats.upvalues+=1 end
-					elseif type(val)=="table"then
-						pcall(function()patchTable(val)end)
-					end
+				if (obj:IsA("LocalScript") or obj:IsA("ModuleScript")) and match(obj.Name) and not disabled[obj]then
+					disabled[obj]={Disabled=obj:IsA("LocalScript") and obj.Disabled or nil}
+					pcall(function()
+						if obj:IsA("LocalScript")then obj.Disabled=true end
+					end)
+					stats.scripts+=1
 				end
 			end
 		end
@@ -203,22 +145,48 @@ local function patchGcUpvalues()
 end
 
 local function onePass()
-	stats.values=0
-	stats.attrs=0
-	stats.tables=0
-	stats.upvalues=0
-	stats.scans+=1
+	stats.tracks=0
+	stats.guis=0
+	stats.effects=0
+	stats.scripts=0
 
-	scanInstances()
-	patchGcTables()
-	patchGcUpvalues()
+	stopRebirthTracks()
+	killEffects()
+
+	local pg=lp:FindFirstChild("PlayerGui")
+	if pg then
+		for _,obj in ipairs(pg:GetDescendants())do
+			killGuiObj(obj)
+		end
+	end
+
+	disableRebirthLocalScripts()
 
 	stats.last=os.date("%H:%M:%S")
 end
 
+local function restoreAll()
+	for obj,rec in pairs(hidden)do
+		if obj and obj.Parent then
+			if rec.Enabled~=nil then pcall(function()obj.Enabled=rec.Enabled end)end
+			if rec.Visible~=nil then pcall(function()obj.Visible=rec.Visible end)end
+			if rec.BackgroundTransparency~=nil then pcall(function()obj.BackgroundTransparency=rec.BackgroundTransparency end)end
+		end
+	end
+	hidden={}
+
+	for obj,rec in pairs(disabled)do
+		if obj and obj.Parent then
+			if rec.Enabled~=nil then pcall(function()obj.Enabled=rec.Enabled end)end
+			if rec.Disabled~=nil then pcall(function()obj.Disabled=rec.Disabled end)end
+		end
+	end
+	disabled={}
+end
+
 -- UI
 local gui=Instance.new("ScreenGui")
-gui.Name="RebirthCDTryRemoveGui"
+gui.Name="RebirthAnimKillerGui"
 gui.ResetOnSpawn=false
 gui.IgnoreGuiInset=true
 gui.DisplayOrder=999999
@@ -226,8 +194,8 @@ gui.Parent=lp:WaitForChild("PlayerGui")
 
 local main=Instance.new("Frame")
 main.Parent=gui
-main.Size=UDim2.new(0,250,0,120)
-main.Position=UDim2.new(0,18,0,110)
+main.Size=UDim2.new(0,260,0,128)
+main.Position=UDim2.new(0,18,0,122)
 main.BackgroundColor3=Color3.fromRGB(10,11,22)
 main.BackgroundTransparency=0.08
 main.BorderSizePixel=0
@@ -243,19 +211,32 @@ st.Transparency=0.18
 
 local title=Instance.new("TextLabel")
 title.Parent=main
-title.Size=UDim2.new(1,-20,0,22)
+title.Size=UDim2.new(1,-54,0,22)
 title.Position=UDim2.new(0,10,0,8)
 title.BackgroundTransparency=1
-title.Text="REBIRTH CD TEST"
+title.Text="REBIRTH ANIM KILL"
 title.TextColor3=Color3.fromRGB(245,246,255)
 title.Font=Enum.Font.GothamBlack
 title.TextSize=14
 title.TextXAlignment=Enum.TextXAlignment.Left
 
+local close=Instance.new("TextButton")
+close.Parent=main
+close.Size=UDim2.new(0,30,0,30)
+close.Position=UDim2.new(1,-38,0,8)
+close.BackgroundColor3=Color3.fromRGB(92,30,45)
+close.Text="×"
+close.TextColor3=Color3.fromRGB(255,220,225)
+close.Font=Enum.Font.GothamBlack
+close.TextSize=18
+close.BorderSizePixel=0
+local cc=Instance.new("UICorner",close)
+cc.CornerRadius=UDim.new(0,10)
+
 local ver=Instance.new("TextLabel")
 ver.Parent=main
 ver.Size=UDim2.new(1,-20,0,16)
-ver.Position=UDim2.new(0,10,0,29)
+ver.Position=UDim2.new(0,10,0,31)
 ver.BackgroundTransparency=1
 ver.Text=VERSION
 ver.TextColor3=Color3.fromRGB(155,165,205)
@@ -266,39 +247,38 @@ ver.TextXAlignment=Enum.TextXAlignment.Left
 local btn=Instance.new("TextButton")
 btn.Parent=main
 btn.Size=UDim2.new(1,-20,0,42)
-btn.Position=UDim2.new(0,10,0,50)
+btn.Position=UDim2.new(0,10,0,54)
 btn.BackgroundColor3=Color3.fromRGB(38,125,72)
-btn.Text="CD REMOVE: OFF"
+btn.Text="ANIM KILL: OFF"
 btn.TextColor3=Color3.fromRGB(255,255,255)
 btn.Font=Enum.Font.GothamBlack
 btn.TextSize=13
 btn.BorderSizePixel=0
-
 local bc=Instance.new("UICorner",btn)
 bc.CornerRadius=UDim.new(0,13)
 
 local status=Instance.new("TextLabel")
 status.Parent=main
-status.Size=UDim2.new(1,-20,0,20)
-status.Position=UDim2.new(0,10,0,96)
+status.Size=UDim2.new(1,-20,0,24)
+status.Position=UDim2.new(0,10,0,99)
 status.BackgroundTransparency=1
-status.Text="готово"
+status.Text="выключено"
 status.TextColor3=Color3.fromRGB(210,218,245)
 status.Font=Enum.Font.GothamBold
 status.TextSize=10
+status.TextWrapped=true
 status.TextXAlignment=Enum.TextXAlignment.Center
 
 local function updateUi()
-	btn.Text=enabled and "CD REMOVE: ON" or "CD REMOVE: OFF"
+	btn.Text=enabled and "ANIM KILL: ON" or "ANIM KILL: OFF"
 	btn.BackgroundColor3=enabled and Color3.fromRGB(130,50,160) or Color3.fromRGB(38,125,72)
 
 	if enabled then
-		status.Text=("clean %s | v%s a%s t%s u%s"):format(
-			stats.last,
-			tostring(stats.values),
-			tostring(stats.attrs),
-			tostring(stats.tables),
-			tostring(stats.upvalues)
+		status.Text=("t%s gui%s fx%s | %s"):format(
+			tostring(stats.tracks),
+			tostring(stats.guis),
+			tostring(stats.effects),
+			stats.last
 		)
 	else
 		status.Text="выключено"
@@ -318,12 +298,23 @@ btn.Activated:Connect(function()
 			while enabled and my==loopId do
 				onePass()
 				updateUi()
-				task.wait(_G.RebirthCDCleanDelay or 0.35)
+				task.wait(_G.RebirthAnimKillDelay or 0.08)
 			end
 		end)
 	else
+		restoreAll()
 		updateUi()
 	end
+end)
+
+close.Activated:Connect(function()
+	enabled=false
+	loopId+=1
+	restoreAll()
+	for _,cn in ipairs(conns)do
+		pcall(function()cn:Disconnect()end)
+	end
+	gui:Destroy()
 end)
 
 -- drag
@@ -339,17 +330,17 @@ main.InputBegan:Connect(function(input)
 	end
 end)
 
-UserInputService.InputEnded:Connect(function(input)
+table.insert(conns,UserInputService.InputEnded:Connect(function(input)
 	if input.UserInputType==Enum.UserInputType.MouseButton1 or input.UserInputType==Enum.UserInputType.Touch then
 		dragging=false
 	end
-end)
+end))
 
-UserInputService.InputChanged:Connect(function(input)
+table.insert(conns,UserInputService.InputChanged:Connect(function(input)
 	if dragging and (input.UserInputType==Enum.UserInputType.MouseMovement or input.UserInputType==Enum.UserInputType.Touch)then
 		local d=input.Position-dragStart
 		main.Position=UDim2.new(startPos.X.Scale,startPos.X.Offset+d.X,startPos.Y.Scale,startPos.Y.Offset+d.Y)
 	end
-end)
+end))
 
 updateUi()
