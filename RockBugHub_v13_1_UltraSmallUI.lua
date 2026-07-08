@@ -1,4 +1,4 @@
--- RebirthAnim_Killer_v1
+-- RebirthAnim_Killer_v2_CloseOld
 -- Маленькое окно: ON/OFF + X.
 -- Пробует убрать/срезать ЛОКАЛЬНУЮ анимацию/катсцену ребирта.
 -- Не качает силу и не делает ребирт сам.
@@ -9,12 +9,54 @@ local Lighting=game:GetService("Lighting")
 local UserInputService=game:GetService("UserInputService")
 
 local lp=Players.LocalPlayer
-local VERSION="RebirthAnim_Killer_v1"
+local VERSION="RebirthAnim_Killer_v2_CloseOld"
+local function killPreviousCdTester()
+	_G.RebirthCDCleanerStop=true
+	_G.RebirthCDTryRemoveStop=true
+
+	local pg=lp:FindFirstChild("PlayerGui")
+	if not pg then return end
+
+	local old=pg:FindFirstChild("RebirthCDTryRemoveGui")
+	if old then
+		-- Если старая кнопка ON, пробуем нажать её, чтобы остановить внутренний цикл.
+		local btn=nil
+		for _,d in ipairs(old:GetDescendants())do
+			if d:IsA("TextButton") and tostring(d.Text):find("CD REMOVE",1,true)then
+				btn=d
+				break
+			end
+		end
+
+		if btn then
+			pcall(function()
+				if tostring(btn.Text):find("ON",1,true)then
+					btn:Activate()
+				end
+			end)
+			pcall(function()
+				if firesignal then firesignal(btn.Activated)end
+			end)
+			pcall(function()
+				if firesignal then firesignal(btn.MouseButton1Click)end
+			end)
+		end
+
+		task.wait(0.12)
+		pcall(function()old:Destroy()end)
+	end
+end
+
+-- Сразу убираем прошлое надоедливое окно, если оно есть.
+pcall(killPreviousCdTester)
+
 
 pcall(function()
 	local pg=lp:WaitForChild("PlayerGui")
-	local old=pg:FindFirstChild("RebirthAnimKillerGui")
+	local old=pg:FindFirstChild("RebirthAnimKillerGuiV2")
 	if old then old:Destroy()end
+	local oldV1=pg:FindFirstChild("RebirthAnimKillerGui")
+	if oldV1 then oldV1:Destroy()end
 end)
 
 local enabled=false
@@ -186,7 +228,7 @@ end
 
 -- UI
 local gui=Instance.new("ScreenGui")
-gui.Name="RebirthAnimKillerGui"
+gui.Name="RebirthAnimKillerGuiV2"
 gui.ResetOnSpawn=false
 gui.IgnoreGuiInset=true
 gui.DisplayOrder=999999
@@ -214,7 +256,7 @@ title.Parent=main
 title.Size=UDim2.new(1,-54,0,22)
 title.Position=UDim2.new(0,10,0,8)
 title.BackgroundTransparency=1
-title.Text="REBIRTH ANIM KILL"
+title.Text="ANIM KILL + OLD CLOSE"
 title.TextColor3=Color3.fromRGB(245,246,255)
 title.Font=Enum.Font.GothamBlack
 title.TextSize=14
@@ -238,7 +280,7 @@ ver.Parent=main
 ver.Size=UDim2.new(1,-20,0,16)
 ver.Position=UDim2.new(0,10,0,31)
 ver.BackgroundTransparency=1
-ver.Text=VERSION
+ver.Text=VERSION.." | X kills old CD"
 ver.TextColor3=Color3.fromRGB(155,165,205)
 ver.Font=Enum.Font.GothamBold
 ver.TextSize=9
@@ -311,6 +353,7 @@ close.Activated:Connect(function()
 	enabled=false
 	loopId+=1
 	restoreAll()
+	pcall(killPreviousCdTester)
 	for _,cn in ipairs(conns)do
 		pcall(function()cn:Disconnect()end)
 	end
