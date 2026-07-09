@@ -1,11 +1,11 @@
--- Muscle Legends RockBug Hub v19 FASTER BLACK
+-- Muscle Legends RockBug Hub v20 FASTER BLACK
 -- Standalone: без Speed Hub. Камни через neededDurability + TP LOCK + BUG HIT + Anti AFK.
 
 local Players=game:GetService("Players")
 local RunService=game:GetService("RunService")
 local VirtualUser=game:GetService("VirtualUser")
 local lp=Players.LocalPlayer
-local HUB_VERSION="RockBugHub_v19_FasterBlack"
+local HUB_VERSION="RockBugHub_v20_FasterBlack"
 
 -- Anti AFK
 local antiAfkEnabled=true
@@ -24,7 +24,7 @@ startAntiAfk()
 
 -- Анти-дубль.
 pcall(function()
-	local old=lp:WaitForChild("PlayerGui"):FindFirstChild("RockBugHub_v19_FasterBlack")
+	local old=lp:WaitForChild("PlayerGui"):FindFirstChild("RockBugHub_v20_FasterBlack")
 	if old then old:Destroy() end
 end)
 
@@ -53,10 +53,10 @@ local fastHitEnabled=false
 local ultraOptEnabled=false
 local fastHitPower=1 -- v10: обычный КД, без FAST-спама
 
--- v19: ускоренный клиентский цикл удара.
+-- v20: ускоренный клиентский цикл удара.
 -- Если захочешь свои значения — перед запуском поставь:
 -- _G.RockBugRemoteDelayOverride=0.04 и т.д.
-if not _G.RockBugV19NoForceSpeed then
+if not _G.RockBugv20NoForceSpeed then
 	_G.RockBugRemoteDelay=tonumber(_G.RockBugRemoteDelayOverride) or 0.025
 	_G.RockBugRemoteLoops=tonumber(_G.RockBugRemoteLoopsOverride) or 4
 	_G.RockBugActivateDelay=tonumber(_G.RockBugActivateDelayOverride) or 0.01
@@ -272,7 +272,7 @@ local function applyQualityUltra()
 		lowMapState.lighting.EnvironmentSpecularScale=lighting.EnvironmentSpecularScale
 		lowMapState.lighting.Technology=lighting.Technology
 
-		-- v19 BLACK: не "light", а максимально тёмная сцена.
+		-- v20 BLACK: не "light", а максимально тёмная сцена.
 		lighting.GlobalShadows=false
 		lighting.Brightness=0
 		lighting.FogEnd=5
@@ -856,7 +856,7 @@ end
 
 -- UI v12: новый компактный дизайн без SCAN/COPY/лишних надписей
 local gui=Instance.new("ScreenGui")
-gui.Name="RockBugHub_v19_FasterBlack"
+gui.Name="RockBugHub_v20_FasterBlack"
 gui.ResetOnSpawn=false
 gui.IgnoreGuiInset=true
 gui.DisplayOrder=999999
@@ -975,7 +975,7 @@ close.Position=UDim2.new(1,-33,0,9)
 close.TextSize=18
 close.TextColor3=Color3.fromRGB(255,210,218)
 
-local mini=makeBtn(gui,"BUG v19",Color3.fromRGB(46,42,120))
+local mini=makeBtn(gui,"BUG v20",Color3.fromRGB(46,42,120))
 mini.Size=UDim2.new(0,90,0,36)
 mini.Position=main.Position
 mini.Visible=false
@@ -1349,4 +1349,4 @@ local count=0
 for _,row in ipairs(ROCKS)do
 	if found[row.req]then count+=1 end
 end
-setStatus("Готово • "..count.."/"..#ROCKS.." • v19 fast black")
+setStatus("Готово • "..count.."/"..#ROCKS.." • v20 fast black")
