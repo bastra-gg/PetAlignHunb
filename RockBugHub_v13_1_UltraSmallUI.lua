@@ -59,7 +59,7 @@ local fastHitPower=1 -- v10: обычный КД, без FAST-спама
 if not _G.RockBugV19NoForceSpeed then
 	_G.RockBugRemoteDelay=tonumber(_G.RockBugRemoteDelayOverride) or 0.025
 	_G.RockBugRemoteLoops=tonumber(_G.RockBugRemoteLoopsOverride) or 4
-	_G.RockBugActivateDelay=tonumber(_G.RockBugActivateDelayOverride) or 0.04
+	_G.RockBugActivateDelay=tonumber(_G.RockBugActivateDelayOverride) or 0.01
 	_G.RockBugTouchDelay=tonumber(_G.RockBugTouchDelayOverride) or 0.08
 	_G.RockBugHitDelay=tonumber(_G.RockBugHitDelayOverride) or 0.015
 end
