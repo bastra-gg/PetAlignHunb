@@ -166,7 +166,7 @@ local lowMapState={
 	saved={},
 	count=0,
 	removed=0,
-	lighting={},
+	blackout={},
 	settings={},
 }
 
