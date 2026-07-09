@@ -1,11 +1,11 @@
--- Muscle Legends RockBug Hub v13 COMPACT ULTRA FIX
+-- Muscle Legends RockBug Hub v14 CLEAR TABS
 -- Standalone: без Speed Hub. Камни через neededDurability + TP LOCK + BUG HIT + Anti AFK.
 
 local Players=game:GetService("Players")
 local RunService=game:GetService("RunService")
 local VirtualUser=game:GetService("VirtualUser")
 local lp=Players.LocalPlayer
-local HUB_VERSION="RockBugHub_v13_1_UltraSmallUI"
+local HUB_VERSION="RockBugHub_v14_ClearTabs"
 
 -- Anti AFK
 local antiAfkEnabled=true
@@ -51,7 +51,28 @@ local oldAuto=nil
 local hitting=false
 local fastHitEnabled=false
 local ultraOptEnabled=false
-local fastHitPower=1 -- v10: обычный КД, без FAST-спама
+local fastHitPower=1
+local autoTrainEnabled=false
+local autoTrainLoopId=0
+local selectedTrainToolName=nil
+
+-- MAX PUNCH / AUTO TRAIN под постоянную ссылку:
+-- Вкладка БАГ = TP LOCK + MAX PUNCH по камню.
+-- Вкладка КАЧ = Auto Train не только ударами, а любым тренировочным Tool.
+if not _G.RockBugV13TabsNoForce then
+	_G.RockBugMaxPunchRate=tonumber(_G.RockBugMaxPunchRateOverride) or 90
+	_G.RockBugExtraCyclesPerTick=tonumber(_G.RockBugExtraCyclesPerTickOverride) or 2
+	_G.RockBugRemoteLoops=tonumber(_G.RockBugRemoteLoopsOverride) or 6
+	_G.RockBugActivateBursts=tonumber(_G.RockBugActivateBurstsOverride) or 4
+	_G.RockBugTouchLoops=tonumber(_G.RockBugTouchLoopsOverride) or 3
+	_G.RockBugTouchEvery=tonumber(_G.RockBugTouchEveryOverride) or 1
+	_G.RockBugAnimSpeed=tonumber(_G.RockBugAnimSpeedOverride) or 4
+
+	_G.RockBugAutoTrainRate=tonumber(_G.RockBugAutoTrainRateOverride) or 35
+	_G.RockBugAutoTrainActivateBursts=tonumber(_G.RockBugAutoTrainActivateBurstsOverride) or 2
+	_G.RockBugAutoTrainRemoteLoops=tonumber(_G.RockBugAutoTrainRemoteLoopsOverride) or 2
+	_G.RockBugAutoTrainUseRemote=(_G.RockBugAutoTrainUseRemote~=false)
+end
 
 local function root()
 	local c=lp.Character
@@ -580,42 +601,67 @@ local function startHit(row,statusFn)
 	if hitConn then hitConn:Disconnect() hitConn=nil end
 
 	local tool=ensurePunchTool(statusFn)
-	local info=getRock(row)
+	collectPunchRemotes()
 
-	local lastTouch=0
+	local cycle=0
 	local lastEquip=0
-	local lastActivate=0
 
 	task.spawn(function()
+		local nextPunch=os.clock()
+
 		while hitting and myId==hitLoopId do
 			local now=os.clock()
 
-			-- Обычный КД: не спамим, не чистим cooldown, не душим телефон.
-			if now-lastEquip>2.0 then
+			local rate=math.clamp(tonumber(_G.RockBugMaxPunchRate or _G.RockBugMaxPunchRateOverride or 90)or 90,10,240)
+			local interval=1/rate
+			local extra=math.clamp(tonumber(_G.RockBugExtraCyclesPerTick or 2)or 2,1,10)
+
+			if now>=nextPunch then
+				nextPunch+=interval
+				if nextPunch<now-0.10 then nextPunch=now+interval end
+
+				tool=currentPunchTool() or tool
+
+				for _=1,extra do
+					cycle+=1
+
+					if tool and tool.Parent then
+						clearToolCooldowns(tool)
+						local bursts=math.clamp(tonumber(_G.RockBugActivateBursts or 4)or 4,1,10)
+						for _=1,bursts do
+							pcall(function() tool:Activate() end)
+						end
+					else
+						activateFistTool(nil)
+						tool=currentPunchTool()
+					end
+
+					local remoteLoops=math.clamp(tonumber(_G.RockBugRemoteLoops or 6)or 6,1,14)
+					for _=1,remoteLoops do
+						firePunchRemote()
+					end
+
+					local touchEvery=math.clamp(tonumber(_G.RockBugTouchEvery or 1)or 1,1,8)
+					if cycle%touchEvery==0 then
+						local touchLoops=math.clamp(tonumber(_G.RockBugTouchLoops or 3)or 3,1,8)
+						for _=1,touchLoops do
+							touchRock(row)
+						end
+					end
+				end
+			end
+
+			if now-lastEquip>=0.8 then
 				lastEquip=now
-				tool=ensurePunchTool(nil) or currentPunchTool()
+				tool=ensurePunchTool(nil) or currentPunchTool() or tool
 			end
 
-			firePunchRemote()
-
-			if tool and tool.Parent and now-lastActivate>=(_G.RockBugActivateDelay or 0.22) then
-				lastActivate=now
-				pcall(function()tool:Activate()end)
-			elseif not tool or not tool.Parent then
-				activateFistTool(nil)
-			end
-
-			if now-lastTouch>=(_G.RockBugTouchDelay or 0.40) then
-				lastTouch=now
-				touchRock(row)
-			end
-
-			task.wait(_G.RockBugHitDelay or 0.16)
+			task.wait(math.clamp(nextPunch-os.clock(),0,0.01))
 		end
 	end)
 
 	if statusFn then
-		statusFn("BUG HIT: обычный КД"..(ultraOptEnabled and " | ULTRA ON" or "")..(selectedPunchToolName and (" | "..selectedPunchToolName) or ""))
+		statusFn("MAX PUNCH: "..tostring(_G.RockBugMaxPunchRate or 90).."/s x"..tostring(_G.RockBugExtraCyclesPerTick or 2).." | remote x"..tostring(_G.RockBugRemoteLoops or 6).." | act x"..tostring(_G.RockBugActivateBursts or 4))
 	end
 end
 
@@ -628,9 +674,186 @@ local function stopHit(statusFn)
 	if statusFn then statusFn("BUG HIT: остановлен")end
 end
 
--- UI v12: новый компактный дизайн без SCAN/COPY/лишних надписей
+
+-- AUTO TRAIN: не только punch, а любые тренировочные инструменты.
+local function trainToolScore(tool)
+	if not tool or not tool:IsA("Tool") then return -999 end
+
+	local n=tostring(tool.Name):lower()
+	local full=""
+	pcall(function() full=tostring(tool:GetFullName()):lower() end)
+
+	-- Punch оставляем для вкладки БАГ, а КАЧ берёт веса/тренировки.
+	if toolScore(tool)>0 then return -999 end
+
+	local bad={"pet","aura","crystal","shop","trade","gift","pack","code","reward","пет","питом","крист","магаз","обмен"}
+	for _,w in ipairs(bad) do
+		if n:find(w,1,true) or full:find(w,1,true) then return -999 end
+	end
+
+	local score=0
+	local good={
+		{"weight",120},{"dumb",115},{"barbell",115},{"bench",100},
+		{"push",95},{"sit",90},{"handstand",90},{"pull",85},
+		{"tread",80},{"agility",70},{"durability",70},{"strength",70},
+		{"гант",120},{"штанг",115},{"гир",110},{"вес",100},
+		{"отжим",95},{"пресс",90},{"бег",80},{"сила",70}
+	}
+
+	for _,pair in ipairs(good) do
+		if n:find(pair[1],1,true) or full:find(pair[1],1,true) then
+			score=math.max(score,pair[2])
+		end
+	end
+
+	-- Если это Tool и не Punch/не мусор — даём запасной шанс.
+	if score<=0 then score=10 end
+
+	return score
+end
+
+local function findBestTrainTool()
+	local c=lp.Character
+	local bp=lp:FindFirstChildOfClass("Backpack")
+	local best=nil
+	local bestScore=-999
+
+	local function scan(container,bonus)
+		if not container then return end
+		for _,tool in ipairs(container:GetChildren()) do
+			if tool:IsA("Tool") then
+				local sc=trainToolScore(tool)+bonus
+				if sc>bestScore then
+					bestScore=sc
+					best=tool
+				end
+			end
+		end
+	end
+
+	scan(c,20)
+	scan(bp,0)
+
+	if bestScore<=0 then return nil end
+	return best,bestScore
+end
+
+local function ensureTrainTool(statusFn)
+	local c=lp.Character
+	local h=hum()
+	if not c or not h then return nil end
+
+	for _,tool in ipairs(c:GetChildren()) do
+		if tool:IsA("Tool") and trainToolScore(tool)>0 then
+			selectedTrainToolName=tool.Name
+			return tool
+		end
+	end
+
+	local best=findBestTrainTool()
+	if best and best.Parent~=c then
+		pcall(function() h:EquipTool(best) end)
+		task.wait(0.06)
+	end
+
+	if best then
+		clearToolCooldowns(best)
+		selectedTrainToolName=best.Name
+		if statusFn then statusFn("КАЧ: выбран "..best.Name) end
+		return best
+	end
+
+	if statusFn then statusFn("КАЧ: Tool не найден") end
+	return nil
+end
+
+local function fireTrainRemoteSpam()
+	if _G.RockBugAutoTrainUseRemote==false then return end
+
+	local loops=math.clamp(tonumber(_G.RockBugAutoTrainRemoteLoops or 2)or 2,0,12)
+	if loops<=0 then return end
+
+	local function fireOne(ev)
+		if not ev or not ev.FireServer then return end
+		pcall(function()
+			ev:FireServer("rep")
+			ev:FireServer("train")
+			ev:FireServer("strength")
+			ev:FireServer("weight")
+		end)
+	end
+
+	for _=1,loops do
+		pcall(function()
+			if lp:FindFirstChild("muscleEvent") then fireOne(lp.muscleEvent) end
+		end)
+
+		pcall(function()
+			local rs=game:GetService("ReplicatedStorage")
+			local re=rs:FindFirstChild("rEvents")
+			local ev=re and re:FindFirstChild("muscleEvent")
+			fireOne(ev)
+		end)
+	end
+end
+
+local function startAutoTrain(statusFn)
+	autoTrainEnabled=true
+	autoTrainLoopId+=1
+	local myId=autoTrainLoopId
+
+	task.spawn(function()
+		local tool=ensureTrainTool(statusFn)
+		local nextRep=os.clock()
+		local lastEquip=0
+
+		while autoTrainEnabled and myId==autoTrainLoopId do
+			local now=os.clock()
+			local rate=math.clamp(tonumber(_G.RockBugAutoTrainRate or 35)or 35,3,120)
+			local interval=1/rate
+
+			if now>=nextRep then
+				nextRep+=interval
+				if nextRep<now-0.15 then nextRep=now+interval end
+
+				tool=tool or ensureTrainTool(nil)
+
+				if tool and tool.Parent then
+					clearToolCooldowns(tool)
+					local bursts=math.clamp(tonumber(_G.RockBugAutoTrainActivateBursts or 2)or 2,1,10)
+					for _=1,bursts do
+						pcall(function() tool:Activate() end)
+					end
+				end
+
+				fireTrainRemoteSpam()
+			end
+
+			if now-lastEquip>=1.1 then
+				lastEquip=now
+				tool=ensureTrainTool(nil) or tool
+			end
+
+			task.wait(math.clamp(nextRep-os.clock(),0,0.02))
+		end
+	end)
+
+	if statusFn then
+		statusFn("АВТО КАЧ: ON | "..tostring(_G.RockBugAutoTrainRate or 35).."/s"..(selectedTrainToolName and (" | "..selectedTrainToolName) or ""))
+	end
+end
+
+local function stopAutoTrain(statusFn)
+	autoTrainEnabled=false
+	autoTrainLoopId+=1
+	if statusFn then statusFn("АВТО КАЧ: OFF") end
+end
+
+
+
+-- UI v14 CLEAR TABS: большой переход между вкладками, без скрытых мелких кнопок
 local gui=Instance.new("ScreenGui")
-gui.Name="RockBugHub_v13_1_UltraSmallUI"
+gui.Name="RockBugHub_v14_ClearTabs"
 gui.ResetOnSpawn=false
 gui.IgnoreGuiInset=true
 gui.DisplayOrder=999999
@@ -654,7 +877,7 @@ local function stroke(o,col,t,trans)
 	return s
 end
 
-local function makeText(parent,text,size,font,color)
+local function label(parent,text,size,font,color)
 	local l=Instance.new("TextLabel")
 	l.Parent=parent
 	l.BackgroundTransparency=1
@@ -668,13 +891,13 @@ local function makeText(parent,text,size,font,color)
 	return l
 end
 
-local function makeBtn(parent,text,color)
+local function button(parent,text,color)
 	local b=Instance.new("TextButton")
 	b.Parent=parent
 	b.Text=text
 	b.TextColor3=Color3.fromRGB(238,241,255)
 	b.BackgroundColor3=color
-	b.BackgroundTransparency=0.06
+	b.BackgroundTransparency=0.05
 	b.BorderSizePixel=0
 	b.AutoButtonColor=true
 	b.Font=Enum.Font.GothamBlack
@@ -686,14 +909,14 @@ end
 
 local main=Instance.new("Frame")
 main.Parent=gui
-main.Size=UDim2.new(0,300,0,414)
-main.Position=UDim2.new(0,10,0,74)
+main.Size=UDim2.new(0,326,0,462)
+main.Position=UDim2.new(0,10,0,58)
 main.BackgroundColor3=Color3.fromRGB(8,10,18)
-main.BackgroundTransparency=0.10
+main.BackgroundTransparency=0.08
 main.BorderSizePixel=0
 main.Active=true
 corner(main,22)
-stroke(main,Color3.fromRGB(95,85,180),1.4,0.2)
+stroke(main,Color3.fromRGB(95,85,180),1.4,0.18)
 
 local top=Instance.new("Frame")
 top.Parent=main
@@ -705,70 +928,68 @@ top.BorderSizePixel=0
 corner(top,18)
 stroke(top,Color3.fromRGB(70,68,130),1,0.45)
 
-local icon=Instance.new("TextLabel")
-icon.Parent=top
-icon.Size=UDim2.new(0,30,0,30)
-icon.Position=UDim2.new(0,9,0,8)
-icon.BackgroundColor3=Color3.fromRGB(42,38,86)
-icon.BackgroundTransparency=0.05
-icon.Text="◆"
-icon.TextColor3=Color3.fromRGB(150,130,255)
-icon.Font=Enum.Font.GothamBlack
-icon.TextSize=18
-corner(icon,13)
+local title=label(top,"BUG HUB v14",18,Enum.Font.GothamBlack,Color3.fromRGB(248,249,255))
+title.Size=UDim2.new(1,-95,0,22)
+title.Position=UDim2.new(0,12,0,5)
 
-local title=makeText(top,"BUG HUB",18,Enum.Font.GothamBlack,Color3.fromRGB(248,249,255))
-title.Size=UDim2.new(1,-108,0,22)
-title.Position=UDim2.new(0,46,0,6)
+local sub=label(top,"большие вкладки сверху",10,Enum.Font.GothamBold,Color3.fromRGB(165,172,205))
+sub.Size=UDim2.new(1,-95,0,16)
+sub.Position=UDim2.new(0,13,0,26)
 
-local sub=makeText(top,"камень • lock • punch",10,Enum.Font.GothamBold,Color3.fromRGB(165,172,205))
-sub.Size=UDim2.new(1,-108,0,16)
-sub.Position=UDim2.new(0,47,0,26)
-
-local min=makeBtn(top,"−",Color3.fromRGB(42,39,78))
+local min=button(top,"−",Color3.fromRGB(42,39,78))
 min.Size=UDim2.new(0,29,0,29)
 min.Position=UDim2.new(1,-66,0,9)
 min.TextSize=18
 
-local close=makeBtn(top,"×",Color3.fromRGB(78,28,42))
+local close=button(top,"×",Color3.fromRGB(78,28,42))
 close.Size=UDim2.new(0,29,0,29)
 close.Position=UDim2.new(1,-33,0,9)
 close.TextSize=18
 close.TextColor3=Color3.fromRGB(255,210,218)
 
-local mini=makeBtn(gui,"BUG HUB",Color3.fromRGB(46,42,120))
-mini.Size=UDim2.new(0,90,0,36)
+local mini=button(gui,"BUG HUB v14",Color3.fromRGB(46,42,120))
+mini.Size=UDim2.new(0,98,0,36)
 mini.Position=main.Position
 mini.Visible=false
-mini.TextSize=11
+mini.TextSize=10
 
-local selectedCard=Instance.new("Frame")
-selectedCard.Parent=main
-selectedCard.Size=UDim2.new(1,-14,0,48)
-selectedCard.Position=UDim2.new(0,7,0,60)
-selectedCard.BackgroundColor3=Color3.fromRGB(15,18,32)
-selectedCard.BackgroundTransparency=0.07
-selectedCard.BorderSizePixel=0
-corner(selectedCard,18)
-stroke(selectedCard,Color3.fromRGB(65,62,120),1,0.45)
+-- Самый заметный переход между вкладками
+local tabHint=label(main,"ВЫБЕРИ РЕЖИМ:",10,Enum.Font.GothamBlack,Color3.fromRGB(150,160,200))
+tabHint.Size=UDim2.new(1,-18,0,14)
+tabHint.Position=UDim2.new(0,9,0,58)
+tabHint.TextXAlignment=Enum.TextXAlignment.Center
 
-local selectedLabel=makeText(selectedCard,"ВЫБРАНО",9,Enum.Font.GothamBlack,Color3.fromRGB(135,145,180))
-selectedLabel.Size=UDim2.new(1,-24,0,14)
-selectedLabel.Position=UDim2.new(0,10,0,6)
+local tabFrame=Instance.new("Frame")
+tabFrame.Parent=main
+tabFrame.Size=UDim2.new(1,-14,0,54)
+tabFrame.Position=UDim2.new(0,7,0,74)
+tabFrame.BackgroundTransparency=1
 
-local selectedName=makeText(selectedCard,"-",18,Enum.Font.GothamBlack,Color3.fromRGB(255,238,185))
-selectedName.Size=UDim2.new(1,-20,0,24)
-selectedName.Position=UDim2.new(0,10,0,20)
+local tabBug=button(tabFrame,"🪨 БАГ\nкамень",Color3.fromRGB(65,75,145))
+tabBug.Size=UDim2.new(0.5,-5,1,0)
+tabBug.Position=UDim2.new(0,0,0,0)
+tabBug.TextSize=13
+tabBug.TextWrapped=true
 
-local status=makeText(main,"Готово",11,Enum.Font.GothamBold,Color3.fromRGB(210,216,245))
-status.Size=UDim2.new(1,-14,0,28)
-status.Position=UDim2.new(0,7,0,114)
+local tabTrain=button(tabFrame,"💪 КАЧ\nавто треня",Color3.fromRGB(28,42,68))
+tabTrain.Size=UDim2.new(0.5,-5,1,0)
+tabTrain.Position=UDim2.new(0.5,5,0,0)
+tabTrain.TextSize=13
+tabTrain.TextWrapped=true
 
-local versionText=makeText(main,HUB_VERSION,9,Enum.Font.GothamBlack,Color3.fromRGB(150,158,190))
-versionText.Name="VersionText"
-versionText.Size=UDim2.new(1,-18,0,14)
-versionText.Position=UDim2.new(0,9,0,396)
-versionText.TextXAlignment=Enum.TextXAlignment.Center
+local modeTitle=label(main,"РЕЖИМ: БАГ КАМНЯ",13,Enum.Font.GothamBlack,Color3.fromRGB(255,238,185))
+modeTitle.Size=UDim2.new(1,-14,0,24)
+modeTitle.Position=UDim2.new(0,7,0,134)
+modeTitle.BackgroundColor3=Color3.fromRGB(13,15,30)
+modeTitle.BackgroundTransparency=0.10
+modeTitle.BorderSizePixel=0
+modeTitle.TextXAlignment=Enum.TextXAlignment.Center
+corner(modeTitle,12)
+stroke(modeTitle,Color3.fromRGB(60,58,110),1,0.50)
+
+local status=label(main,"Готово",11,Enum.Font.GothamBold,Color3.fromRGB(210,216,245))
+status.Size=UDim2.new(1,-14,0,30)
+status.Position=UDim2.new(0,7,0,424)
 status.BackgroundColor3=Color3.fromRGB(9,11,24)
 status.BackgroundTransparency=0.20
 status.BorderSizePixel=0
@@ -780,10 +1001,61 @@ local function setStatus(t)
 	status.Text=tostring(t or "")
 end
 
+local pageBug=Instance.new("Frame")
+pageBug.Parent=main
+pageBug.Size=UDim2.new(1,-14,0,254)
+pageBug.Position=UDim2.new(0,7,0,164)
+pageBug.BackgroundTransparency=1
+
+local pageTrain=Instance.new("Frame")
+pageTrain.Parent=main
+pageTrain.Size=pageBug.Size
+pageTrain.Position=pageBug.Position
+pageTrain.BackgroundTransparency=1
+pageTrain.Visible=false
+
+local function setMode(mode)
+	local isBug=mode=="bug"
+	pageBug.Visible=isBug
+	pageTrain.Visible=not isBug
+
+	tabBug.BackgroundColor3=isBug and Color3.fromRGB(65,75,145) or Color3.fromRGB(28,42,68)
+	tabTrain.BackgroundColor3=(not isBug) and Color3.fromRGB(65,75,145) or Color3.fromRGB(28,42,68)
+
+	tabBug.TextColor3=isBug and Color3.fromRGB(255,245,210) or Color3.fromRGB(200,208,235)
+	tabTrain.TextColor3=(not isBug) and Color3.fromRGB(255,245,210) or Color3.fromRGB(200,208,235)
+
+	modeTitle.Text=isBug and "РЕЖИМ: БАГ КАМНЯ" or "РЕЖИМ: АВТО КАЧАНИЕ"
+	modeTitle.TextColor3=isBug and Color3.fromRGB(255,238,185) or Color3.fromRGB(175,255,205)
+	setStatus(isBug and "Вкладка БАГ" or "Вкладка КАЧ")
+end
+
+tabBug.Activated:Connect(function() setMode("bug") end)
+tabTrain.Activated:Connect(function() setMode("train") end)
+
+-- ВКЛАДКА БАГ
+local selectedCard=Instance.new("Frame")
+selectedCard.Parent=pageBug
+selectedCard.Size=UDim2.new(1,0,0,44)
+selectedCard.Position=UDim2.new(0,0,0,0)
+selectedCard.BackgroundColor3=Color3.fromRGB(15,18,32)
+selectedCard.BackgroundTransparency=0.07
+selectedCard.BorderSizePixel=0
+corner(selectedCard,18)
+stroke(selectedCard,Color3.fromRGB(65,62,120),1,0.45)
+
+local selectedSmall=label(selectedCard,"ВЫБРАННЫЙ КАМЕНЬ",9,Enum.Font.GothamBlack,Color3.fromRGB(135,145,180))
+selectedSmall.Size=UDim2.new(1,-24,0,14)
+selectedSmall.Position=UDim2.new(0,10,0,5)
+
+local selectedName=label(selectedCard,"-",17,Enum.Font.GothamBlack,Color3.fromRGB(255,238,185))
+selectedName.Size=UDim2.new(1,-20,0,24)
+selectedName.Position=UDim2.new(0,10,0,18)
+
 local list=Instance.new("ScrollingFrame")
-list.Parent=main
-list.Size=UDim2.new(1,-14,0,130)
-list.Position=UDim2.new(0,7,0,150)
+list.Parent=pageBug
+list.Size=UDim2.new(1,0,0,106)
+list.Position=UDim2.new(0,0,0,52)
 list.BackgroundColor3=Color3.fromRGB(7,8,17)
 list.BackgroundTransparency=0.18
 list.BorderSizePixel=0
@@ -805,7 +1077,6 @@ local listLayout=Instance.new("UIListLayout")
 listLayout.Parent=list
 listLayout.SortOrder=Enum.SortOrder.LayoutOrder
 listLayout.Padding=UDim.new(0,7)
-listLayout.HorizontalAlignment=Enum.HorizontalAlignment.Center
 
 local buttons={}
 
@@ -830,7 +1101,7 @@ local function refreshButtons()
 		local card=Instance.new("TextButton")
 		card.Parent=list
 		card.Name="Rock_"..row.id
-		card.Size=UDim2.new(1,-4,0,40)
+		card.Size=UDim2.new(1,-4,0,38)
 		card.LayoutOrder=i
 		card.Text=""
 		card.AutoButtonColor=true
@@ -840,25 +1111,25 @@ local function refreshButtons()
 		corner(card,15)
 		stroke(card,active and Color3.fromRGB(145,120,255) or Color3.fromRGB(52,52,95),active and 1.4 or 1,active and 0.08 or 0.45)
 
-		local leftBar=Instance.new("Frame")
-		leftBar.Parent=card
-		leftBar.Size=UDim2.new(0,4,1,-12)
-		leftBar.Position=UDim2.new(0,8,0,6)
-		leftBar.BackgroundColor3=info and row.color or Color3.fromRGB(75,78,100)
-		leftBar.BorderSizePixel=0
-		corner(leftBar,6)
+		local bar=Instance.new("Frame")
+		bar.Parent=card
+		bar.Size=UDim2.new(0,4,1,-12)
+		bar.Position=UDim2.new(0,8,0,6)
+		bar.BackgroundColor3=info and row.color or Color3.fromRGB(75,78,100)
+		bar.BorderSizePixel=0
+		corner(bar,6)
 
-		local name=makeText(card,row.label,12,Enum.Font.GothamBlack,active and Color3.fromRGB(255,240,190) or Color3.fromRGB(230,234,255))
-		name.Size=UDim2.new(1,-62,0,18)
+		local name=label(card,row.label,12,Enum.Font.GothamBlack,active and Color3.fromRGB(255,240,190) or Color3.fromRGB(230,234,255))
+		name.Size=UDim2.new(1,-62,0,17)
 		name.Position=UDim2.new(0,20,0,4)
 
-		local meta=makeText(card,"req "..tostring(row.req),10,Enum.Font.GothamBold,Color3.fromRGB(145,153,185))
-		meta.Size=UDim2.new(1,-72,0,18)
-		meta.Position=UDim2.new(0,20,0,22)
+		local meta=label(card,"req "..tostring(row.req),10,Enum.Font.GothamBold,Color3.fromRGB(145,153,185))
+		meta.Size=UDim2.new(1,-72,0,16)
+		meta.Position=UDim2.new(0,20,0,21)
 
-		local ok=makeText(card,info and "найден" or "нет",10,Enum.Font.GothamBlack,info and Color3.fromRGB(100,255,160) or Color3.fromRGB(150,150,170))
+		local ok=label(card,info and "найден" or "нет",10,Enum.Font.GothamBlack,info and Color3.fromRGB(100,255,160) or Color3.fromRGB(150,150,170))
 		ok.Size=UDim2.new(0,46,0,20)
-		ok.Position=UDim2.new(1,-54,0,10)
+		ok.Position=UDim2.new(1,-54,0,9)
 		ok.TextXAlignment=Enum.TextXAlignment.Center
 		ok.BackgroundColor3=info and Color3.fromRGB(15,55,34) or Color3.fromRGB(36,36,48)
 		ok.BackgroundTransparency=0.12
@@ -882,94 +1153,135 @@ local function refreshButtons()
 		table.insert(buttons,card)
 	end
 
-	list.CanvasSize=UDim2.new(0,0,0,#ROCKS*47+16)
+	list.CanvasSize=UDim2.new(0,0,0,#ROCKS*45+16)
 	updateSelected()
 end
 
-local row1=Instance.new("Frame")
-row1.Parent=main
-row1.Size=UDim2.new(1,-14,0,36)
-row1.Position=UDim2.new(0,7,0,288)
-row1.BackgroundTransparency=1
+local function makeSwitch(parent,labelText,desc,y,initial,callback)
+	local row=Instance.new("Frame")
+	row.Parent=parent
+	row.Size=UDim2.new(1,0,0,40)
+	row.Position=UDim2.new(0,0,0,y)
+	row.BackgroundColor3=Color3.fromRGB(14,16,31)
+	row.BackgroundTransparency=0.08
+	row.BorderSizePixel=0
+	corner(row,15)
+	stroke(row,Color3.fromRGB(52,52,95),1,0.55)
 
-local lockBtn=makeBtn(row1,"LOCK",Color3.fromRGB(42,84,160))
-lockBtn.Size=UDim2.new(0.5,-5,1,0)
-lockBtn.Position=UDim2.new(0,0,0,0)
+	local t=label(row,labelText,12,Enum.Font.GothamBlack,Color3.fromRGB(235,238,255))
+	t.Size=UDim2.new(1,-98,0,18)
+	t.Position=UDim2.new(0,12,0,3)
 
-local hitBtn=makeBtn(row1,"BUG HIT",Color3.fromRGB(30,125,72))
-hitBtn.Size=UDim2.new(0.5,-5,1,0)
-hitBtn.Position=UDim2.new(0.5,5,0,0)
+	local d=label(row,desc or "",9,Enum.Font.GothamBold,Color3.fromRGB(142,150,183))
+	d.Size=UDim2.new(1,-100,0,17)
+	d.Position=UDim2.new(0,12,0,20)
 
-local row2=Instance.new("Frame")
-row2.Parent=main
-row2.Size=UDim2.new(1,-14,0,36)
-row2.Position=UDim2.new(0,7,0,330)
-row2.BackgroundTransparency=1
+	local sw=Instance.new("TextButton")
+	sw.Parent=row
+	sw.Size=UDim2.new(0,72,0,26)
+	sw.Position=UDim2.new(1,-82,0,7)
+	sw.BorderSizePixel=0
+	sw.AutoButtonColor=true
+	sw.Font=Enum.Font.GothamBlack
+	sw.TextSize=10
+	corner(sw,13)
 
-local unlockBtn=makeBtn(row2,"UNLOCK",Color3.fromRGB(120,70,38))
-unlockBtn.Size=UDim2.new(0.5,-5,1,0)
-unlockBtn.Position=UDim2.new(0,0,0,0)
+	local state=initial and true or false
+	local obj={}
 
-local ultraBtn=makeBtn(row2,"ULTRA",Color3.fromRGB(82,58,135))
-ultraBtn.Size=UDim2.new(0.5,-5,1,0)
-ultraBtn.Position=UDim2.new(0.5,5,0,0)
+	local function paint()
+		sw.Text=state and "ON" or "OFF"
+		sw.TextColor3=state and Color3.fromRGB(230,255,236) or Color3.fromRGB(235,238,255)
+		sw.BackgroundColor3=state and Color3.fromRGB(30,135,72) or Color3.fromRGB(70,44,55)
+	end
 
-local row3=Instance.new("Frame")
-row3.Parent=main
-row3.Size=UDim2.new(1,-14,0,36)
-row3.Position=UDim2.new(0,7,0,372)
-row3.BackgroundTransparency=1
+	function obj.Set(v,silent)
+		state=v and true or false
+		paint()
+		if callback and not silent then callback(state,obj) end
+	end
 
-local antiBtn=makeBtn(row3,"AFK ON",Color3.fromRGB(42,84,145))
-antiBtn.Size=UDim2.new(0.5,-5,1,0)
-antiBtn.Position=UDim2.new(0,0,0,0)
+	function obj.Get()
+		return state
+	end
 
-local stopBtn=makeBtn(row3,"STOP",Color3.fromRGB(122,34,48))
-stopBtn.Size=UDim2.new(0.5,-5,1,0)
-stopBtn.Position=UDim2.new(0.5,5,0,0)
-stopBtn.TextColor3=Color3.fromRGB(255,230,236)
+	sw.Activated:Connect(function()
+		obj.Set(not state,false)
+	end)
 
-local lastReport=""
+	row.InputBegan:Connect(function(input)
+		if input.UserInputType==Enum.UserInputType.Touch then
+			obj.Set(not state,false)
+		end
+	end)
 
-lockBtn.Activated:Connect(function()
-	local ok,res=tpInsideRock(selected)
-	if ok then
-		setStatus("LOCK: "..selected.label)
-		lastReport="TP LOCK OK\nRock: "..selected.label.."\nReq: "..selected.req.."\nModel: "..tostring(res.name)
+	paint()
+	return obj
+end
+
+local lockSw
+local bugSw
+local ultraSw
+local afkSw
+local trainSw
+local trainRemoteSw
+
+lockSw=makeSwitch(pageBug,"TP LOCK","держать персонажа в камне",166,false,function(on,self)
+	if on then
+		local ok,res=tpInsideRock(selected)
+		if ok then
+			setStatus("LOCK: "..selected.label)
+		else
+			setStatus("LOCK error: "..tostring(res))
+			self.Set(false,true)
+		end
 	else
-		setStatus("LOCK error: "..tostring(res))
-		lastReport="TP LOCK ERROR\nRock: "..selected.label.."\nReq: "..selected.req.."\nError: "..tostring(res)
+		stopLock()
+		setStatus("UNLOCK")
 	end
 end)
 
-hitBtn.Activated:Connect(function()
-	if hitting then
-		stopHit(setStatus)
-		hitBtn.Text="BUG HIT"
-		hitBtn.BackgroundColor3=Color3.fromRGB(30,125,72)
-	else
+bugSw=makeSwitch(pageBug,"MAX PUNCH","максимальные удары по камню",210,false,function(on,self)
+	if on then
 		local ok,msg=tpInsideRock(selected)
 		if not ok then
 			setStatus("BUG error: "..tostring(msg))
+			self.Set(false,true)
 			return
 		end
 		startHit(selected,setStatus)
-		hitBtn.Text="HITTING"
-		hitBtn.BackgroundColor3=Color3.fromRGB(28,150,82)
+	else
+		stopHit(setStatus)
 	end
 end)
 
-unlockBtn.Activated:Connect(function()
-	stopLock()
-	setStatus("UNLOCK: отпущено")
+-- ВКЛАДКА КАЧ
+local trainInfo=label(pageTrain,"Тут не камень. Это авто качание тренировочным Tool: weight / dumbbell / barbell / bench / push и т.д.",10,Enum.Font.GothamBold,Color3.fromRGB(180,190,225))
+trainInfo.Size=UDim2.new(1,0,0,38)
+trainInfo.Position=UDim2.new(0,0,0,0)
+trainInfo.BackgroundColor3=Color3.fromRGB(13,15,30)
+trainInfo.BackgroundTransparency=0.10
+trainInfo.BorderSizePixel=0
+trainInfo.TextXAlignment=Enum.TextXAlignment.Center
+corner(trainInfo,14)
+stroke(trainInfo,Color3.fromRGB(55,60,110),1,0.50)
+
+trainSw=makeSwitch(pageTrain,"AUTO TRAIN","спамить тренировочный Tool",48,false,function(on,self)
+	if on then
+		startAutoTrain(setStatus)
+	else
+		stopAutoTrain(setStatus)
+	end
 end)
 
-ultraBtn.Activated:Connect(function()
-	ultraOptEnabled=not ultraOptEnabled
-	ultraBtn.Text=ultraOptEnabled and "ULTRA ON" or "ULTRA"
-	ultraBtn.BackgroundColor3=ultraOptEnabled and Color3.fromRGB(118,65,160) or Color3.fromRGB(82,58,135)
+trainRemoteSw=makeSwitch(pageTrain,"TRAIN REMOTE","добавлять rep/train remote",92,_G.RockBugAutoTrainUseRemote~=false,function(on)
+	_G.RockBugAutoTrainUseRemote=on
+	setStatus("TRAIN REMOTE "..(on and "ON" or "OFF"))
+end)
 
-	if ultraOptEnabled then
+ultraSw=makeSwitch(pageTrain,"ULTRA MAP","убрать карту, оставить нужное",136,false,function(on,self)
+	ultraOptEnabled=on
+	if on then
 		local old=_G.RockBugLowMapTransparency
 		_G.RockBugLowMapTransparency=1
 		local info=getRock(selected)
@@ -980,23 +1292,25 @@ ultraBtn.Activated:Connect(function()
 	end
 end)
 
-antiBtn.Activated:Connect(function()
-	antiAfkEnabled=not antiAfkEnabled
-	antiBtn.Text=antiAfkEnabled and "AFK ON" or "AFK OFF"
-	antiBtn.BackgroundColor3=antiAfkEnabled and Color3.fromRGB(42,84,145) or Color3.fromRGB(105,42,48)
-	setStatus("AFK "..(antiAfkEnabled and "ON" or "OFF"))
+afkSw=makeSwitch(pageTrain,"ANTI AFK","не кикать за простой",180,antiAfkEnabled,function(on)
+	antiAfkEnabled=on
+	setStatus("AFK "..(on and "ON" or "OFF"))
 end)
 
-stopBtn.Activated:Connect(function()
-	stopHit()
-	stopLock()
-	ultraOptEnabled=false
-	ultraBtn.Text="ULTRA"
-	ultraBtn.BackgroundColor3=Color3.fromRGB(82,58,135)
-	setLowMap(false,nil,nil)
-	setStatus("Остановлено")
-	hitBtn.Text="BUG HIT"
-	hitBtn.BackgroundColor3=Color3.fromRGB(30,125,72)
+local allOffSw=makeSwitch(pageTrain,"ALL OFF","выключить всё",224,false,function(on,self)
+	if on then
+		stopAutoTrain()
+		stopHit()
+		stopLock()
+		ultraOptEnabled=false
+		setLowMap(false,nil,nil)
+		if bugSw then bugSw.Set(false,true) end
+		if lockSw then lockSw.Set(false,true) end
+		if ultraSw then ultraSw.Set(false,true) end
+		if trainSw then trainSw.Set(false,true) end
+		setStatus("ALL OFF")
+		task.defer(function() self.Set(false,true) end)
+	end
 end)
 
 min.Activated:Connect(function()
@@ -1010,6 +1324,7 @@ mini.Activated:Connect(function()
 end)
 
 close.Activated:Connect(function()
+	stopAutoTrain()
 	stopHit()
 	stopLock()
 	setLowMap(false,nil,nil)
@@ -1017,7 +1332,7 @@ close.Activated:Connect(function()
 	gui:Destroy()
 end)
 
--- drag только за верх
+-- drag за верх
 local dragging=false
 local dragStart=nil
 local startPos=nil
@@ -1044,11 +1359,7 @@ UserInputService.InputChanged:Connect(function(input)
 	end
 end)
 
--- Auto scan без отдельной кнопки
-local found=scanRocks()
+rockCache=scanRocks()
 refreshButtons()
-local count=0
-for _,row in ipairs(ROCKS)do
-	if found[row.req]then count+=1 end
-end
-setStatus("Готово • "..count.."/"..#ROCKS.." • "..HUB_VERSION)
+setMode("bug")
+setStatus("Готово. Вкладки сверху: БАГ / КАЧ")
