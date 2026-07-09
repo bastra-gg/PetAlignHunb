@@ -57,11 +57,11 @@ local fastHitPower=1 -- v10: обычный КД, без FAST-спама
 -- Если захочешь свои значения — перед запуском поставь:
 -- _G.RockBugRemoteDelayOverride=0.04 и т.д.
 if not _G.RockBugV19NoForceSpeed then
-	_G.RockBugRemoteDelay=tonumber(_G.RockBugRemoteDelayOverride) or 0.035
-	_G.RockBugRemoteLoops=tonumber(_G.RockBugRemoteLoopsOverride) or 3
-	_G.RockBugActivateDelay=tonumber(_G.RockBugActivateDelayOverride) or 0.055
-	_G.RockBugTouchDelay=tonumber(_G.RockBugTouchDelayOverride) or 0.12
-	_G.RockBugHitDelay=tonumber(_G.RockBugHitDelayOverride) or 0.025
+	_G.RockBugRemoteDelay=tonumber(_G.RockBugRemoteDelayOverride) or 0.025
+	_G.RockBugRemoteLoops=tonumber(_G.RockBugRemoteLoopsOverride) or 4
+	_G.RockBugActivateDelay=tonumber(_G.RockBugActivateDelayOverride) or 0.04
+	_G.RockBugTouchDelay=tonumber(_G.RockBugTouchDelayOverride) or 0.08
+	_G.RockBugHitDelay=tonumber(_G.RockBugHitDelayOverride) or 0.015
 end
 
 local function root()
