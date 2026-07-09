@@ -1,11 +1,11 @@
--- Muscle Legends RockBug Hub v23 DIRECT NOCD
+-- Muscle Legends RockBug Hub v13 COMPACT ULTRA FIX
 -- Standalone: без Speed Hub. Камни через neededDurability + TP LOCK + BUG HIT + Anti AFK.
 
 local Players=game:GetService("Players")
 local RunService=game:GetService("RunService")
 local VirtualUser=game:GetService("VirtualUser")
 local lp=Players.LocalPlayer
-local HUB_VERSION="RockBugHub_v23_DirectNoCD"
+local HUB_VERSION="RockBugHub_v13_1_UltraSmallUI"
 
 -- Anti AFK
 local antiAfkEnabled=true
@@ -24,39 +24,9 @@ startAntiAfk()
 
 -- Анти-дубль.
 pcall(function()
-	local old=lp:WaitForChild("PlayerGui"):FindFirstChild("RockBugHub_v23_DirectNoCD")
+	local old=lp:WaitForChild("PlayerGui"):FindFirstChild("RockBugHub_v13_1_UltraSmallUI")
 	if old then old:Destroy() end
 end)
-
--- v22: снести ТОЛЬКО старую v20-оболочку.
--- Важно: если v20 был вручную переименован в v21, он уже НЕ определяется как v20.
-local function killV20Only()
-	local pg=lp:FindFirstChild("PlayerGui")
-	if not pg then return end
-
-	for _,name in ipairs({
-		"RockBugHub_v20_FastAnimBlack"
-	})do
-		local old=pg:FindFirstChild(name)
-		if old then
-			pcall(function()old:Destroy()end)
-		end
-	end
-
-	-- Сбросить возможный след v20: ускоренные AnimationTrack обратно на 1.
-	pcall(function()
-		local c=lp.Character
-		local h=c and c:FindFirstChildWhichIsA("Humanoid")
-		local animator=h and h:FindFirstChildOfClass("Animator")
-		if animator then
-			for _,tr in ipairs(animator:GetPlayingAnimationTracks())do
-				pcall(function()tr:AdjustSpeed(1)end)
-			end
-		end
-	end)
-end
-
-pcall(killV20Only)
 
 local ROCKS={
 	{id="AncientJungle",label="Древний лес",req=10000000,color=Color3.fromRGB(120,70,255)},
@@ -81,26 +51,7 @@ local oldAuto=nil
 local hitting=false
 local fastHitEnabled=false
 local ultraOptEnabled=false
-local fastHitPower=1 -- v23: direct no-cd hit attempts, не animation speed
-
--- v23 DIRECT NOCD:
--- Главный удар = прямой muscleEvent remote + touch по камню.
--- Tool:Activate используется редко, только чтобы игра не потеряла Punch state.
--- Дефолт безопасный: 12 hit cycles/sec.
--- Overrides перед запуском:
--- _G.RockBugHitRateOverride=10/12/15/18/20
--- _G.RockBugRemoteLoopsOverride=1/2
--- _G.RockBugTouchEveryOverride=2        -- touch раз в N циклов
--- _G.RockBugActivateEveryOverride=12    -- Tool:Activate раз в N циклов
-if not _G.RockBugV23NoForceSpeed then
-	_G.RockBugHitRate=tonumber(_G.RockBugHitRateOverride) or 12
-	_G.RockBugRemoteLoops=tonumber(_G.RockBugRemoteLoopsOverride) or 1
-	_G.RockBugTouchLoops=tonumber(_G.RockBugTouchLoopsOverride) or 1
-	_G.RockBugTouchEvery=tonumber(_G.RockBugTouchEveryOverride) or 2
-	_G.RockBugActivateEvery=tonumber(_G.RockBugActivateEveryOverride) or 12
-	_G.RockBugActivateBursts=tonumber(_G.RockBugActivateBurstsOverride) or 1
-	_G.RockBugAnimSpeed=tonumber(_G.RockBugAnimSpeedOverride) or 1
-end
+local fastHitPower=1 -- v10: обычный КД, без FAST-спама
 
 local function root()
 	local c=lp.Character
@@ -114,90 +65,6 @@ end
 local function hum()
 	local c=lp.Character
 	return c and c:FindFirstChildWhichIsA("Humanoid")
-end
-
--- v21 FIX: безопасный буст скорости анимации.
--- В v20 ошибка была в том, что hum() вызывался ДО объявления функции.
--- Здесь блок стоит после hum(), поэтому не должен крашить цикл.
-_G.RockBugAnimSpeed=tonumber(_G.RockBugAnimSpeedOverride) or (_G.RockBugAnimSpeed or 1.35)
-_G.RockBugAnimBoostAll=(_G.RockBugAnimBoostAll==true)
-
-local animSpeedConn=nil
-local lastAnimBoost=0
-
-local function animTrackInfo(tr)
-	local info=""
-	pcall(function()
-		info=tostring(tr.Name).." "..tostring(tr.Animation and tr.Animation.Name or "").." "..tostring(tr.Animation and tr.Animation.AnimationId or "")
-	end)
-	return info:lower()
-end
-
-local function isSafeToBoostTrack(tr)
-	if not tr then return false end
-	if _G.RockBugAnimBoostAll then return true end
-
-	local info=animTrackInfo(tr)
-	-- Не трогаем базовое движение, чтобы тело/прыжок не ломались.
-	if info:find("walk",1,true) or info:find("run",1,true) or info:find("idle",1,true) or info:find("jump",1,true) or info:find("fall",1,true) or info:find("swim",1,true)then
-		return false
-	end
-
-	-- Punch-анимации часто имеют только id без нормального имени, поэтому всё кроме движения можно ускорять.
-	return true
-end
-
-local function boostOneTrack(tr)
-	if not isSafeToBoostTrack(tr)then return end
-	local speed=math.clamp(tonumber(_G.RockBugAnimSpeed or 2.35) or 2.35,0.5,6)
-	pcall(function()
-		tr:AdjustSpeed(speed)
-	end)
-end
-
-local function boostPunchAnimations()
-	if not hitting then return end
-	local h=hum()
-	if not h then return end
-	local animator=h:FindFirstChildOfClass("Animator")
-	if not animator then return end
-
-	for _,tr in ipairs(animator:GetPlayingAnimationTracks())do
-		boostOneTrack(tr)
-	end
-end
-
-local function startAnimSpeedBoost()
-	if animSpeedConn then animSpeedConn:Disconnect() animSpeedConn=nil end
-
-	local h=hum()
-	if not h then return end
-	local animator=h:FindFirstChildOfClass("Animator")
-	if not animator then return end
-
-	animSpeedConn=animator.AnimationPlayed:Connect(function(tr)
-		if not hitting then return end
-		task.defer(function()
-			boostOneTrack(tr)
-		end)
-	end)
-
-	boostPunchAnimations()
-end
-
-local function stopAnimSpeedBoost()
-	if animSpeedConn then animSpeedConn:Disconnect() animSpeedConn=nil end
-
-	local h=hum()
-	if not h then return end
-	local animator=h:FindFirstChildOfClass("Animator")
-	if not animator then return end
-
-	for _,tr in ipairs(animator:GetPlayingAnimationTracks())do
-		pcall(function()
-			tr:AdjustSpeed(1)
-		end)
-	end
 end
 
 local function valOf(v)
@@ -298,22 +165,13 @@ local lowMapState={
 	on=false,
 	saved={},
 	count=0,
-	removed=0,
 	lighting={},
-	settings={},
 }
 
-local function getKeepChar()
-	return lp.Character
-end
-
-local function protectObj(obj,keepModel)
-	if not obj then return false end
-	local c=getKeepChar()
-	if c and (obj==c or obj:IsDescendantOf(c) or c:IsDescendantOf(obj))then return true end
-	if keepModel and (obj==keepModel or obj:IsDescendantOf(keepModel) or keepModel:IsDescendantOf(obj))then return true end
-	if obj==workspace.CurrentCamera then return true end
-	if workspace:FindFirstChildOfClass("Terrain") and obj==workspace:FindFirstChildOfClass("Terrain")then return true end
+local function isProtectedFromLowMap(obj,keepModel)
+	local c=lp.Character
+	if c and obj:IsDescendantOf(c)then return true end
+	if keepModel and obj:IsDescendantOf(keepModel)then return true end
 	return false
 end
 
@@ -326,234 +184,73 @@ local function lowSave(obj,key,val)
 	if rec[key]==nil then rec[key]=val end
 end
 
-local function safeSet(obj,key,val)
-	pcall(function()obj[key]=val end)
-end
-
-local function ultraPartOff(obj)
-	-- Агрессивная оптимизация, но без поломки функционала:
-	-- физику/касания не трогаем, чтобы удар/камень не отваливались.
-	lowSave(obj,"LocalTransparencyModifier",obj.LocalTransparencyModifier)
-	lowSave(obj,"CastShadow",obj.CastShadow)
-	pcall(function()lowSave(obj,"Reflectance",obj.Reflectance)end)
-
-	safeSet(obj,"LocalTransparencyModifier",1)
-	safeSet(obj,"CastShadow",false)
-	pcall(function()obj.Reflectance=0 end)
-end
-
-local function ultraEffectOff(obj)
-	if obj:IsA("ParticleEmitter")or obj:IsA("Trail")or obj:IsA("Beam")or obj:IsA("Fire")or obj:IsA("Smoke")or obj:IsA("Sparkles")then
-		lowSave(obj,"Enabled",obj.Enabled)
-		safeSet(obj,"Enabled",false)
-		return true
-	end
-	if obj:IsA("Decal")or obj:IsA("Texture")then
-		lowSave(obj,"Transparency",obj.Transparency)
-		safeSet(obj,"Transparency",1)
-		return true
-	end
-	if obj:IsA("PointLight")or obj:IsA("SpotLight")or obj:IsA("SurfaceLight")then
-		lowSave(obj,"Enabled",obj.Enabled)
-		safeSet(obj,"Enabled",false)
-		return true
-	end
-	if obj:IsA("BillboardGui")or obj:IsA("SurfaceGui")then
-		lowSave(obj,"Enabled",obj.Enabled)
-		safeSet(obj,"Enabled",false)
-		return true
-	end
-	if obj:IsA("Highlight")then
-		lowSave(obj,"Enabled",obj.Enabled)
-		safeSet(obj,"Enabled",false)
-		return true
-	end
-	if obj:IsA("Sound")then
-		pcall(function()
-			lowSave(obj,"Volume",obj.Volume)
-			obj.Volume=0
-		end)
-		return true
-	end
-	return false
-end
-
-local function applyQualityUltra()
-	local lighting=game:GetService("Lighting")
-	pcall(function()
-		lowMapState.lighting.GlobalShadows=lighting.GlobalShadows
-		lowMapState.lighting.Brightness=lighting.Brightness
-		lowMapState.lighting.FogEnd=lighting.FogEnd
-		lowMapState.lighting.FogColor=lighting.FogColor
-		lowMapState.lighting.Ambient=lighting.Ambient
-		lowMapState.lighting.OutdoorAmbient=lighting.OutdoorAmbient
-		lowMapState.lighting.ColorShift_Top=lighting.ColorShift_Top
-		lowMapState.lighting.ColorShift_Bottom=lighting.ColorShift_Bottom
-		pcall(function()lowMapState.lighting.ExposureCompensation=lighting.ExposureCompensation end)
-		lowMapState.lighting.EnvironmentDiffuseScale=lighting.EnvironmentDiffuseScale
-		lowMapState.lighting.EnvironmentSpecularScale=lighting.EnvironmentSpecularScale
-		lowMapState.lighting.Technology=lighting.Technology
-
-		-- v19 BLACK: не "light", а максимально тёмная сцена.
-		lighting.GlobalShadows=false
-		lighting.Brightness=0
-		lighting.FogEnd=5
-		lighting.FogColor=Color3.fromRGB(0,0,0)
-		lighting.Ambient=Color3.fromRGB(0,0,0)
-		lighting.OutdoorAmbient=Color3.fromRGB(0,0,0)
-		lighting.ColorShift_Top=Color3.fromRGB(0,0,0)
-		lighting.ColorShift_Bottom=Color3.fromRGB(0,0,0)
-		pcall(function()lighting.ExposureCompensation=-10 end)
-		lighting.EnvironmentDiffuseScale=0
-		lighting.EnvironmentSpecularScale=0
-		pcall(function()lighting.Technology=Enum.Technology.Compatibility end)
-	end)
-
-	pcall(function()
-		local terrain=workspace:FindFirstChildOfClass("Terrain")
-		if terrain then
-			lowSave(terrain,"Decoration",terrain.Decoration)
-			lowSave(terrain,"WaterWaveSize",terrain.WaterWaveSize)
-			lowSave(terrain,"WaterWaveSpeed",terrain.WaterWaveSpeed)
-			lowSave(terrain,"WaterReflectance",terrain.WaterReflectance)
-			lowSave(terrain,"WaterTransparency",terrain.WaterTransparency)
-			terrain.Decoration=false
-			terrain.WaterWaveSize=0
-			terrain.WaterWaveSpeed=0
-			terrain.WaterReflectance=0
-			terrain.WaterTransparency=1
-		end
-	end)
-
-	pcall(function()
-		local ugs=UserSettings():GetService("UserGameSettings")
-		lowMapState.settings.SavedQualityLevel=ugs.SavedQualityLevel
-		ugs.SavedQualityLevel=Enum.SavedQualitySetting.QualityLevel1
-	end)
-
-	pcall(function()
-		local rs=settings().Rendering
-		lowMapState.settings.QualityLevel=rs.QualityLevel
-		rs.QualityLevel=Enum.QualityLevel.Level01
-	end)
-
-	-- Настоящая экономия: отключаем 3D-рендер. ScreenGui остаётся, баг-процесс продолжает идти.
-	pcall(function()
-		RunService:Set3dRenderingEnabled(false)
-		lowMapState.settings.Render3DDisabled=true
-	end)
-end
-
-local function restoreQualityUltra()
-	pcall(function()
-		if lowMapState.settings.Render3DDisabled then
-			RunService:Set3dRenderingEnabled(true)
-		end
-	end)
-
-	pcall(function()
-		local ugs=UserSettings():GetService("UserGameSettings")
-		if lowMapState.settings.SavedQualityLevel~=nil then
-			ugs.SavedQualityLevel=lowMapState.settings.SavedQualityLevel
-		end
-	end)
-
-	pcall(function()
-		local rs=settings().Rendering
-		if lowMapState.settings.QualityLevel~=nil then
-			rs.QualityLevel=lowMapState.settings.QualityLevel
-		end
-	end)
-
-	local lighting=game:GetService("Lighting")
-	pcall(function()
-		for k,v in pairs(lowMapState.lighting)do
-			lighting[k]=v
-		end
-	end)
-	lowMapState.lighting={}
-	lowMapState.settings={}
-end
-
 local function setLowMap(enabled,keepModel,statusFn)
 	if enabled then
 		if lowMapState.on then return end
 		lowMapState.on=true
 		lowMapState.saved={}
 		lowMapState.count=0
-		lowMapState.removed=0
 
-		applyQualityUltra()
+		local lighting=game:GetService("Lighting")
+		pcall(function()
+			lowMapState.lighting.GlobalShadows=lighting.GlobalShadows
+			lighting.GlobalShadows=false
+		end)
 
-		-- Удаляем с клиента целые верхние объекты Workspace, если они не нужны процессу.
-		for _,obj in ipairs(workspace:GetChildren())do
-			if obj~=workspace.CurrentCamera and not protectObj(obj,keepModel)then
-				if obj:IsA("Camera") or obj:IsA("Terrain") then
-					-- skip
-				else
-					lowSave(obj,"Parent",obj.Parent)
-					pcall(function()
-						obj.Parent=nil
-						lowMapState.removed+=1
-					end)
-				end
-			end
-			if lowMapState.removed%40==0 then task.wait() end
-		end
-
-		-- В оставшихся контейнерах гасим всё, кроме персонажа и выбранного камня.
-		local n=0
 		for _,obj in ipairs(workspace:GetDescendants())do
-			if not protectObj(obj,keepModel)then
+			if not isProtectedFromLowMap(obj,keepModel)then
 				if obj:IsA("BasePart")then
-					ultraPartOff(obj)
-					n+=1
-				elseif ultraEffectOff(obj)then
-					n+=1
+					lowSave(obj,"LocalTransparencyModifier",obj.LocalTransparencyModifier)
+					lowSave(obj,"CastShadow",obj.CastShadow)
+					pcall(function()
+						obj.LocalTransparencyModifier=math.max(obj.LocalTransparencyModifier,_G.RockBugLowMapTransparency or 1)
+						obj.CastShadow=false
+					end)
+					lowMapState.count+=1
+
+				elseif obj:IsA("ParticleEmitter")or obj:IsA("Trail")or obj:IsA("Beam")or obj:IsA("Fire")or obj:IsA("Smoke")or obj:IsA("Sparkles")then
+					lowSave(obj,"Enabled",obj.Enabled)
+					pcall(function()obj.Enabled=false end)
+					lowMapState.count+=1
+
+				elseif obj:IsA("Decal")or obj:IsA("Texture")then
+					lowSave(obj,"Transparency",obj.Transparency)
+					pcall(function()obj.Transparency=1 end)
+					lowMapState.count+=1
+
+				elseif obj:IsA("PointLight")or obj:IsA("SpotLight")or obj:IsA("SurfaceLight")then
+					lowSave(obj,"Enabled",obj.Enabled)
+					pcall(function()obj.Enabled=false end)
+					lowMapState.count+=1
 				end
 			end
-			if n%300==0 then task.wait() end
 		end
 
-		for _,obj in ipairs(game:GetService("Lighting"):GetDescendants())do
-			if obj:IsA("PostEffect")then
-				lowSave(obj,"Enabled",obj.Enabled)
-				safeSet(obj,"Enabled",false)
-				n+=1
-			end
-		end
-
-		lowMapState.count=n
-		if statusFn then
-			statusFn("ULTRA BLACK ON: быстрый режим, процесс сохранён")
-		end
+		if statusFn then statusFn("LOW MAP ON: карта приглушена ("..lowMapState.count..")")end
 	else
 		if not lowMapState.on then return end
 		lowMapState.on=false
 
-		restoreQualityUltra()
-
 		for obj,rec in pairs(lowMapState.saved)do
-			if obj then
-				-- Parent восстанавливаем первым, чтобы объект вернулся в Workspace.
-				if rec.Parent~=nil then
-					safeSet(obj,"Parent",rec.Parent)
-				end
+			if obj and obj.Parent then
 				for k,v in pairs(rec)do
-					if k~="Parent"then
-						safeSet(obj,k,v)
-					end
+					pcall(function()obj[k]=v end)
 				end
 			end
 		end
-
 		lowMapState.saved={}
-		lowMapState.count=0
-		lowMapState.removed=0
-		if statusFn then statusFn("ULTRA OFF: карта восстановлена")end
+
+		local lighting=game:GetService("Lighting")
+		pcall(function()
+			if lowMapState.lighting.GlobalShadows~=nil then
+				lighting.GlobalShadows=lowMapState.lighting.GlobalShadows
+			end
+		end)
+		lowMapState.lighting={}
+
+		if statusFn then statusFn("LOW MAP OFF: карта восстановлена")end
 	end
 end
-
 
 local function stopLock()
 	if lockConn then lockConn:Disconnect() lockConn=nil end
@@ -618,86 +315,25 @@ local function tpInsideRock(row)
 	return true,info
 end
 
-local cachedPunchRemotes=nil
-
-local function collectPunchRemotes()
-	if cachedPunchRemotes then return cachedPunchRemotes end
-	cachedPunchRemotes={}
-
-	local function add(ev)
-		if ev and ev:IsA("RemoteEvent")then
-			for _,old in ipairs(cachedPunchRemotes)do
-				if old==ev then return end
-			end
-			table.insert(cachedPunchRemotes,ev)
-		end
-	end
-
+local function firePunchRemote()
+	-- Основной рабочий вариант для Muscle Legends: punch + rightHand.
 	pcall(function()
-		if lp:FindFirstChild("muscleEvent")then add(lp.muscleEvent)end
+		if lp:FindFirstChild("muscleEvent")then
+			lp.muscleEvent:FireServer("punch","rightHand")
+			lp.muscleEvent:FireServer("punch","leftHand")
+		end
 	end)
 
 	pcall(function()
 		local rs=game:GetService("ReplicatedStorage")
 		local re=rs:FindFirstChild("rEvents")
-		if re then add(re:FindFirstChild("muscleEvent"))end
-	end)
-
-	pcall(function()
-		local rs=game:GetService("ReplicatedStorage")
-		for _,d in ipairs(rs:GetDescendants())do
-			if d:IsA("RemoteEvent")then
-				local n=tostring(d.Name):lower()
-				local full=tostring(d:GetFullName()):lower()
-				if n=="muscleevent" or n:find("punch",1,true) or (n:find("muscle",1,true) and full:find("event",1,true))then
-					add(d)
-				end
-			end
-		end
-	end)
-
-	return cachedPunchRemotes
-end
-
-local function firePunchRemote()
-	local remotes=collectPunchRemotes()
-
-	for _,ev in ipairs(remotes)do
-		pcall(function()
+		local ev=re and re:FindFirstChild("muscleEvent")
+		if ev and ev.FireServer then
 			ev:FireServer("punch","rightHand")
 			ev:FireServer("punch","leftHand")
 			ev:FireServer("punch")
-		end)
-	end
-end
-
-local function firePunchRemoteSpam()
-	local loops=math.clamp(tonumber(_G.RockBugRemoteLoops or 5)or 5,1,12)
-	for _=1,loops do
-		firePunchRemote()
-	end
-end
-
-local function spamActivateTool(tool)
-	if not tool or not tool.Parent then return end
-
-	local bursts=math.clamp(tonumber(_G.RockBugActivateBursts or 3)or 3,1,8)
-
-	for i=1,bursts do
-		pcall(function()tool:Activate()end)
-
-		-- task.defer даёт ещё несколько Activate почти в тот же кадр, без wait-лага.
-		if i<bursts then
-			task.defer(function()
-				if tool and tool.Parent then
-					pcall(function()tool:Activate()end)
-					boostPunchAnimations()
-				end
-			end)
 		end
-	end
-
-	boostPunchAnimations()
+	end)
 end
 
 local lastEquipTry=0
@@ -888,7 +524,7 @@ local function activateFistTool(statusFn)
 	for _,tool in ipairs(c:GetChildren())do
 		if tool:IsA("Tool") and toolScore(tool)>0 then
 			clearToolCooldowns(tool)
-			spamActivateTool(tool)
+			pcall(function()tool:Activate()end)
 		end
 	end
 end
@@ -916,16 +552,10 @@ local function touchRock(row)
 		if p and p:IsA("BasePart")then
 			pcall(function()
 				firetouchinterest(p,target,0)
+				task.wait()
 				firetouchinterest(p,target,1)
 			end)
 		end
-	end
-end
-
-local function spamTouchRock(row)
-	local loops=math.clamp(tonumber(_G.RockBugTouchLoops or 2)or 2,1,6)
-	for _=1,loops do
-		touchRock(row)
 	end
 end
 
@@ -950,73 +580,42 @@ local function startHit(row,statusFn)
 	if hitConn then hitConn:Disconnect() hitConn=nil end
 
 	local tool=ensurePunchTool(statusFn)
-	collectPunchRemotes()
+	local info=getRock(row)
 
-	local cycle=0
+	local lastTouch=0
 	local lastEquip=0
-	local tickCount=0
-	local lastStat=os.clock()
-	local shownRate=0
+	local lastActivate=0
 
 	task.spawn(function()
-		local nextHit=os.clock()
-
 		while hitting and myId==hitLoopId do
 			local now=os.clock()
 
-			-- Ровный no-cd rate, без RenderStepped/Heartbeat и без 0 FPS.
-			local rate=math.clamp(tonumber(_G.RockBugHitRate or _G.RockBugHitRateOverride or 12)or 12,3,24)
-			local interval=1/rate
-
-			if now>=nextHit then
-				nextHit+=interval
-				if nextHit<now-0.20 then
-					nextHit=now+interval
-				end
-
-				cycle+=1
-				tickCount+=1
-
-				-- Главное: remote hit attempt. Это не анимация.
-				firePunchRemoteSpam()
-
-				-- Touch нужен не каждый цикл, иначе лишняя нагрузка.
-				local touchEvery=math.clamp(tonumber(_G.RockBugTouchEvery or 2)or 2,1,10)
-				if cycle%touchEvery==0 then
-					spamTouchRock(row)
-				end
-
-				-- Tool:Activate редко, только для поддержки локального Punch state.
-				local activateEvery=math.clamp(tonumber(_G.RockBugActivateEvery or 12)or 12,2,60)
-				if cycle%activateEvery==0 then
-					tool=currentPunchTool() or tool
-					if tool and tool.Parent then
-						clearToolCooldowns(tool)
-						spamActivateTool(tool)
-					else
-						activateFistTool(nil)
-						tool=currentPunchTool()
-					end
-				end
-			end
-
-			if now-lastEquip>=1.5 then
+			-- Обычный КД: не спамим, не чистим cooldown, не душим телефон.
+			if now-lastEquip>2.0 then
 				lastEquip=now
-				tool=ensurePunchTool(nil) or currentPunchTool() or tool
+				tool=ensurePunchTool(nil) or currentPunchTool()
 			end
 
-			if now-lastStat>=1 then
-				shownRate=tickCount/(now-lastStat)
-				tickCount=0
-				lastStat=now
+			firePunchRemote()
+
+			if tool and tool.Parent and now-lastActivate>=(_G.RockBugActivateDelay or 0.22) then
+				lastActivate=now
+				pcall(function()tool:Activate()end)
+			elseif not tool or not tool.Parent then
+				activateFistTool(nil)
 			end
 
-			task.wait(math.clamp(nextHit-os.clock(),0.01,0.04))
+			if now-lastTouch>=(_G.RockBugTouchDelay or 0.40) then
+				lastTouch=now
+				touchRock(row)
+			end
+
+			task.wait(_G.RockBugHitDelay or 0.16)
 		end
 	end)
 
 	if statusFn then
-		statusFn("БАГ КАМНЯ: DIRECT NOCD | "..tostring(_G.RockBugHitRate or 12).."/s | remote main | touch /"..tostring(_G.RockBugTouchEvery or 2).." | act /"..tostring(_G.RockBugActivateEvery or 12)..(ultraOptEnabled and " | ULTRA ON" or "")..(selectedPunchToolName and (" | "..selectedPunchToolName) or ""))
+		statusFn("BUG HIT: обычный КД"..(ultraOptEnabled and " | ULTRA ON" or "")..(selectedPunchToolName and (" | "..selectedPunchToolName) or ""))
 	end
 end
 
@@ -1024,32 +623,18 @@ end
 local function stopHit(statusFn)
 	hitting=false
 	hitLoopId+=1
-	stopAnimSpeedBoost()
 	if hitConn then hitConn:Disconnect() hitConn=nil end
 	setLowMap(false,nil,nil)
-	pcall(function()if blackBg then blackBg.Visible=false end end)
 	if statusFn then statusFn("BUG HIT: остановлен")end
 end
 
 -- UI v12: новый компактный дизайн без SCAN/COPY/лишних надписей
 local gui=Instance.new("ScreenGui")
-gui.Name="RockBugHub_v23_DirectNoCD"
+gui.Name="RockBugHub_v13_1_UltraSmallUI"
 gui.ResetOnSpawn=false
 gui.IgnoreGuiInset=true
 gui.DisplayOrder=999999
-gui.ZIndexBehavior=Enum.ZIndexBehavior.Sibling
 gui.Parent=lp:WaitForChild("PlayerGui")
-
-local blackBg=Instance.new("Frame")
-blackBg.Name="BLACK_OPT_BACKGROUND"
-blackBg.Parent=gui
-blackBg.Size=UDim2.new(1,0,1,0)
-blackBg.Position=UDim2.new(0,0,0,0)
-blackBg.BackgroundColor3=Color3.fromRGB(0,0,0)
-blackBg.BackgroundTransparency=0
-blackBg.BorderSizePixel=0
-blackBg.ZIndex=0
-blackBg.Visible=false
 
 local UserInputService=game:GetService("UserInputService")
 
@@ -1107,7 +692,6 @@ main.BackgroundColor3=Color3.fromRGB(8,10,18)
 main.BackgroundTransparency=0.10
 main.BorderSizePixel=0
 main.Active=true
-main.ZIndex=5
 corner(main,22)
 stroke(main,Color3.fromRGB(95,85,180),1.4,0.2)
 
@@ -1137,7 +721,7 @@ local title=makeText(top,"BUG HUB",18,Enum.Font.GothamBlack,Color3.fromRGB(248,2
 title.Size=UDim2.new(1,-108,0,22)
 title.Position=UDim2.new(0,46,0,6)
 
-local sub=makeText(top,HUB_VERSION.." • DIRECT NOCD",10,Enum.Font.GothamBold,Color3.fromRGB(165,172,205))
+local sub=makeText(top,"камень • lock • punch",10,Enum.Font.GothamBold,Color3.fromRGB(165,172,205))
 sub.Size=UDim2.new(1,-108,0,16)
 sub.Position=UDim2.new(0,47,0,26)
 
@@ -1152,12 +736,11 @@ close.Position=UDim2.new(1,-33,0,9)
 close.TextSize=18
 close.TextColor3=Color3.fromRGB(255,210,218)
 
-local mini=makeBtn(gui,"BUG v23 NC",Color3.fromRGB(46,42,120))
+local mini=makeBtn(gui,"BUG HUB",Color3.fromRGB(46,42,120))
 mini.Size=UDim2.new(0,90,0,36)
 mini.Position=main.Position
 mini.Visible=false
 mini.TextSize=11
-mini.ZIndex=6
 
 local selectedCard=Instance.new("Frame")
 selectedCard.Parent=main
@@ -1174,66 +757,18 @@ selectedLabel.Size=UDim2.new(1,-24,0,14)
 selectedLabel.Position=UDim2.new(0,10,0,6)
 
 local selectedName=makeText(selectedCard,"-",18,Enum.Font.GothamBlack,Color3.fromRGB(255,238,185))
-selectedName.Size=UDim2.new(1,-120,0,24)
+selectedName.Size=UDim2.new(1,-20,0,24)
 selectedName.Position=UDim2.new(0,10,0,20)
-
-local bugTimerText=makeText(selectedCard,"⏱ 00:00",14,Enum.Font.GothamBlack,Color3.fromRGB(120,255,170))
-bugTimerText.Size=UDim2.new(0,102,0,24)
-bugTimerText.Position=UDim2.new(1,-112,0,21)
-bugTimerText.TextXAlignment=Enum.TextXAlignment.Right
-
-local bugRunTime=0
-local bugTimerStartedAt=nil
-local bugTimerConn=nil
-
-local function formatBugTime(sec)
-	sec=math.max(0,math.floor(sec or 0))
-	local h=math.floor(sec/3600)
-	local m=math.floor((sec%3600)/60)
-	local s=sec%60
-	if h>0 then
-		return string.format("%02d:%02d:%02d",h,m,s)
-	end
-	return string.format("%02d:%02d",m,s)
-end
-
-local function getBugTime()
-	if bugTimerStartedAt then
-		return bugRunTime+(os.clock()-bugTimerStartedAt)
-	end
-	return bugRunTime
-end
-
-local function updateBugTimer()
-	if bugTimerText then
-		bugTimerText.Text="⏱ "..formatBugTime(getBugTime())
-	end
-end
-
-local function startBugTimer()
-	if not bugTimerStartedAt then
-		bugTimerStartedAt=os.clock()
-	end
-	if not bugTimerConn then
-		bugTimerConn=RunService.Heartbeat:Connect(updateBugTimer)
-	end
-	updateBugTimer()
-end
-
-local function pauseBugTimer()
-	if bugTimerStartedAt then
-		bugRunTime+=(os.clock()-bugTimerStartedAt)
-		bugTimerStartedAt=nil
-	end
-	updateBugTimer()
-end
-
-updateBugTimer()
 
 local status=makeText(main,"Готово",11,Enum.Font.GothamBold,Color3.fromRGB(210,216,245))
 status.Size=UDim2.new(1,-14,0,28)
 status.Position=UDim2.new(0,7,0,114)
 
+local versionText=makeText(main,HUB_VERSION,9,Enum.Font.GothamBlack,Color3.fromRGB(150,158,190))
+versionText.Name="VersionText"
+versionText.Size=UDim2.new(1,-18,0,14)
+versionText.Position=UDim2.new(0,9,0,396)
+versionText.TextXAlignment=Enum.TextXAlignment.Center
 status.BackgroundColor3=Color3.fromRGB(9,11,24)
 status.BackgroundTransparency=0.20
 status.BorderSizePixel=0
@@ -1361,7 +896,7 @@ local lockBtn=makeBtn(row1,"LOCK",Color3.fromRGB(42,84,160))
 lockBtn.Size=UDim2.new(0.5,-5,1,0)
 lockBtn.Position=UDim2.new(0,0,0,0)
 
-local hitBtn=makeBtn(row1,"СТАРТ БАГА",Color3.fromRGB(30,125,72))
+local hitBtn=makeBtn(row1,"BUG HIT",Color3.fromRGB(30,125,72))
 hitBtn.Size=UDim2.new(0.5,-5,1,0)
 hitBtn.Position=UDim2.new(0.5,5,0,0)
 
@@ -1375,7 +910,7 @@ local unlockBtn=makeBtn(row2,"UNLOCK",Color3.fromRGB(120,70,38))
 unlockBtn.Size=UDim2.new(0.5,-5,1,0)
 unlockBtn.Position=UDim2.new(0,0,0,0)
 
-local ultraBtn=makeBtn(row2,"ULTRA BLACK",Color3.fromRGB(82,58,135))
+local ultraBtn=makeBtn(row2,"ULTRA",Color3.fromRGB(82,58,135))
 ultraBtn.Size=UDim2.new(0.5,-5,1,0)
 ultraBtn.Position=UDim2.new(0.5,5,0,0)
 
@@ -1410,8 +945,7 @@ end)
 hitBtn.Activated:Connect(function()
 	if hitting then
 		stopHit(setStatus)
-		pauseBugTimer()
-		hitBtn.Text="СТАРТ БАГА"
+		hitBtn.Text="BUG HIT"
 		hitBtn.BackgroundColor3=Color3.fromRGB(30,125,72)
 	else
 		local ok,msg=tpInsideRock(selected)
@@ -1420,8 +954,7 @@ hitBtn.Activated:Connect(function()
 			return
 		end
 		startHit(selected,setStatus)
-		startBugTimer()
-		hitBtn.Text="ПАУЗА БАГА"
+		hitBtn.Text="HITTING"
 		hitBtn.BackgroundColor3=Color3.fromRGB(28,150,82)
 	end
 end)
@@ -1433,14 +966,10 @@ end)
 
 ultraBtn.Activated:Connect(function()
 	ultraOptEnabled=not ultraOptEnabled
-	ultraBtn.Text=ultraOptEnabled and "BLACK ON" or "ULTRA BLACK"
+	ultraBtn.Text=ultraOptEnabled and "ULTRA ON" or "ULTRA"
 	ultraBtn.BackgroundColor3=ultraOptEnabled and Color3.fromRGB(118,65,160) or Color3.fromRGB(82,58,135)
 
-	if blackBg then blackBg.Visible=ultraOptEnabled end
-
 	if ultraOptEnabled then
-		collectPunchRemotes()
-		pcall(function() ensurePunchTool(nil) end)
 		local old=_G.RockBugLowMapTransparency
 		_G.RockBugLowMapTransparency=1
 		local info=getRock(selected)
@@ -1460,15 +989,13 @@ end)
 
 stopBtn.Activated:Connect(function()
 	stopHit()
-	pauseBugTimer()
 	stopLock()
 	ultraOptEnabled=false
-	ultraBtn.Text="ULTRA BLACK"
+	ultraBtn.Text="ULTRA"
 	ultraBtn.BackgroundColor3=Color3.fromRGB(82,58,135)
 	setLowMap(false,nil,nil)
-	if blackBg then blackBg.Visible=false end
-	setStatus("Остановлено • таймер сохранён")
-	hitBtn.Text="СТАРТ БАГА"
+	setStatus("Остановлено")
+	hitBtn.Text="BUG HIT"
 	hitBtn.BackgroundColor3=Color3.fromRGB(30,125,72)
 end)
 
@@ -1486,8 +1013,6 @@ close.Activated:Connect(function()
 	stopHit()
 	stopLock()
 	setLowMap(false,nil,nil)
-	if blackBg then blackBg.Visible=false end
-	if bugTimerConn then bugTimerConn:Disconnect() bugTimerConn=nil end
 	if antiAfkConn then antiAfkConn:Disconnect() antiAfkConn=nil end
 	gui:Destroy()
 end)
@@ -1526,4 +1051,4 @@ local count=0
 for _,row in ipairs(ROCKS)do
 	if found[row.req]then count+=1 end
 end
-setStatus("Готово • "..count.."/"..#ROCKS.." • v22 fast spam")
+setStatus("Готово • "..count.."/"..#ROCKS.." • "..HUB_VERSION)
