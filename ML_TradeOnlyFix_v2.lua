@@ -1,11 +1,11 @@
--- Muscle Legends RockBug Hub v16 SliderLevers
+-- Muscle Legends RockBug Hub v17 NeoPatch
 -- Standalone: без Speed Hub. Камни через neededDurability + TP LOCK + BUG HIT + Anti AFK.
 
 local Players=game:GetService("Players")
 local RunService=game:GetService("RunService")
 local VirtualUser=game:GetService("VirtualUser")
 local lp=Players.LocalPlayer
-local HUB_VERSION="RockBugHub_v16_SliderLevers"
+local HUB_VERSION="RockBugHub_v17_NeoPatch"
 
 -- Anti AFK
 local antiAfkEnabled=true
@@ -22,7 +22,7 @@ local function startAntiAfk()
 end
 startAntiAfk()
 
--- Анти-дубль: сносит старые окна RockBugHub, чтобы не путаться.
+-- Анти-дубль: сносит старые окна RockBugHub.
 pcall(function()
 	local pg=lp:WaitForChild("PlayerGui")
 	for _,g in ipairs(pg:GetChildren()) do
@@ -31,6 +31,7 @@ pcall(function()
 		end
 	end
 end)
+
 
 
 
@@ -1215,9 +1216,10 @@ local function stopTrainPositionLock(statusFn)
 	if statusFn then statusFn("LOCK POS: OFF") end
 end
 
--- UI v16: обычный ползунок-рычажок.
+
+-- UI v17: полностью новый внешний вид, функционал оставлен.
 local gui=Instance.new("ScreenGui")
-gui.Name="RockBugHub_v16_SliderLevers"
+gui.Name="RockBugHub_v17_NeoPatch"
 gui.ResetOnSpawn=false
 gui.IgnoreGuiInset=true
 gui.DisplayOrder=999999
@@ -1234,34 +1236,34 @@ end
 
 local function stroke(o,col,t,trans)
 	local s=Instance.new("UIStroke")
-	s.Color=col or Color3.fromRGB(120,110,210)
+	s.Color=col or Color3.fromRGB(110,185,255)
 	s.Thickness=t or 1
-	s.Transparency=trans or 0
+	s.Transparency=trans or 0.35
 	s.Parent=o
 	return s
 end
 
-local function makeText(parent,text,size,font,color)
+local function txt(parent,text,size,font,color,xalign)
 	local l=Instance.new("TextLabel")
 	l.Parent=parent
 	l.BackgroundTransparency=1
 	l.Text=text or ""
-	l.TextColor3=color or Color3.fromRGB(232,236,255)
+	l.TextColor3=color or Color3.fromRGB(235,242,255)
 	l.Font=font or Enum.Font.GothamBold
 	l.TextSize=size or 12
-	l.TextXAlignment=Enum.TextXAlignment.Left
-	l.TextYAlignment=Enum.TextYAlignment.Center
 	l.TextWrapped=true
+	l.TextXAlignment=xalign or Enum.TextXAlignment.Left
+	l.TextYAlignment=Enum.TextYAlignment.Center
 	return l
 end
 
-local function makeBtn(parent,text,color)
+local function btn(parent,text,color)
 	local b=Instance.new("TextButton")
 	b.Parent=parent
 	b.Text=text
-	b.TextColor3=Color3.fromRGB(238,241,255)
-	b.BackgroundColor3=color
-	b.BackgroundTransparency=0.06
+	b.TextColor3=Color3.fromRGB(240,246,255)
+	b.BackgroundColor3=color or Color3.fromRGB(24,34,56)
+	b.BackgroundTransparency=0.03
 	b.BorderSizePixel=0
 	b.AutoButtonColor=true
 	b.Font=Enum.Font.GothamBlack
@@ -1273,161 +1275,224 @@ end
 
 local main=Instance.new("Frame")
 main.Parent=gui
-main.Size=UDim2.new(0,350,0,500)
-main.Position=UDim2.new(0,10,0,54)
-main.BackgroundColor3=Color3.fromRGB(8,10,18)
-main.BackgroundTransparency=0.08
+main.Size=UDim2.new(0,356,0,520)
+main.Position=UDim2.new(0,10,0,42)
+main.BackgroundColor3=Color3.fromRGB(4,7,13)
+main.BackgroundTransparency=0.04
 main.BorderSizePixel=0
 main.Active=true
-corner(main,22)
-stroke(main,Color3.fromRGB(95,85,180),1.4,0.2)
+corner(main,24)
+stroke(main,Color3.fromRGB(70,180,255),1.6,0.15)
 
-local top=Instance.new("Frame")
-top.Parent=main
-top.Size=UDim2.new(1,-14,0,46)
-top.Position=UDim2.new(0,7,0,7)
-top.BackgroundColor3=Color3.fromRGB(14,16,30)
-top.BackgroundTransparency=0.08
-top.BorderSizePixel=0
-corner(top,18)
-stroke(top,Color3.fromRGB(70,68,130),1,0.45)
+local glow=Instance.new("Frame")
+glow.Parent=main
+glow.Size=UDim2.new(1,-12,0,5)
+glow.Position=UDim2.new(0,6,0,6)
+glow.BackgroundColor3=Color3.fromRGB(70,190,255)
+glow.BorderSizePixel=0
+corner(glow,8)
 
-local title=makeText(top,"BUG HUB v16",18,Enum.Font.GothamBlack,Color3.fromRGB(248,249,255))
-title.Size=UDim2.new(1,-96,0,22)
-title.Position=UDim2.new(0,14,0,6)
+local head=Instance.new("Frame")
+head.Parent=main
+head.Size=UDim2.new(1,-16,0,70)
+head.Position=UDim2.new(0,8,0,14)
+head.BackgroundColor3=Color3.fromRGB(9,15,26)
+head.BackgroundTransparency=0.03
+head.BorderSizePixel=0
+corner(head,20)
+stroke(head,Color3.fromRGB(80,165,255),1,0.45)
 
-local sub=makeText(top,"slider levers • auto rock • hard stop, author the great Bastra",10,Enum.Font.GothamBold,Color3.fromRGB(165,172,205))
-sub.Size=UDim2.new(1,-96,0,16)
-sub.Position=UDim2.new(0,15,0,26)
+local title=txt(head,"THE GREAT BASTRA",19,Enum.Font.GothamBlack,Color3.fromRGB(245,250,255))
+title.Size=UDim2.new(1,-88,0,24)
+title.Position=UDim2.new(0,14,0,8)
 
-local min=makeBtn(top,"−",Color3.fromRGB(42,39,78))
-min.Size=UDim2.new(0,29,0,29)
-min.Position=UDim2.new(1,-66,0,9)
+local sub=txt(head,"RockBug Hub v17 • NeoPatch",10,Enum.Font.GothamBold,Color3.fromRGB(135,210,255))
+sub.Size=UDim2.new(1,-88,0,18)
+sub.Position=UDim2.new(0,15,0,32)
+
+local sub2=txt(head,"max punch • auto train • hard stop",9,Enum.Font.GothamSemibold,Color3.fromRGB(145,155,180))
+sub2.Size=UDim2.new(1,-88,0,16)
+sub2.Position=UDim2.new(0,15,0,49)
+
+local min=btn(head,"—",Color3.fromRGB(24,35,60))
+min.Size=UDim2.new(0,30,0,30)
+min.Position=UDim2.new(1,-70,0,12)
 min.TextSize=18
 
-local close=makeBtn(top,"×",Color3.fromRGB(78,28,42))
-close.Size=UDim2.new(0,29,0,29)
-close.Position=UDim2.new(1,-33,0,9)
+local close=btn(head,"×",Color3.fromRGB(88,25,43))
+close.Size=UDim2.new(0,30,0,30)
+close.Position=UDim2.new(1,-36,0,12)
 close.TextSize=18
-close.TextColor3=Color3.fromRGB(255,210,218)
+close.TextColor3=Color3.fromRGB(255,215,225)
 
-local mini=makeBtn(gui,"BUG v16",Color3.fromRGB(46,42,120))
-mini.Size=UDim2.new(0,90,0,36)
+local mini=btn(gui,"BASTRA",Color3.fromRGB(15,45,85))
+mini.Size=UDim2.new(0,86,0,34)
 mini.Position=main.Position
 mini.Visible=false
 mini.TextSize=11
 
 local tabs=Instance.new("Frame")
 tabs.Parent=main
-tabs.Size=UDim2.new(1,-14,0,52)
-tabs.Position=UDim2.new(0,7,0,58)
-tabs.BackgroundTransparency=1
+tabs.Size=UDim2.new(1,-16,0,42)
+tabs.Position=UDim2.new(0,8,0,92)
+tabs.BackgroundColor3=Color3.fromRGB(7,10,20)
+tabs.BackgroundTransparency=0.05
+tabs.BorderSizePixel=0
+corner(tabs,17)
+stroke(tabs,Color3.fromRGB(58,72,110),1,0.55)
 
-local tabBug=makeBtn(tabs,"⬅ ВКЛАДКА БАГ",Color3.fromRGB(45,145,95))
-tabBug.Size=UDim2.new(0.5,-4,1,0)
-tabBug.Position=UDim2.new(0,0,0,0)
-tabBug.TextSize=15
+local tabBug=btn(tabs,"БАГ",Color3.fromRGB(20,95,135))
+tabBug.Size=UDim2.new(0.5,-4,1,-8)
+tabBug.Position=UDim2.new(0,4,0,4)
+tabBug.TextSize=14
 
-local tabTrain=makeBtn(tabs,"ВКЛАДКА КАЧ ➜",Color3.fromRGB(32,42,65))
-tabTrain.Size=UDim2.new(0.5,-4,1,0)
-tabTrain.Position=UDim2.new(0.5,4,0,0)
-tabTrain.TextSize=15
+local tabTrain=btn(tabs,"КАЧ",Color3.fromRGB(15,20,34))
+tabTrain.Size=UDim2.new(0.5,-4,1,-8)
+tabTrain.Position=UDim2.new(0.5,0,0,4)
+tabTrain.TextSize=14
 
-local status=makeText(main,"Вкладки сверху: БАГ / КАЧ",11,Enum.Font.GothamBold,Color3.fromRGB(210,216,245))
-status.Size=UDim2.new(1,-14,0,30)
-status.Position=UDim2.new(0,7,0,118)
-status.BackgroundColor3=Color3.fromRGB(9,11,24)
-status.BackgroundTransparency=0.18
+local status=txt(main,"Загрузка...",10,Enum.Font.GothamBold,Color3.fromRGB(215,230,255),Enum.TextXAlignment.Center)
+status.Size=UDim2.new(1,-16,0,30)
+status.Position=UDim2.new(0,8,0,142)
+status.BackgroundColor3=Color3.fromRGB(8,14,24)
+status.BackgroundTransparency=0.04
 status.BorderSizePixel=0
-status.TextXAlignment=Enum.TextXAlignment.Center
-corner(status,13)
-stroke(status,Color3.fromRGB(55,52,95),1,0.55)
+corner(status,14)
+stroke(status,Color3.fromRGB(55,90,125),1,0.55)
 
 local function setStatus(t)
 	status.Text=tostring(t or "")
 end
 
-local pageBug=Instance.new("Frame")
+local pageBug=Instance.new("ScrollingFrame")
 pageBug.Parent=main
-pageBug.Size=UDim2.new(1,-14,0,332)
-pageBug.Position=UDim2.new(0,7,0,156)
+pageBug.Size=UDim2.new(1,-16,0,304)
+pageBug.Position=UDim2.new(0,8,0,180)
 pageBug.BackgroundTransparency=1
+pageBug.BorderSizePixel=0
+pageBug.ScrollBarThickness=3
+pageBug.ScrollBarImageColor3=Color3.fromRGB(80,180,255)
+pageBug.CanvasSize=UDim2.new(0,0,0,0)
 
-local pageTrain=Instance.new("Frame")
+local pageTrain=Instance.new("ScrollingFrame")
 pageTrain.Parent=main
 pageTrain.Size=pageBug.Size
 pageTrain.Position=pageBug.Position
 pageTrain.BackgroundTransparency=1
+pageTrain.BorderSizePixel=0
+pageTrain.ScrollBarThickness=3
+pageTrain.ScrollBarImageColor3=Color3.fromRGB(80,255,165)
+pageTrain.CanvasSize=UDim2.new(0,0,0,0)
 pageTrain.Visible=false
 
-local versionText=makeText(main,HUB_VERSION.." • v16",9,Enum.Font.GothamBlack,Color3.fromRGB(150,158,190))
-versionText.Size=UDim2.new(1,-18,0,12)
-versionText.Position=UDim2.new(0,9,0,486)
-versionText.TextXAlignment=Enum.TextXAlignment.Center
+local function padList(frame)
+	local p=Instance.new("UIPadding")
+	p.PaddingTop=UDim.new(0,4)
+	p.PaddingBottom=UDim.new(0,12)
+	p.PaddingLeft=UDim.new(0,2)
+	p.PaddingRight=UDim.new(0,6)
+	p.Parent=frame
+
+	local l=Instance.new("UIListLayout")
+	l.Parent=frame
+	l.SortOrder=Enum.SortOrder.LayoutOrder
+	l.Padding=UDim.new(0,8)
+	return l
+end
+
+local bugLayout=padList(pageBug)
+local trainLayout=padList(pageTrain)
+
+local version=txt(main,HUB_VERSION.."  |  by The Great Bastra",8,Enum.Font.GothamBlack,Color3.fromRGB(120,150,185),Enum.TextXAlignment.Center)
+version.Size=UDim2.new(1,-18,0,14)
+version.Position=UDim2.new(0,9,0,500)
+
+local function updateCanvas()
+	task.defer(function()
+		pageBug.CanvasSize=UDim2.new(0,0,0,bugLayout.AbsoluteContentSize.Y+24)
+		pageTrain.CanvasSize=UDim2.new(0,0,0,trainLayout.AbsoluteContentSize.Y+24)
+	end)
+end
+bugLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(updateCanvas)
+trainLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(updateCanvas)
 
 local function showTab(name)
 	local bug=name=="bug"
 	pageBug.Visible=bug
 	pageTrain.Visible=not bug
-	tabBug.BackgroundColor3=bug and Color3.fromRGB(45,145,95) or Color3.fromRGB(32,42,65)
-	tabTrain.BackgroundColor3=(not bug) and Color3.fromRGB(45,145,95) or Color3.fromRGB(32,42,65)
+	tabBug.BackgroundColor3=bug and Color3.fromRGB(20,120,170) or Color3.fromRGB(15,20,34)
+	tabTrain.BackgroundColor3=(not bug) and Color3.fromRGB(25,140,85) or Color3.fromRGB(15,20,34)
 	setStatus(bug and "Вкладка БАГ" or "Вкладка КАЧ")
 end
 
 tabBug.Activated:Connect(function() showTab("bug") end)
 tabTrain.Activated:Connect(function() showTab("train") end)
 
-local function makeLever(parent,label,desc,y,initial,callback)
-	local row=Instance.new("TextButton")
-	row.Parent=parent
-	row.Size=UDim2.new(1,0,0,46)
-	row.Position=UDim2.new(0,0,0,y)
-	row.Text=""
-	row.AutoButtonColor=false
-	row.BackgroundColor3=Color3.fromRGB(14,16,31)
-	row.BackgroundTransparency=0.08
-	row.BorderSizePixel=0
-	corner(row,15)
-	stroke(row,Color3.fromRGB(52,52,95),1,0.55)
+local function panel(parent,h)
+	local f=Instance.new("Frame")
+	f.Parent=parent
+	f.Size=UDim2.new(1,0,0,h)
+	f.BackgroundColor3=Color3.fromRGB(9,14,25)
+	f.BackgroundTransparency=0.03
+	f.BorderSizePixel=0
+	corner(f,18)
+	stroke(f,Color3.fromRGB(45,75,110),1,0.56)
+	return f
+end
 
-	local t=makeText(row,label,13,Enum.Font.GothamBlack,Color3.fromRGB(235,238,255))
-	t.Size=UDim2.new(1,-104,0,18)
-	t.Position=UDim2.new(0,12,0,5)
+local function makeLever(parent,label,desc,initial,callback)
+	local row=panel(parent,54)
 
-	local d=makeText(row,desc or "",9,Enum.Font.GothamBold,Color3.fromRGB(142,150,183))
-	d.Size=UDim2.new(1,-104,0,17)
-	d.Position=UDim2.new(0,12,0,25)
+	local t=txt(row,label,13,Enum.Font.GothamBlack,Color3.fromRGB(238,244,255))
+	t.Size=UDim2.new(1,-110,0,20)
+	t.Position=UDim2.new(0,13,0,7)
 
-	local track=Instance.new("Frame")
-	track.Parent=row
-	track.Size=UDim2.new(0,72,0,28)
-	track.Position=UDim2.new(1,-84,0,9)
-	track.BackgroundColor3=Color3.fromRGB(65,42,50)
-	track.BorderSizePixel=0
-	corner(track,14)
-	stroke(track,Color3.fromRGB(255,255,255),1,0.86)
+	local d=txt(row,desc or "",9,Enum.Font.GothamBold,Color3.fromRGB(130,148,178))
+	d.Size=UDim2.new(1,-110,0,18)
+	d.Position=UDim2.new(0,13,0,28)
+
+	local hit=Instance.new("TextButton")
+	hit.Parent=row
+	hit.Size=UDim2.new(0,82,0,34)
+	hit.Position=UDim2.new(1,-94,0,10)
+	hit.Text=""
+	hit.AutoButtonColor=false
+	hit.BackgroundColor3=Color3.fromRGB(75,38,50)
+	hit.BorderSizePixel=0
+	corner(hit,17)
+	stroke(hit,Color3.fromRGB(255,255,255),1,0.84)
 
 	local knob=Instance.new("Frame")
-	knob.Parent=track
-	knob.Size=UDim2.new(0,24,0,24)
-	knob.Position=UDim2.new(0,2,0,2)
-	knob.BackgroundColor3=Color3.fromRGB(238,238,245)
+	knob.Parent=hit
+	knob.Size=UDim2.new(0,28,0,28)
+	knob.Position=UDim2.new(0,3,0,3)
+	knob.BackgroundColor3=Color3.fromRGB(235,239,250)
 	knob.BorderSizePixel=0
-	corner(knob,12)
-	stroke(knob,Color3.fromRGB(20,20,25),1,0.75)
+	corner(knob,14)
+	stroke(knob,Color3.fromRGB(10,10,15),1,0.75)
+
+	local dot=Instance.new("Frame")
+	dot.Parent=knob
+	dot.Size=UDim2.new(0,8,0,8)
+	dot.Position=UDim2.new(0.5,-4,0.5,-4)
+	dot.BackgroundColor3=Color3.fromRGB(75,85,100)
+	dot.BorderSizePixel=0
+	corner(dot,4)
 
 	local state=initial and true or false
 	local obj={}
 
 	local function paint()
 		if state then
-			track.BackgroundColor3=Color3.fromRGB(34,145,78)
-			knob.Position=UDim2.new(1,-26,0,2)
-			row.BackgroundColor3=Color3.fromRGB(13,32,24)
+			hit.BackgroundColor3=Color3.fromRGB(22,140,82)
+			knob.Position=UDim2.new(1,-31,0,3)
+			dot.BackgroundColor3=Color3.fromRGB(22,140,82)
+			row.BackgroundColor3=Color3.fromRGB(8,28,22)
 		else
-			track.BackgroundColor3=Color3.fromRGB(95,45,58)
-			knob.Position=UDim2.new(0,2,0,2)
-			row.BackgroundColor3=Color3.fromRGB(14,16,31)
+			hit.BackgroundColor3=Color3.fromRGB(75,38,50)
+			knob.Position=UDim2.new(0,3,0,3)
+			dot.BackgroundColor3=Color3.fromRGB(75,85,100)
+			row.BackgroundColor3=Color3.fromRGB(9,14,25)
 		end
 	end
 
@@ -1441,106 +1506,87 @@ local function makeLever(parent,label,desc,y,initial,callback)
 		return state
 	end
 
-	row.Activated:Connect(function()
+	hit.Activated:Connect(function()
 		obj.Set(not state,false)
 	end)
 
+	row.InputBegan:Connect(function(input)
+		if input.UserInputType==Enum.UserInputType.Touch then
+			obj.Set(not state,false)
+		end
+	end)
+
 	paint()
-	return obj
+	return obj,row
 end
 
-local selectedCard=Instance.new("Frame")
-selectedCard.Parent=pageBug
-selectedCard.Size=UDim2.new(1,0,0,44)
-selectedCard.Position=UDim2.new(0,0,0,0)
-selectedCard.BackgroundColor3=Color3.fromRGB(15,18,32)
-selectedCard.BackgroundTransparency=0.07
-selectedCard.BorderSizePixel=0
-corner(selectedCard,18)
-stroke(selectedCard,Color3.fromRGB(65,62,120),1,0.45)
+-- BUG PAGE
+local selectedBox=panel(pageBug,64)
+local selectedLabel=txt(selectedBox,"АВТО-КАМЕНЬ ПО РЕБАМ",9,Enum.Font.GothamBlack,Color3.fromRGB(115,180,255))
+selectedLabel.Size=UDim2.new(1,-22,0,16)
+selectedLabel.Position=UDim2.new(0,13,0,8)
 
-local selectedLabel=makeText(selectedCard,"ВЫБРАНО АВТО ПО РЕБАМ",9,Enum.Font.GothamBlack,Color3.fromRGB(135,145,180))
-selectedLabel.Size=UDim2.new(1,-24,0,14)
-selectedLabel.Position=UDim2.new(0,10,0,5)
+local selectedName=txt(selectedBox,"-",18,Enum.Font.GothamBlack,Color3.fromRGB(255,238,185))
+selectedName.Size=UDim2.new(1,-22,0,28)
+selectedName.Position=UDim2.new(0,13,0,28)
 
-local selectedName=makeText(selectedCard,"-",17,Enum.Font.GothamBlack,Color3.fromRGB(255,238,185))
-selectedName.Size=UDim2.new(1,-20,0,24)
-selectedName.Position=UDim2.new(0,10,0,18)
+local rockBox=panel(pageBug,154)
+local rockTitle=txt(rockBox,"КАМНИ",12,Enum.Font.GothamBlack,Color3.fromRGB(210,225,255))
+rockTitle.Size=UDim2.new(1,-20,0,18)
+rockTitle.Position=UDim2.new(0,12,0,8)
 
-local list=Instance.new("ScrollingFrame")
-list.Parent=pageBug
-list.Size=UDim2.new(1,0,0,112)
-list.Position=UDim2.new(0,0,0,52)
-list.BackgroundColor3=Color3.fromRGB(7,8,17)
-list.BackgroundTransparency=0.18
-list.BorderSizePixel=0
-list.ScrollBarThickness=3
-list.ScrollBarImageColor3=Color3.fromRGB(100,92,180)
-list.CanvasSize=UDim2.new(0,0,0,0)
-list.Active=true
-corner(list,18)
-stroke(list,Color3.fromRGB(48,48,90),1,0.52)
+local rockList=Instance.new("ScrollingFrame")
+rockList.Parent=rockBox
+rockList.Size=UDim2.new(1,-16,0,115)
+rockList.Position=UDim2.new(0,8,0,31)
+rockList.BackgroundTransparency=1
+rockList.BorderSizePixel=0
+rockList.ScrollBarThickness=2
+rockList.CanvasSize=UDim2.new(0,0,0,0)
 
-local listPad=Instance.new("UIPadding")
-listPad.Parent=list
-listPad.PaddingTop=UDim.new(0,8)
-listPad.PaddingBottom=UDim.new(0,8)
-listPad.PaddingLeft=UDim.new(0,8)
-listPad.PaddingRight=UDim.new(0,8)
-
-local listLayout=Instance.new("UIListLayout")
-listLayout.Parent=list
-listLayout.SortOrder=Enum.SortOrder.LayoutOrder
-listLayout.Padding=UDim.new(0,7)
+local rl=Instance.new("UIListLayout")
+rl.Parent=rockList
+rl.SortOrder=Enum.SortOrder.LayoutOrder
+rl.Padding=UDim.new(0,5)
 
 local buttons={}
 
 local function updateSelected()
 	if selected then
-		selectedName.Text=selected.label.."  •  "..tostring(selected.req)
+		selectedName.Text=selected.label.."  •  req "..tostring(selected.req)
 	else
 		selectedName.Text="-"
 	end
 end
 
 local function refreshButtons()
-	for _,b in pairs(buttons)do
-		if b and b.Parent then b:Destroy()end
+	for _,b in pairs(buttons) do
+		if b and b.Parent then b:Destroy() end
 	end
 	buttons={}
 
-	for i,row in ipairs(ROCKS)do
+	for i,row in ipairs(ROCKS) do
 		local info=rockCache[row.req]
 		local active=selected and selected.id==row.id
 
 		local card=Instance.new("TextButton")
-		card.Parent=list
-		card.Name="Rock_"..row.id
-		card.Size=UDim2.new(1,-4,0,36)
+		card.Parent=rockList
+		card.Size=UDim2.new(1,-4,0,32)
 		card.LayoutOrder=i
-		card.Text=""
+		card.Text=(active and "◆ " or "◇ ")..row.label.."  |  "..(info and "found" or "missing")
+		card.TextColor3=active and Color3.fromRGB(255,240,185) or Color3.fromRGB(218,228,245)
+		card.TextXAlignment=Enum.TextXAlignment.Left
+		card.Font=Enum.Font.GothamBlack
+		card.TextSize=11
 		card.AutoButtonColor=true
-		card.BackgroundColor3=active and Color3.fromRGB(46,42,105) or Color3.fromRGB(14,16,31)
-		card.BackgroundTransparency=active and 0.02 or 0.10
+		card.BackgroundColor3=active and Color3.fromRGB(35,67,106) or Color3.fromRGB(14,22,36)
 		card.BorderSizePixel=0
-		corner(card,15)
-		stroke(card,active and Color3.fromRGB(145,120,255) or Color3.fromRGB(52,52,95),active and 1.4 or 1,active and 0.08 or 0.45)
+		corner(card,12)
+		stroke(card,active and Color3.fromRGB(120,190,255) or Color3.fromRGB(55,70,95),1,active and 0.2 or 0.65)
 
-		local name=makeText(card,row.label,12,Enum.Font.GothamBlack,active and Color3.fromRGB(255,240,190) or Color3.fromRGB(230,234,255))
-		name.Size=UDim2.new(1,-62,0,17)
-		name.Position=UDim2.new(0,14,0,4)
-
-		local meta=makeText(card,"req "..tostring(row.req),10,Enum.Font.GothamBold,Color3.fromRGB(145,153,185))
-		meta.Size=UDim2.new(1,-72,0,16)
-		meta.Position=UDim2.new(0,14,0,20)
-
-		local ok=makeText(card,info and "найден" or "нет",10,Enum.Font.GothamBlack,info and Color3.fromRGB(100,255,160) or Color3.fromRGB(150,150,170))
-		ok.Size=UDim2.new(0,46,0,20)
-		ok.Position=UDim2.new(1,-54,0,8)
-		ok.TextXAlignment=Enum.TextXAlignment.Center
-		ok.BackgroundColor3=info and Color3.fromRGB(15,55,34) or Color3.fromRGB(36,36,48)
-		ok.BackgroundTransparency=0.12
-		corner(ok,11)
+		local pad=Instance.new("UIPadding")
+		pad.Parent=card
+		pad.PaddingLeft=UDim.new(0,12)
 
 		card.Activated:Connect(function()
 			selected=row
@@ -1553,7 +1599,7 @@ local function refreshButtons()
 		table.insert(buttons,card)
 	end
 
-	list.CanvasSize=UDim2.new(0,0,0,#ROCKS*43+16)
+	rockList.CanvasSize=UDim2.new(0,0,0,#ROCKS*37+6)
 	updateSelected()
 end
 
@@ -1564,7 +1610,7 @@ local ultraLever
 local afkLever
 local trainLevers={}
 
-lockLever=makeLever(pageBug,"TP LOCK","держать внутри камня",172,false,function(on,self)
+lockLever=makeLever(pageBug,"TP LOCK","держит персонажа внутри выбранного камня",false,function(on,self)
 	if on then
 		local ok,res=tpInsideRock(selected)
 		if ok then setStatus("LOCK: "..selected.label) else setStatus("LOCK error: "..tostring(res)) self.Set(false,true) end
@@ -1574,7 +1620,7 @@ lockLever=makeLever(pageBug,"TP LOCK","держать внутри камня",1
 	end
 end)
 
-bugLever=makeLever(pageBug,"MAX PUNCH","hard stop при OFF + auto stop вне камня",224,false,function(on,self)
+bugLever=makeLever(pageBug,"MAX PUNCH","hard stop при OFF, автостоп вне камня",false,function(on,self)
 	if on then
 		local ok,msg=tpInsideRock(selected)
 		if not ok then
@@ -1590,19 +1636,18 @@ bugLever=makeLever(pageBug,"MAX PUNCH","hard stop при OFF + auto stop вне 
 	end
 end)
 
-local jumpTrain=makeBtn(pageBug,"ПЕРЕЙТИ В КАЧ ➜",Color3.fromRGB(45,95,145))
-jumpTrain.Size=UDim2.new(1,0,0,30)
-jumpTrain.Position=UDim2.new(0,0,0,282)
-jumpTrain.TextSize=13
-jumpTrain.Activated:Connect(function() showTab("train") end)
+local goTrain=btn(pageBug,"ОТКРЫТЬ ВКЛАДКУ КАЧ ➜",Color3.fromRGB(20,80,125))
+goTrain.Size=UDim2.new(1,0,0,38)
+goTrain.TextSize=13
+goTrain.Activated:Connect(function() showTab("train") end)
 
-local jumpBug=makeBtn(pageTrain,"⬅ ВЕРНУТЬСЯ В БАГ",Color3.fromRGB(45,95,145))
-jumpBug.Size=UDim2.new(1,0,0,28)
-jumpBug.Position=UDim2.new(0,0,0,0)
-jumpBug.TextSize=13
-jumpBug.Activated:Connect(function() showTab("bug") end)
+-- TRAIN PAGE
+local goBug=btn(pageTrain,"⬅ НАЗАД В БАГ",Color3.fromRGB(20,80,125))
+goBug.Size=UDim2.new(1,0,0,38)
+goBug.TextSize=13
+goBug.Activated:Connect(function() showTab("bug") end)
 
-posLever=makeLever(pageTrain,"LOCK POSITION","держать текущую позицию в кач",36,false,function(on,self)
+posLever=makeLever(pageTrain,"LOCK POSITION","держать текущую позицию во время кача",false,function(on,self)
 	if on then
 		local ok=startTrainPositionLock(setStatus)
 		if not ok then self.Set(false,true) end
@@ -1611,7 +1656,7 @@ posLever=makeLever(pageTrain,"LOCK POSITION","держать текущую по
 	end
 end)
 
-ultraLever=makeLever(pageTrain,"ULTRA MAP","убрать карту, оставить нужное",84,false,function(on)
+ultraLever=makeLever(pageTrain,"ULTRA MAP","низкая карта, вернуть можно выключением",false,function(on)
 	ultraOptEnabled=on
 	if on then
 		local old=_G.RockBugLowMapTransparency
@@ -1624,22 +1669,15 @@ ultraLever=makeLever(pageTrain,"ULTRA MAP","убрать карту, остав�
 	end
 end)
 
-afkLever=makeLever(pageTrain,"ANTI AFK","не кикать за простой",132,antiAfkEnabled,function(on)
+afkLever=makeLever(pageTrain,"ANTI AFK","анти-кик за простой",antiAfkEnabled,function(on)
 	antiAfkEnabled=on
 	setStatus("AFK "..(on and "ON" or "OFF"))
 end)
 
-local trainScroll=Instance.new("ScrollingFrame")
-trainScroll.Parent=pageTrain
-trainScroll.Size=UDim2.new(1,0,0,150)
-trainScroll.Position=UDim2.new(0,0,0,180)
-trainScroll.BackgroundColor3=Color3.fromRGB(7,8,17)
-trainScroll.BackgroundTransparency=0.18
-trainScroll.BorderSizePixel=0
-trainScroll.ScrollBarThickness=3
-trainScroll.CanvasSize=UDim2.new(0,0,0,0)
-corner(trainScroll,18)
-stroke(trainScroll,Color3.fromRGB(48,48,90),1,0.52)
+local trainTitle=panel(pageTrain,42)
+local trainText=txt(trainTitle,"ОТДЕЛЬНЫЕ ВИДЫ КАЧА",13,Enum.Font.GothamBlack,Color3.fromRGB(220,238,255),Enum.TextXAlignment.Center)
+trainText.Size=UDim2.new(1,-20,1,0)
+trainText.Position=UDim2.new(0,10,0,0)
 
 local function turnOffOtherTrain(id)
 	for tid,lever in pairs(trainLevers) do
@@ -1650,9 +1688,8 @@ local function turnOffOtherTrain(id)
 	end
 end
 
-for i,t in ipairs(TRAIN_TYPES) do
-	local y=(i-1)*50+7
-	local lever=makeLever(trainScroll,t.label,t.desc,y,false,function(on,self)
+for _,t in ipairs(TRAIN_TYPES) do
+	local lever=makeLever(pageTrain,t.label,t.desc,false,function(on,self)
 		if on then
 			turnOffOtherTrain(t.id)
 			startTrainType(t,setStatus)
@@ -1662,7 +1699,6 @@ for i,t in ipairs(TRAIN_TYPES) do
 	end)
 	trainLevers[t.id]=lever
 end
-trainScroll.CanvasSize=UDim2.new(0,0,0,#TRAIN_TYPES*50+14)
 
 min.Activated:Connect(function()
 	main.Visible=false
@@ -1687,7 +1723,7 @@ local dragging=false
 local dragStart=nil
 local startPos=nil
 
-top.InputBegan:Connect(function(input)
+head.InputBegan:Connect(function(input)
 	if input.UserInputType==Enum.UserInputType.MouseButton1 or input.UserInputType==Enum.UserInputType.Touch then
 		dragging=true
 		dragStart=input.Position
@@ -1712,9 +1748,10 @@ rockCache=scanRocks()
 local autoRock,why=chooseRockByRebirths()
 if autoRock then
 	selected=autoRock
-	selectedLabel.Text="ВЫБРАНО АВТО ПО РЕБАМ"
+	selectedLabel.Text="АВТО-КАМЕНЬ ПО РЕБАМ"
 end
 
 refreshButtons()
 showTab("bug")
-setStatus("v16: "..tostring(why or "ready"))
+updateCanvas()
+setStatus("v17 patch: "..tostring(why or "ready"))
