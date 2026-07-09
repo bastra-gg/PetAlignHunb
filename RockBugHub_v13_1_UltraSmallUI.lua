@@ -1,11 +1,11 @@
--- Muscle Legends RockBug Hub v21 FAST ANIM BLACK
+-- Muscle Legends RockBug Hub v20 FAST ANIM BLACK
 -- Standalone: без Speed Hub. Камни через neededDurability + TP LOCK + BUG HIT + Anti AFK.
 
 local Players=game:GetService("Players")
 local RunService=game:GetService("RunService")
 local VirtualUser=game:GetService("VirtualUser")
 local lp=Players.LocalPlayer
-local HUB_VERSION="RockBugHub_v21_FastAnimBlack"
+local HUB_VERSION="RockBugHub_v20_FastAnimBlack"
 
 -- Anti AFK
 local antiAfkEnabled=true
@@ -24,7 +24,7 @@ startAntiAfk()
 
 -- Анти-дубль.
 pcall(function()
-	local old=lp:WaitForChild("PlayerGui"):FindFirstChild("RockBugHub_v21_FastAnimBlack")
+	local old=lp:WaitForChild("PlayerGui"):FindFirstChild("RockBugHub_v20_FastAnimBlack")
 	if old then old:Destroy() end
 end)
 
@@ -64,7 +64,7 @@ if not _G.RockBugV19NoForceSpeed then
 	_G.RockBugHitDelay=tonumber(_G.RockBugHitDelayOverride) or 0.025
 end
 
--- v21: ускорение самой локальной анимации удара.
+-- v20: ускорение самой локальной анимации удара.
 -- Менять можно перед запуском:
 -- _G.RockBugAnimSpeedOverride=3.5
 _G.RockBugAnimSpeed=tonumber(_G.RockBugAnimSpeedOverride) or 3.25
@@ -954,7 +954,7 @@ end
 
 -- UI v12: новый компактный дизайн без SCAN/COPY/лишних надписей
 local gui=Instance.new("ScreenGui")
-gui.Name="RockBugHub_v21_FastAnimBlack"
+gui.Name="RockBugHub_v20_FastAnimBlack"
 gui.ResetOnSpawn=false
 gui.IgnoreGuiInset=true
 gui.DisplayOrder=999999
@@ -1073,7 +1073,7 @@ close.Position=UDim2.new(1,-33,0,9)
 close.TextSize=18
 close.TextColor3=Color3.fromRGB(255,210,218)
 
-local mini=makeBtn(gui,"BUG v21",Color3.fromRGB(46,42,120))
+local mini=makeBtn(gui,"BUG v20",Color3.fromRGB(46,42,120))
 mini.Size=UDim2.new(0,90,0,36)
 mini.Position=main.Position
 mini.Visible=false
@@ -1447,4 +1447,4 @@ local count=0
 for _,row in ipairs(ROCKS)do
 	if found[row.req]then count+=1 end
 end
-setStatus("Готово • "..count.."/"..#ROCKS.." • v21 fast anim black")
+setStatus("Готово • "..count.."/"..#ROCKS.." • v20 fast anim black")
