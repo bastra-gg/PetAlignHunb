@@ -1,11 +1,11 @@
--- Muscle Legends RockBug Hub v20 FAST ANIM BLACK
+-- Muscle Legends RockBug Hub v22 KILL V20 ONLY
 -- Standalone: без Speed Hub. Камни через neededDurability + TP LOCK + BUG HIT + Anti AFK.
 
 local Players=game:GetService("Players")
 local RunService=game:GetService("RunService")
 local VirtualUser=game:GetService("VirtualUser")
 local lp=Players.LocalPlayer
-local HUB_VERSION="RockBugHub_v20_FastAnimBlack"
+local HUB_VERSION="RockBugHub_v22_KillV20Only"
 
 -- Anti AFK
 local antiAfkEnabled=true
@@ -24,9 +24,39 @@ startAntiAfk()
 
 -- Анти-дубль.
 pcall(function()
-	local old=lp:WaitForChild("PlayerGui"):FindFirstChild("RockBugHub_v20_FastAnimBlack")
+	local old=lp:WaitForChild("PlayerGui"):FindFirstChild("RockBugHub_v22_KillV20Only")
 	if old then old:Destroy() end
 end)
+
+-- v22: снести ТОЛЬКО старую v20-оболочку.
+-- Важно: если v20 был вручную переименован в v21, он уже НЕ определяется как v20.
+local function killV20Only()
+	local pg=lp:FindFirstChild("PlayerGui")
+	if not pg then return end
+
+	for _,name in ipairs({
+		"RockBugHub_v20_FastAnimBlack"
+	})do
+		local old=pg:FindFirstChild(name)
+		if old then
+			pcall(function()old:Destroy()end)
+		end
+	end
+
+	-- Сбросить возможный след v20: ускоренные AnimationTrack обратно на 1.
+	pcall(function()
+		local c=lp.Character
+		local h=c and c:FindFirstChildWhichIsA("Humanoid")
+		local animator=h and h:FindFirstChildOfClass("Animator")
+		if animator then
+			for _,tr in ipairs(animator:GetPlayingAnimationTracks())do
+				pcall(function()tr:AdjustSpeed(1)end)
+			end
+		end
+	end)
+end
+
+pcall(killV20Only)
 
 local ROCKS={
 	{id="AncientJungle",label="Древний лес",req=10000000,color=Color3.fromRGB(120,70,255)},
@@ -64,36 +94,54 @@ if not _G.RockBugV19NoForceSpeed then
 	_G.RockBugHitDelay=tonumber(_G.RockBugHitDelayOverride) or 0.025
 end
 
--- v20: ускорение самой локальной анимации удара.
--- Менять можно перед запуском:
--- _G.RockBugAnimSpeedOverride=3.5
-_G.RockBugAnimSpeed=tonumber(_G.RockBugAnimSpeedOverride) or 3.25
-_G.RockBugAnimEveryTrack=(_G.RockBugAnimEveryTrack~=false)
+local function root()
+	local c=lp.Character
+	return c and c:FindFirstChild("HumanoidRootPart")
+end
+
+local function char()
+	return lp.Character or lp.CharacterAdded:Wait()
+end
+
+local function hum()
+	local c=lp.Character
+	return c and c:FindFirstChildWhichIsA("Humanoid")
+end
+
+-- v21 FIX: безопасный буст скорости анимации.
+-- В v20 ошибка была в том, что hum() вызывался ДО объявления функции.
+-- Здесь блок стоит после hum(), поэтому не должен крашить цикл.
+_G.RockBugAnimSpeed=tonumber(_G.RockBugAnimSpeedOverride) or 2.35
+_G.RockBugAnimBoostAll=(_G.RockBugAnimBoostAll==true)
 
 local animSpeedConn=nil
 local lastAnimBoost=0
 
-local function isMoveTrackInfo(info)
-	info=tostring(info or ""):lower()
-	return info:find("walk",1,true) or info:find("run",1,true) or info:find("idle",1,true) or info:find("swim",1,true) or info:find("jump",1,true) or info:find("fall",1,true)
-end
-
-local function getTrackInfo(tr)
+local function animTrackInfo(tr)
 	local info=""
 	pcall(function()
 		info=tostring(tr.Name).." "..tostring(tr.Animation and tr.Animation.Name or "").." "..tostring(tr.Animation and tr.Animation.AnimationId or "")
 	end)
-	return info
+	return info:lower()
 end
 
-local function boostTrack(tr)
-	if not tr then return end
-	local speed=tonumber(_G.RockBugAnimSpeed or 3.25) or 3.25
-	speed=math.clamp(speed,0.5,10)
+local function isSafeToBoostTrack(tr)
+	if not tr then return false end
+	if _G.RockBugAnimBoostAll then return true end
 
-	local info=getTrackInfo(tr)
-	if not _G.RockBugAnimEveryTrack and isMoveTrackInfo(info)then return end
+	local info=animTrackInfo(tr)
+	-- Не трогаем базовое движение, чтобы тело/прыжок не ломались.
+	if info:find("walk",1,true) or info:find("run",1,true) or info:find("idle",1,true) or info:find("jump",1,true) or info:find("fall",1,true) or info:find("swim",1,true)then
+		return false
+	end
 
+	-- Punch-анимации часто имеют только id без нормального имени, поэтому всё кроме движения можно ускорять.
+	return true
+end
+
+local function boostOneTrack(tr)
+	if not isSafeToBoostTrack(tr)then return end
+	local speed=math.clamp(tonumber(_G.RockBugAnimSpeed or 2.35) or 2.35,0.5,6)
 	pcall(function()
 		tr:AdjustSpeed(speed)
 	end)
@@ -103,12 +151,11 @@ local function boostPunchAnimations()
 	if not hitting then return end
 	local h=hum()
 	if not h then return end
-
 	local animator=h:FindFirstChildOfClass("Animator")
 	if not animator then return end
 
 	for _,tr in ipairs(animator:GetPlayingAnimationTracks())do
-		boostTrack(tr)
+		boostOneTrack(tr)
 	end
 end
 
@@ -118,20 +165,13 @@ local function startAnimSpeedBoost()
 	local h=hum()
 	if not h then return end
 	local animator=h:FindFirstChildOfClass("Animator")
-	if not animator then
-		pcall(function()
-			animator=Instance.new("Animator")
-			animator.Parent=h
-		end)
-	end
 	if not animator then return end
 
 	animSpeedConn=animator.AnimationPlayed:Connect(function(tr)
-		if hitting then
-			task.defer(function()
-				boostTrack(tr)
-			end)
-		end
+		if not hitting then return end
+		task.defer(function()
+			boostOneTrack(tr)
+		end)
 	end)
 
 	boostPunchAnimations()
@@ -150,20 +190,6 @@ local function stopAnimSpeedBoost()
 			tr:AdjustSpeed(1)
 		end)
 	end
-end
-
-local function root()
-	local c=lp.Character
-	return c and c:FindFirstChild("HumanoidRootPart")
-end
-
-local function char()
-	return lp.Character or lp.CharacterAdded:Wait()
-end
-
-local function hum()
-	local c=lp.Character
-	return c and c:FindFirstChildWhichIsA("Humanoid")
 end
 
 local function valOf(v)
@@ -491,7 +517,7 @@ local function setLowMap(enabled,keepModel,statusFn)
 
 		lowMapState.count=n
 		if statusFn then
-			statusFn("ULTRA BLACK ON: fast anim, процесс сохранён")
+			statusFn("ULTRA BLACK ON: быстрый режим, процесс сохранён")
 		end
 	else
 		if not lowMapState.on then return end
@@ -927,7 +953,7 @@ local function startHit(row,statusFn)
 				touchRock(row)
 			end
 
-			if now-lastAnimBoost>0.18 then
+			if now-lastAnimBoost>0.25 then
 				lastAnimBoost=now
 				boostPunchAnimations()
 			end
@@ -937,7 +963,7 @@ local function startHit(row,statusFn)
 	end)
 
 	if statusFn then
-		statusFn("БАГ КАМНЯ: запущен | ANIM x"..tostring(_G.RockBugAnimSpeed or 3.25)..(ultraOptEnabled and " | ULTRA ON" or "")..(selectedPunchToolName and (" | "..selectedPunchToolName) or ""))
+		statusFn("БАГ КАМНЯ: запущен | anim x"..tostring(_G.RockBugAnimSpeed or 2.35)..(ultraOptEnabled and " | ULTRA ON" or "")..(selectedPunchToolName and (" | "..selectedPunchToolName) or ""))
 	end
 end
 
@@ -954,7 +980,7 @@ end
 
 -- UI v12: новый компактный дизайн без SCAN/COPY/лишних надписей
 local gui=Instance.new("ScreenGui")
-gui.Name="RockBugHub_v20_FastAnimBlack"
+gui.Name="RockBugHub_v22_KillV20Only"
 gui.ResetOnSpawn=false
 gui.IgnoreGuiInset=true
 gui.DisplayOrder=999999
@@ -1058,7 +1084,7 @@ local title=makeText(top,"BUG HUB",18,Enum.Font.GothamBlack,Color3.fromRGB(248,2
 title.Size=UDim2.new(1,-108,0,22)
 title.Position=UDim2.new(0,46,0,6)
 
-local sub=makeText(top,HUB_VERSION.." • FAST ANIM + BLACK",10,Enum.Font.GothamBold,Color3.fromRGB(165,172,205))
+local sub=makeText(top,HUB_VERSION.." • KILL v20 ONLY",10,Enum.Font.GothamBold,Color3.fromRGB(165,172,205))
 sub.Size=UDim2.new(1,-108,0,16)
 sub.Position=UDim2.new(0,47,0,26)
 
@@ -1073,7 +1099,7 @@ close.Position=UDim2.new(1,-33,0,9)
 close.TextSize=18
 close.TextColor3=Color3.fromRGB(255,210,218)
 
-local mini=makeBtn(gui,"BUG v20",Color3.fromRGB(46,42,120))
+local mini=makeBtn(gui,"BUG v22",Color3.fromRGB(46,42,120))
 mini.Size=UDim2.new(0,90,0,36)
 mini.Position=main.Position
 mini.Visible=false
@@ -1447,4 +1473,4 @@ local count=0
 for _,row in ipairs(ROCKS)do
 	if found[row.req]then count+=1 end
 end
-setStatus("Готово • "..count.."/"..#ROCKS.." • v20 fast anim black")
+setStatus("Готово • "..count.."/"..#ROCKS.." • v22 kill v20 only")
