@@ -1,37 +1,44 @@
--- RockBug_EmergencyReset_v1
--- Аварийный откат после сломанного RockBugHub v20/v21/v22.
--- Без rejoin/kick. Только локально возвращает рендер, текстуры, персонажа и пытается остановить старые циклы.
+-- RockBug_HardPanicReset_v2
+-- Специально под сломанный RockBugHub v20/v21 FastAnimBlack.
+-- Без kick/rejoin. Агрессивно останавливает старые циклы, возвращает карту/рендер и вытаскивает из камня.
 
 local Players=game:GetService("Players")
 local RunService=game:GetService("RunService")
 local Lighting=game:GetService("Lighting")
-local UserInputService=game:GetService("UserInputService")
+local VirtualUser=game:GetService("VirtualUser")
 local CoreGui=game:GetService("CoreGui")
+local UserInputService=game:GetService("UserInputService")
 
 local lp=Players.LocalPlayer
-local VERSION="RockBug_EmergencyReset_v1"
+local VERSION="RockBug_HardPanicReset_v2"
+
+-- анти-afk, чтобы не кикнуло пока вытаскивает
+pcall(function()
+	lp.Idled:Connect(function()
+		pcall(function()
+			VirtualUser:CaptureController()
+			VirtualUser:ClickButton2(Vector2.new())
+		end)
+	end)
+end)
 
 local stats={
 	gui=0,
-	gcTables=0,
-	gcFuncs=0,
-	conns=0,
-	props=0,
+	upv=0,
+	low=0,
+	con=0,
+	prop=0,
 	char=0,
 	render=0,
-	last="ready"
+	msg="start"
 }
-
-local function say(s)
-	stats.last=s
-end
 
 local function safe(fn)
 	local ok,res=pcall(fn)
 	return ok,res
 end
 
-local function getUiParent()
+local function uiParent()
 	local ok,h=safe(function()
 		if type(gethui)=="function"then return gethui()end
 	end)
@@ -41,19 +48,39 @@ local function getUiParent()
 	return lp:WaitForChild("PlayerGui")
 end
 
-local function tryDisconnect(x)
-	return pcall(function()
+local function disc(x)
+	pcall(function()
 		if x then x:Disconnect()end
 	end)
 end
 
-local function safeSet(obj,key,val)
+local function sset(obj,k,v)
 	pcall(function()
-		if obj then obj[key]=val end
+		if obj then obj[k]=v end
 	end)
 end
 
-local function restoreLightingPlayable()
+local function getUp(fn,i)
+	if debug and debug.getupvalue then
+		return debug.getupvalue(fn,i)
+	end
+	if debug and debug.getupvalues then
+		local ups=debug.getupvalues(fn)
+		if ups then return tostring(i),ups[i] end
+	end
+	return nil,nil
+end
+
+local function setUp(fn,i,v)
+	if debug and debug.setupvalue then
+		local ok=pcall(debug.setupvalue,fn,i,v)
+		if ok then stats.upv+=1 end
+		return ok
+	end
+	return false
+end
+
+local function restoreRender()
 	pcall(function()
 		RunService:Set3dRenderingEnabled(true)
 		stats.render+=1
@@ -64,8 +91,8 @@ local function restoreLightingPlayable()
 		Lighting.Brightness=2
 		Lighting.FogEnd=100000
 		Lighting.FogColor=Color3.fromRGB(192,192,192)
-		Lighting.Ambient=Color3.fromRGB(127,127,127)
-		Lighting.OutdoorAmbient=Color3.fromRGB(127,127,127)
+		Lighting.Ambient=Color3.fromRGB(120,120,120)
+		Lighting.OutdoorAmbient=Color3.fromRGB(120,120,120)
 		Lighting.ColorShift_Top=Color3.fromRGB(0,0,0)
 		Lighting.ColorShift_Bottom=Color3.fromRGB(0,0,0)
 		Lighting.EnvironmentDiffuseScale=1
@@ -87,14 +114,17 @@ local function restoreLightingPlayable()
 	end)
 end
 
-local function restoreLowStateTable(t)
+local function restoreLowMapState(t)
 	if type(t)~="table"then return false end
-	if type(t.saved)~="table" and type(t.lighting)~="table" and type(t.settings)~="table"then return false end
 
-	-- Вернуть 3D и настройки, если это lowMapState.
-	pcall(function()
-		RunService:Set3dRenderingEnabled(true)
-	end)
+	local looksLike=false
+	if type(t.saved)=="table"then looksLike=true end
+	if type(t.lighting)=="table"then looksLike=true end
+	if type(t.settings)=="table"then looksLike=true end
+	if t.on~=nil and t.count~=nil and t.removed~=nil then looksLike=true end
+	if not looksLike then return false end
+
+	pcall(function()RunService:Set3dRenderingEnabled(true)end)
 
 	if type(t.lighting)=="table"then
 		for k,v in pairs(t.lighting)do
@@ -116,6 +146,7 @@ local function restoreLowStateTable(t)
 	if type(t.saved)=="table"then
 		for obj,rec in pairs(t.saved)do
 			if typeof(obj)=="Instance" and type(rec)=="table"then
+				-- Parent первым: это возвращает объекты, которые v20 сделал Parent=nil
 				if rec.Parent~=nil then
 					pcall(function()obj.Parent=rec.Parent end)
 				end
@@ -124,78 +155,105 @@ local function restoreLowStateTable(t)
 						pcall(function()obj[k]=v end)
 					end
 				end
-				stats.props+=1
+				stats.prop+=1
 			end
 		end
 	end
 
 	pcall(function()t.on=false end)
 	pcall(function()t.saved={} end)
+	pcall(function()t.lighting={} end)
+	pcall(function()t.settings={} end)
 	pcall(function()t.count=0 end)
 	pcall(function()t.removed=0 end)
-	stats.gcTables+=1
+
+	stats.low+=1
 	return true
 end
 
-local function getUp(fn,i)
-	if debug and debug.getupvalue then
-		return debug.getupvalue(fn,i)
+local function patchRockFunction(fn)
+	local touched=false
+	local hasRock=false
+
+	-- сначала понять, что функция от RockBug
+	for i=1,60 do
+		local name,val=getUp(fn,i)
+		if not name then break end
+		name=tostring(name)
+		if name=="HUB_VERSION" and tostring(val):find("RockBugHub",1,true)then
+			hasRock=true
+		end
+		if name=="lowMapState" or name=="lockCF" or name=="hitting" or name=="hitLoopId" or name=="ultraOptEnabled" then
+			hasRock=true
+		end
 	end
-	if debug and debug.getupvalues then
-		local ups=debug.getupvalues(fn)
-		if ups then return tostring(i),ups[i]end
+
+	if not hasRock then return false end
+
+	for i=1,80 do
+		local name,val=getUp(fn,i)
+		if not name then break end
+		name=tostring(name)
+
+		if name=="lowMapState" and type(val)=="table"then
+			restoreLowMapState(val)
+			touched=true
+
+		elseif name=="hitting" or name=="ultraOptEnabled" or name=="fastHitEnabled" or name=="antiAfkEnabled" then
+			setUp(fn,i,false)
+			touched=true
+
+		elseif name=="lockCF" then
+			setUp(fn,i,nil)
+			touched=true
+
+		elseif name=="oldSpeed" then
+			setUp(fn,i,nil)
+			touched=true
+
+		elseif name=="oldAuto" then
+			setUp(fn,i,nil)
+			touched=true
+
+		elseif name=="hitLoopId" then
+			if type(val)=="number"then setUp(fn,i,val+999999)end
+			touched=true
+
+		elseif name=="lockConn" or name=="hitConn" or name=="animSpeedConn" or name=="bugTimerConn" or name=="antiAfkConn" then
+			disc(val)
+			setUp(fn,i,nil)
+			touched=true
+
+		elseif name=="blackBg" and typeof(val)=="Instance"then
+			pcall(function()val.Visible=false end)
+			pcall(function()val:Destroy()end)
+			touched=true
+		end
 	end
-	return nil,nil
+
+	return touched
 end
 
-local function setUp(fn,i,val)
-	if debug and debug.setupvalue then
-		return pcall(debug.setupvalue,fn,i,val)
-	end
-	return false
-end
-
-local function killRockBugGc()
+local function killGetgc()
 	if type(getgc)~="function"then return end
+
 	local ok,gc=pcall(getgc,true)
 	if not ok or type(gc)~="table"then return end
 
 	for _,obj in ipairs(gc)do
 		if type(obj)=="table"then
 			pcall(function()
-				restoreLowStateTable(obj)
+				restoreLowMapState(obj)
 			end)
 		elseif type(obj)=="function"then
-			local touched=false
-			for i=1,40 do
-				local name,val=getUp(obj,i)
-				if not name then break end
-				name=tostring(name)
-
-				if name=="lowMapState" and type(val)=="table"then
-					restoreLowStateTable(val)
-					touched=true
-				elseif name=="hitting" or name=="ultraOptEnabled" or name=="fastHitEnabled" then
-					setUp(obj,i,false)
-					touched=true
-				elseif name=="lockCF" then
-					setUp(obj,i,nil)
-					touched=true
-				elseif name=="hitLoopId" or name=="loopId" then
-					if type(val)=="number"then setUp(obj,i,val+9999)end
-					touched=true
-				elseif name=="lockConn" or name=="hitConn" or name=="animSpeedConn" or name=="bugTimerConn" then
-					tryDisconnect(val)
-					setUp(obj,i,nil)
-					touched=true
-				end
-			end
-			if touched then stats.gcFuncs+=1 end
+			pcall(function()
+				if patchRockFunction(obj)then stats.upv+=1 end
+			end)
 		end
 	end
 end
 
-local function killRockBugConnections()
+local function killConnections()
 	if type(getconnections)~="function"then return end
 
 	local signals={}
@@ -211,19 +269,20 @@ local function killRockBugConnections()
 				pcall(function()fn=cn.Function end)
 				if type(fn)=="function"then
 					local rock=false
-					for i=1,35 do
+					for i=1,60 do
 						local name,val=getUp(fn,i)
 						if not name then break end
 						name=tostring(name)
-						if name=="lockCF" or name=="hitting" or name=="lowMapState" or name=="hitLoopId" or name=="ultraOptEnabled" or name=="bugTimerStartedAt"then
+						if name=="lockCF" or name=="hitting" or name=="hitLoopId" or name=="lowMapState" or name=="ultraOptEnabled" or name=="HUB_VERSION"then
 							rock=true
 							break
 						end
 					end
+
 					if rock then
 						pcall(function()cn:Disable()end)
 						pcall(function()cn:Disconnect()end)
-						stats.conns+=1
+						stats.con+=1
 					end
 				end
 			end
@@ -231,37 +290,50 @@ local function killRockBugConnections()
 	end
 end
 
-local function destroyBadGuis()
+local function nukeRockGuis()
 	local roots={}
 	pcall(function()table.insert(roots,lp:FindFirstChild("PlayerGui"))end)
-	pcall(function()table.insert(roots,getUiParent())end)
+	pcall(function()table.insert(roots,uiParent())end)
 	pcall(function()table.insert(roots,CoreGui)end)
 
 	local seen={}
+	local function shouldKill(obj)
+		local n=tostring(obj.Name)
+		if n=="RockBugHardPanicResetGui"then return false end
+		if n:find("RockBugHub",1,true)then return true end
+		if n:find("BLACK_OPT_BACKGROUND",1,true)then return true end
+		if n:find("BUG v20",1,true)then return true end
+		if n:find("BUG v21",1,true)then return true end
+		if n:find("BUG v22",1,true)then return true end
+		return false
+	end
+
 	for _,root in ipairs(roots)do
 		if root and not seen[root]then
 			seen[root]=true
+
+			-- ВАЖНО: убиваем и прямых детей тоже, не только Descendants.
+			for _,obj in ipairs(root:GetChildren())do
+				if shouldKill(obj)then
+					pcall(function()obj:Destroy()end)
+					stats.gui+=1
+				end
+			end
+
 			for _,obj in ipairs(root:GetDescendants())do
-				local n=tostring(obj.Name)
-				if n:find("RockBugHub",1,true)
-					or n:find("BLACK_OPT_BACKGROUND",1,true)
-					or n:find("RebirthAnimKiller",1,true)
-					or n:find("RebirthCDTryRemove",1,true)
-				then
-					if n~="RockBugEmergencyResetGui"then
-						pcall(function()obj:Destroy()end)
-						stats.gui+=1
-					end
+				if shouldKill(obj)then
+					pcall(function()obj:Destroy()end)
+					stats.gui+=1
 				end
 			end
 		end
 	end
 end
 
-local function restoreWorkspaceVisuals()
+local function restoreVisualProps()
 	local terrain=workspace:FindFirstChildOfClass("Terrain")
 	if terrain then
-		pcall(function()terrain.Decoration=true stats.props+=1 end)
+		pcall(function()terrain.Decoration=true stats.prop+=1 end)
 		pcall(function()terrain.WaterWaveSize=0.15 end)
 		pcall(function()terrain.WaterWaveSpeed=10 end)
 		pcall(function()terrain.WaterReflectance=1 end)
@@ -274,63 +346,70 @@ local function restoreWorkspaceVisuals()
 			pcall(function()
 				obj.LocalTransparencyModifier=0
 				obj.CastShadow=true
-				stats.props+=1
+				stats.prop+=1
 			end)
 		elseif obj:IsA("Decal") or obj:IsA("Texture")then
 			pcall(function()
-				obj.Transparency=0
-				stats.props+=1
+				if obj.Transparency>=0.95 then obj.Transparency=0 end
+				stats.prop+=1
 			end)
 		elseif obj:IsA("ParticleEmitter") or obj:IsA("Trail") or obj:IsA("Beam") or obj:IsA("Fire") or obj:IsA("Smoke") or obj:IsA("Sparkles")then
 			pcall(function()
 				obj.Enabled=true
-				stats.props+=1
+				stats.prop+=1
 			end)
 		elseif obj:IsA("PointLight") or obj:IsA("SpotLight") or obj:IsA("SurfaceLight")then
 			pcall(function()
 				obj.Enabled=true
-				stats.props+=1
+				stats.prop+=1
 			end)
 		elseif obj:IsA("BillboardGui") or obj:IsA("SurfaceGui") or obj:IsA("Highlight")then
 			pcall(function()
 				obj.Enabled=true
-				stats.props+=1
+				stats.prop+=1
 			end)
 		end
 
 		n+=1
-		if n%600==0 then task.wait()end
+		if n%700==0 then task.wait()end
 	end
 
 	for _,obj in ipairs(Lighting:GetDescendants())do
 		if obj:IsA("PostEffect")then
 			pcall(function()
 				obj.Enabled=true
-				stats.props+=1
+				stats.prop+=1
 			end)
 		end
 	end
 end
 
-local function resetCharacter(pushUp)
+local rescueConn=nil
+local rescueEnd=0
+local safeCF=nil
+
+local function resetBody(push)
 	local c=lp.Character
 	if not c then return end
-	local hum=c:FindFirstChildWhichIsA("Humanoid")
-	local root=c:FindFirstChild("HumanoidRootPart")
+	local h=c:FindFirstChildWhichIsA("Humanoid")
+	local r=c:FindFirstChild("HumanoidRootPart")
 
-	if hum then
+	if h then
 		pcall(function()
-			hum.PlatformStand=false
-			hum.Sit=false
-			hum.AutoRotate=true
-			if hum.WalkSpeed<8 then hum.WalkSpeed=16 end
-			if hum.UseJumpPower and hum.JumpPower<20 then hum.JumpPower=50 end
-			if not hum.UseJumpPower and hum.JumpHeight<4 then hum.JumpHeight=7.2 end
-			hum:ChangeState(Enum.HumanoidStateType.Running)
+			h.PlatformStand=false
+			h.Sit=false
+			h.AutoRotate=true
+			if h.WalkSpeed<12 then h.WalkSpeed=16 end
+			if h.UseJumpPower then
+				if h.JumpPower<35 then h.JumpPower=50 end
+			else
+				if h.JumpHeight<5 then h.JumpHeight=7.2 end
+			end
+			h:ChangeState(Enum.HumanoidStateType.Running)
 			stats.char+=1
 		end)
 
-		local animator=hum:FindFirstChildOfClass("Animator")
+		local animator=h:FindFirstChildOfClass("Animator")
 		if animator then
 			for _,tr in ipairs(animator:GetPlayingAnimationTracks())do
 				pcall(function()tr:AdjustSpeed(1)end)
@@ -338,32 +417,30 @@ local function resetCharacter(pushUp)
 		end
 	end
 
-	if root then
+	if r then
 		pcall(function()
-			root.Anchored=false
-			root.AssemblyLinearVelocity=Vector3.new()
-			root.AssemblyAngularVelocity=Vector3.new()
-			if pushUp then
-				root.CFrame=root.CFrame+Vector3.new(0,10,0)
+			r.Anchored=false
+			r.AssemblyLinearVelocity=Vector3.new()
+			r.AssemblyAngularVelocity=Vector3.new()
+			if push then
+				r.CFrame=r.CFrame+Vector3.new(0,18,0)
 			end
 			stats.char+=1
 		end)
 	end
 end
 
-local rescueConn=nil
-local rescueEnd=0
-local rescueCF=nil
-
-local function startRescue(seconds)
+local function startFree(seconds)
 	if rescueConn then rescueConn:Disconnect() rescueConn=nil end
-	local root=lp.Character and lp.Character:FindFirstChild("HumanoidRootPart")
-	if root then
-		rescueCF=root.CFrame+Vector3.new(0,14,0)
+
+	local r=lp.Character and lp.Character:FindFirstChild("HumanoidRootPart")
+	if r then
+		safeCF=r.CFrame+Vector3.new(0,22,0)
 	else
-		rescueCF=nil
+		safeCF=nil
 	end
-	rescueEnd=os.clock()+(seconds or 20)
+
+	rescueEnd=os.clock()+(seconds or 30)
 
 	rescueConn=RunService.Heartbeat:Connect(function()
 		if os.clock()>rescueEnd then
@@ -371,23 +448,24 @@ local function startRescue(seconds)
 			return
 		end
 
-		resetCharacter(false)
+		resetBody(false)
+
 		local c=lp.Character
-		local r=c and c:FindFirstChild("HumanoidRootPart")
-		if r and rescueCF then
+		local root=c and c:FindFirstChild("HumanoidRootPart")
+		if root and safeCF then
 			pcall(function()
-				r.Anchored=false
-				r.CFrame=rescueCF
-				r.AssemblyLinearVelocity=Vector3.new()
-				r.AssemblyAngularVelocity=Vector3.new()
+				root.Anchored=false
+				root.CFrame=safeCF
+				root.AssemblyLinearVelocity=Vector3.new()
+				root.AssemblyAngularVelocity=Vector3.new()
 			end)
 		end
 	end)
 end
 
-local function stopRescue()
+local function stopFree()
 	if rescueConn then rescueConn:Disconnect() rescueConn=nil end
-	rescueCF=nil
+	safeCF=nil
 end
 
 local function clearGlobals()
@@ -400,54 +478,53 @@ local function clearGlobals()
 	end
 end
 
-local function emergencyReset()
-	say("reset...")
+local function hardReset()
+	stats.msg="reset..."
 	clearGlobals()
-	restoreLightingPlayable()
-	killRockBugGc()
-	killRockBugConnections()
-	destroyBadGuis()
-	restoreWorkspaceVisuals()
-	resetCharacter(true)
-	startRescue(25)
-	say("done")
+	restoreRender()
+	killGetgc()
+	killConnections()
+	nukeRockGuis()
+	restoreVisualProps()
+	resetBody(true)
+	startFree(30)
+	stats.msg="DONE"
 end
 
 -- UI
 pcall(function()
-	local root=getUiParent()
-	local old=root:FindFirstChild("RockBugEmergencyResetGui")
+	local root=uiParent()
+	local old=root:FindFirstChild("RockBugHardPanicResetGui")
 	if old then old:Destroy()end
 end)
 
-local uiParent=getUiParent()
 local gui=Instance.new("ScreenGui")
-gui.Name="RockBugEmergencyResetGui"
+gui.Name="RockBugHardPanicResetGui"
 gui.ResetOnSpawn=false
 gui.IgnoreGuiInset=true
 gui.DisplayOrder=9999999
-gui.Parent=uiParent
+gui.Parent=uiParent()
 
 local main=Instance.new("Frame")
 main.Parent=gui
-main.Size=UDim2.new(0,292,0,164)
-main.Position=UDim2.new(0,18,0,120)
-main.BackgroundColor3=Color3.fromRGB(12,12,16)
-main.BackgroundTransparency=0.05
+main.Size=UDim2.new(0,304,0,170)
+main.Position=UDim2.new(0,14,0,110)
+main.BackgroundColor3=Color3.fromRGB(12,10,14)
+main.BackgroundTransparency=0.04
 main.BorderSizePixel=0
 main.Active=true
 Instance.new("UICorner",main).CornerRadius=UDim.new(0,16)
-local stroke=Instance.new("UIStroke",main)
-stroke.Color=Color3.fromRGB(255,95,95)
-stroke.Thickness=1.4
-stroke.Transparency=0.12
+local st=Instance.new("UIStroke",main)
+st.Color=Color3.fromRGB(255,80,80)
+st.Thickness=1.5
+st.Transparency=0.08
 
 local title=Instance.new("TextLabel")
 title.Parent=main
-title.Size=UDim2.new(1,-46,0,24)
+title.Size=UDim2.new(1,-48,0,24)
 title.Position=UDim2.new(0,12,0,8)
 title.BackgroundTransparency=1
-title.Text="EMERGENCY RESET"
+title.Text="HARD PANIC RESET"
 title.TextColor3=Color3.fromRGB(255,240,240)
 title.Font=Enum.Font.GothamBlack
 title.TextSize=14
@@ -467,23 +544,23 @@ Instance.new("UICorner",close).CornerRadius=UDim.new(0,10)
 
 local status=Instance.new("TextLabel")
 status.Parent=main
-status.Size=UDim2.new(1,-24,0,44)
+status.Size=UDim2.new(1,-24,0,48)
 status.Position=UDim2.new(0,12,0,36)
 status.BackgroundTransparency=1
-status.TextColor3=Color3.fromRGB(215,220,245)
+status.TextColor3=Color3.fromRGB(220,226,250)
 status.Font=Enum.Font.GothamBold
 status.TextSize=10
 status.TextWrapped=true
 status.TextXAlignment=Enum.TextXAlignment.Left
 
-local function makeBtn(text,x,y,w,h)
+local function btn(text,x,y,w,h)
 	local b=Instance.new("TextButton")
 	b.Parent=main
 	b.Size=UDim2.new(0,w,0,h)
 	b.Position=UDim2.new(0,x,0,y)
-	b.BackgroundColor3=Color3.fromRGB(45,48,66)
+	b.BackgroundColor3=Color3.fromRGB(48,48,66)
 	b.Text=text
-	b.TextColor3=Color3.fromRGB(245,245,255)
+	b.TextColor3=Color3.fromRGB(250,250,255)
 	b.Font=Enum.Font.GothamBlack
 	b.TextSize=11
 	b.BorderSizePixel=0
@@ -491,19 +568,19 @@ local function makeBtn(text,x,y,w,h)
 	return b
 end
 
-local resetBtn=makeBtn("RESET AGAIN",12,86,128,34)
-local freeBtn=makeBtn("FREE 25s",152,86,128,34)
-local stopBtn=makeBtn("STOP FREE",12,126,128,28)
-local hideBtn=makeBtn("HIDE",152,126,128,28)
+local resetBtn=btn("HARD RESET",12,90,132,34)
+local freeBtn=btn("FREE 30s",160,90,132,34)
+local visualBtn=btn("VISUAL ONLY",12,130,132,28)
+local stopBtn=btn("STOP FREE",160,130,132,28)
 
-local function updateStatus()
-	status.Text=("status: %s\nui:%s gcT:%s gcF:%s con:%s props:%s char:%s render:%s"):format(
-		stats.last,
+local function upd()
+	status.Text=("v2 | %s\nui:%s upv:%s low:%s con:%s prop:%s char:%s render:%s"):format(
+		tostring(stats.msg),
 		tostring(stats.gui),
-		tostring(stats.gcTables),
-		tostring(stats.gcFuncs),
-		tostring(stats.conns),
-		tostring(stats.props),
+		tostring(stats.upv),
+		tostring(stats.low),
+		tostring(stats.con),
+		tostring(stats.prop),
 		tostring(stats.char),
 		tostring(stats.render)
 	)
@@ -511,29 +588,34 @@ end
 
 resetBtn.Activated:Connect(function()
 	task.spawn(function()
-		emergencyReset()
-		updateStatus()
+		hardReset()
+		upd()
 	end)
 end)
 
 freeBtn.Activated:Connect(function()
-	startRescue(25)
-	say("free 25s")
-	updateStatus()
+	startFree(30)
+	stats.msg="free 30s"
+	upd()
+end)
+
+visualBtn.Activated:Connect(function()
+	task.spawn(function()
+		restoreRender()
+		restoreVisualProps()
+		stats.msg="visual done"
+		upd()
+	end)
 end)
 
 stopBtn.Activated:Connect(function()
-	stopRescue()
-	say("free stopped")
-	updateStatus()
-end)
-
-hideBtn.Activated:Connect(function()
-	main.Visible=false
+	stopFree()
+	stats.msg="free stopped"
+	upd()
 end)
 
 close.Activated:Connect(function()
-	stopRescue()
+	stopFree()
 	gui:Destroy()
 end)
 
@@ -564,6 +646,6 @@ UserInputService.InputChanged:Connect(function(input)
 end)
 
 task.spawn(function()
-	emergencyReset()
-	updateStatus()
+	hardReset()
+	upd()
 end)
