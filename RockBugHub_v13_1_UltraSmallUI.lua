@@ -1,11 +1,11 @@
--- Muscle Legends RockBug Hub v18 BUG TIMER
+-- Muscle Legends RockBug Hub v19 BUG TIMER
 -- Standalone: без Speed Hub. Камни через neededDurability + TP LOCK + BUG HIT + Anti AFK.
 
 local Players=game:GetService("Players")
 local RunService=game:GetService("RunService")
 local VirtualUser=game:GetService("VirtualUser")
 local lp=Players.LocalPlayer
-local HUB_VERSION="RockBugHub_v18_BugTimer"
+local HUB_VERSION="RockBugHub_v98_BugTimer"
 
 -- Anti AFK
 local antiAfkEnabled=true
@@ -24,7 +24,7 @@ startAntiAfk()
 
 -- Анти-дубль.
 pcall(function()
-	local old=lp:WaitForChild("PlayerGui"):FindFirstChild("RockBugHub_v18_BugTimer")
+	local old=lp:WaitForChild("PlayerGui"):FindFirstChild("RockBugHub_v19_BugTimer")
 	if old then old:Destroy() end
 end)
 
