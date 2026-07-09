@@ -1296,9 +1296,10 @@ local title=makeText(top,"BUG HUB v16",18,Enum.Font.GothamBlack,Color3.fromRGB(2
 title.Size=UDim2.new(1,-96,0,22)
 title.Position=UDim2.new(0,14,0,6)
 
-local sub=makeText(top,"slider levers • auto rock • hard stop\n author The Great Bastra",10,Enum.Font.GothamBold,Color3.fromRGB(165,172,205))
-sub.Size=UDim2.new(1,-96,0,16)
-sub.Position=UDim2.new(0,15,0,26)
+local sub=makeText(top,"slider levers • auto rock • hard stop\nauthor The Great Bastra",10,Enum.Font.GothamBold,Color3.fromRGB(165,172,205))
+sub.Size=UDim2.new(1,-96,0,24)
+sub.Position=UDim2.new(0,15,0,33)
+sub.TextYAligment=Enum.TextYAlignment.Top
 
 local min=makeBtn(top,"−",Color3.fromRGB(42,39,78))
 min.Size=UDim2.new(0,29,0,29)
