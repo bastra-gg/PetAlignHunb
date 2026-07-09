@@ -1,16 +1,15 @@
--- ML_TradeAnalyzer_v1
--- ТОЛЬКО анализ трейда. Ничего не нажимает, не открывает, не спамит, не меняет игру.
--- Одна кнопка SCAN / STOP. Скан идёт кусками, чтобы не убить FPS.
--- После скана жми COPY REPORT и кидай отчёт.
+-- ML_TradeDirect_v1
+-- Минимальный прямой трейд-кликер по найденным путям из отчёта.
+-- НЕТ скана каждый кадр, НЕТ чёрного экрана, НЕТ rejoin/kick, НЕТ авто-ремотов.
+-- Только точечные кнопки gameGui/tradePanel и related trade buttons.
 
 local Players=game:GetService("Players")
-local ReplicatedStorage=game:GetService("ReplicatedStorage")
 local StarterGui=game:GetService("StarterGui")
 local UserInputService=game:GetService("UserInputService")
 local CoreGui=game:GetService("CoreGui")
 
 local lp=Players.LocalPlayer
-local VERSION="ML_TradeAnalyzer_v1"
+local VERSION="ML_TradeDirect_v1"
 
 local function safe(fn)
 	local ok,res=pcall(fn)
@@ -19,397 +18,308 @@ end
 
 local function getUiParent()
 	local ok,h=safe(function()
-		if type(gethui)=="function"then return gethui()end
+		if type(gethui)=="function" then return gethui() end
 	end)
 	if ok and h then return h end
-
-	local ok2,cg=safe(function()return CoreGui end)
+	local ok2,cg=safe(function() return CoreGui end)
 	if ok2 and cg then return cg end
-
 	return lp:WaitForChild("PlayerGui")
 end
 
-local uiParent=getUiParent()
-
-pcall(function()
-	local old=uiParent:FindFirstChild("ML_TradeAnalyzerGui")
-	if old then old:Destroy()end
-end)
-
-local scanId=0
-local scanning=false
-local lastReport="Скан ещё не запускался."
-
-local TRADE_WORDS={
-	"trade","trading","обмен","трейд",
-	"accept","ready","confirm","decline","cancel",
-	"принять","готов","готово","подтверд","отмена","отклон",
-	"pet","pets","пет","питом","питомец","питомцы",
-	"offer","send","give","username","online","онлайн"
-}
-
-local REMOTE_WORDS={
-	"trade","trading","обмен","трейд",
-	"accept","ready","confirm","decline","cancel",
-	"pet","pets","offer","send","give"
-}
-
-local POPUP_WORDS={
-	"limited","лимит","запас",
-	"reward","награ","бесплат",
-	"claim","забрать",
-	"invite","приглас",
-	"task","задач",
-	"shop","магазин","premium","премиум","luck","удача","pack","пакет"
-}
-
-local function low(s)
-	return tostring(s or ""):lower()
+local function pg()
+	return lp:FindFirstChild("PlayerGui")
 end
 
-local function hasAny(s,list)
-	s=low(s)
-	for _,w in ipairs(list)do
-		if s:find(low(w),1,true)then return true end
+local function getPath(path)
+	local cur=pg()
+	if not cur then return nil end
+	for part in string.gmatch(path,"[^/]+") do
+		cur=cur:FindFirstChild(part)
+		if not cur then return nil end
 	end
-	return false
+	return cur
 end
 
-local function trim(s,n)
-	s=tostring(s or "")
-	s=s:gsub("\n"," "):gsub("\r"," ")
-	if #s>n then return s:sub(1,n).."..." end
-	return s
+local function setMsg(t)
+	if _G.MLTradeDirectStatus then
+		_G.MLTradeDirectStatus.Text=tostring(t)
+	end
 end
 
-local function pathOf(obj)
-	local parts={}
-	local cur=obj
-	local limit=0
-
-	while cur and cur~=game and limit<18 do
-		table.insert(parts,1,tostring(cur.Name))
-		cur=cur.Parent
-		limit+=1
+local function click(btn)
+	if not btn then
+		setMsg("не найдено")
+		return false
 	end
 
-	return table.concat(parts,"/")
-end
-
-local function textOf(obj)
-	local s=tostring(obj.Name)
-
-	pcall(function()
-		if obj:IsA("TextLabel") or obj:IsA("TextButton") or obj:IsA("TextBox")then
-			s=s.." | text="..tostring(obj.Text)
+	safe(function()
+		if btn:IsA("GuiObject") then
+			btn.Visible=true
+			btn.Active=true
+			btn.ZIndex=math.max(btn.ZIndex,999)
 		end
 	end)
 
-	return s
-end
-
-local function addLine(t,s)
-	t[#t+1]=s
-end
-
-local function yieldIf(n)
-	if n%120==0 then task.wait()end
-end
-
-local function isCancelled(my)
-	return (not scanning) or scanId~=my
-end
-
-local function getGuiArea(obj)
-	local ok,res=pcall(function()
-		local cam=workspace.CurrentCamera
-		local vp=cam and cam.ViewportSize or Vector2.new(0,0)
-		if vp.X<=0 or vp.Y<=0 then return 0 end
-		local sz=obj.AbsoluteSize
-		return (sz.X*sz.Y)/(vp.X*vp.Y)
+	safe(function()
+		if btn:IsA("GuiButton") then
+			btn.Selectable=true
+			btn.AutoButtonColor=true
+			btn.Modal=false
+		end
 	end)
-	if ok then return tonumber(res) or 0 end
-	return 0
+
+	local ok=false
+	safe(function()
+		btn:Activate()
+		ok=true
+	end)
+	safe(function()
+		if firesignal then
+			firesignal(btn.Activated)
+			ok=true
+		end
+	end)
+	safe(function()
+		if firesignal then
+			firesignal(btn.MouseButton1Click)
+			ok=true
+		end
+	end)
+
+	setMsg(ok and ("clicked: "..btn.Name) or ("try clicked: "..btn.Name))
+	return ok
 end
 
-local function analyze(my)
-	local out={}
+local popupHidden={}
 
-	addLine(out,"=== ML TRADE ANALYZER REPORT ===")
-	addLine(out,"version: "..VERSION)
-	addLine(out,"player: "..lp.Name)
-	addLine(out,"time: "..os.date("%Y-%m-%d %H:%M:%S"))
-	addLine(out,"mode: analyze only, no clicks, no remotes fired")
-	addLine(out,"")
-
-	local pg=lp:FindFirstChild("PlayerGui")
-	addLine(out,"[BASIC]")
-	addLine(out,"PlayerGui: "..tostring(pg~=nil))
-
-	local okCore=true
-	pcall(function()
-		StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Backpack,true)
-	end)
-	addLine(out,"CoreGui check: attempted Backpack enable = "..tostring(okCore))
-
-	local touch=pg and pg:FindFirstChild("TouchGui")
-	addLine(out,"TouchGui exists: "..tostring(touch~=nil))
-	if touch then
-		addLine(out,"TouchGui enabled: "..tostring(touch.Enabled))
-	end
-	addLine(out,"")
-
-	if isCancelled(my)then return "CANCELLED"end
-
-	addLine(out,"[SCREEN GUIS]")
-	if not pg then
-		addLine(out,"NO PlayerGui")
-	else
-		local count=0
-		for _,sg in ipairs(pg:GetChildren())do
-			if isCancelled(my)then return "CANCELLED"end
-			if sg:IsA("ScreenGui")then
-				count+=1
-				local pack=tostring(sg.Name)
-				local textCount=0
-				for _,d in ipairs(sg:GetDescendants())do
-					if d:IsA("TextLabel") or d:IsA("TextButton") or d:IsA("TextBox")then
-						textCount+=1
-						if textCount<=80 then
-							pack=pack.." "..tostring(d.Name).." "..tostring(d.Text)
-						end
-					end
-					if textCount%120==0 then task.wait()end
-				end
-
-				local tag={}
-				if hasAny(pack,TRADE_WORDS)then tag[#tag+1]="TRADE-LIKE"end
-				if hasAny(pack,POPUP_WORDS)then tag[#tag+1]="POPUP-LIKE"end
-				if tostring(sg.Name):find("RockBug",1,true)then tag[#tag+1]="OLD-ROCKBUG"end
-				if #tag>0 then
-					addLine(out,("- %s | Enabled=%s | DisplayOrder=%s | %s"):format(
-						sg.Name,
-						tostring(sg.Enabled),
-						tostring(sg.DisplayOrder),
-						table.concat(tag,",")
-					))
-				end
-			end
-			yieldIf(count)
-		end
-		addLine(out,"ScreenGui total: "..tostring(count))
-	end
-	addLine(out,"")
-
-	if isCancelled(my)then return "CANCELLED"end
-
-	addLine(out,"[TRADE GUI BUTTON/TEXT CANDIDATES]")
-	if pg then
-		local n=0
-		local shown=0
-		for _,d in ipairs(pg:GetDescendants())do
-			if isCancelled(my)then return "CANCELLED"end
-			n+=1
-
-			if d:IsA("TextButton") or d:IsA("TextLabel") or d:IsA("TextBox")then
-				local txt=textOf(d)
-				if hasAny(txt,TRADE_WORDS)then
-					shown+=1
-					if shown<=90 then
-						local vis="?"
-						local act="?"
-						local z="?"
-						pcall(function()vis=tostring(d.Visible)end)
-						pcall(function()act=tostring(d.Active)end)
-						pcall(function()z=tostring(d.ZIndex)end)
-						addLine(out,("[%02d] %s | class=%s | visible=%s active=%s z=%s"):format(
-							shown,
-							pathOf(d),
-							d.ClassName,
-							vis,
-							act,
-							z
-						))
-						addLine(out,"     "..trim(txt,150))
-					end
-				end
-			end
-
-			yieldIf(n)
-			if n>7000 then
-				addLine(out,"STOP: GUI scan cap 7000 reached")
-				break
-			end
-		end
-		addLine(out,"Trade-like GUI hits shown/total: "..tostring(math.min(shown,90)).."/"..tostring(shown))
-	end
-	addLine(out,"")
-
-	if isCancelled(my)then return "CANCELLED"end
-
-	addLine(out,"[POSSIBLE CLICK BLOCKERS]")
-	if pg then
-		local n=0
-		local shown=0
-		for _,d in ipairs(pg:GetDescendants())do
-			if isCancelled(my)then return "CANCELLED"end
-			n+=1
-
-			if d:IsA("GuiObject")then
-				local area=getGuiArea(d)
-				if area>0.30 then
-					local txt=textOf(d)
-					local isTrade=hasAny(txt,TRADE_WORDS)
-					local isPopup=hasAny(txt,POPUP_WORDS)
-					local active=false
-					local visible=false
-					local bg=1
-					pcall(function()active=d.Active end)
-					pcall(function()visible=d.Visible end)
-					pcall(function()bg=d.BackgroundTransparency end)
-
-					if visible and (active or bg<0.95 or isPopup) and not isTrade then
-						shown+=1
-						if shown<=50 then
-							addLine(out,("[%02d] blocker? area=%.2f active=%s bgT=%s class=%s path=%s"):format(
-								shown,
-								area,
-								tostring(active),
-								tostring(bg),
-								d.ClassName,
-								pathOf(d)
-							))
-							addLine(out,"     "..trim(txt,120))
-						end
-					end
-				end
-			end
-
-			yieldIf(n)
-			if n>7000 then
-				addLine(out,"STOP: blocker scan cap 7000 reached")
-				break
-			end
-		end
-		addLine(out,"Blocker candidates shown/total: "..tostring(math.min(shown,50)).."/"..tostring(shown))
-	end
-	addLine(out,"")
-
-	if isCancelled(my)then return "CANCELLED"end
-
-	addLine(out,"[REMOTE CANDIDATES]")
-	local remoteShown=0
-	local remoteTotal=0
-	local n=0
-	for _,d in ipairs(ReplicatedStorage:GetDescendants())do
-		if isCancelled(my)then return "CANCELLED"end
-		n+=1
-
-		if d:IsA("RemoteEvent") or d:IsA("RemoteFunction")then
-			local p=pathOf(d)
-			if hasAny(p,REMOTE_WORDS)then
-				remoteTotal+=1
-				remoteShown+=1
-				if remoteShown<=80 then
-					addLine(out,("[%02d] %s | %s"):format(remoteShown,d.ClassName,p))
-				end
-			end
-		end
-
-		yieldIf(n)
-		if n>12000 then
-			addLine(out,"STOP: remote scan cap 12000 reached")
-			break
+local function restorePopups()
+	for obj,rec in pairs(popupHidden) do
+		if obj and obj.Parent then
+			if rec.Enabled~=nil then safe(function() obj.Enabled=rec.Enabled end) end
+			if rec.Visible~=nil then safe(function() obj.Visible=rec.Visible end) end
+			if rec.Active~=nil then safe(function() obj.Active=rec.Active end) end
 		end
 	end
-	addLine(out,"Remote trade-like shown/total: "..tostring(math.min(remoteShown,80)).."/"..tostring(remoteTotal))
-	addLine(out,"")
+	popupHidden={}
+	setMsg("popups restored")
+end
 
-	if isCancelled(my)then return "CANCELLED"end
+local function hidePopupGuis()
+	local p=pg()
+	if not p then return end
 
-	addLine(out,"[PLAYER DATA / PET / TRADE OBJECT NAMES]")
-	local roots={
-		lp,
-		lp:FindFirstChild("PlayerScripts"),
-		lp:FindFirstChild("Backpack"),
-		lp.Character,
-		ReplicatedStorage
+	-- Только конкретные GUI из твоего отчёта. gameGui НЕ трогаем.
+	local names={
+		"premiumGui",
+		"cPetShopGui",
+		"questsGui",
+		"updatesMenuGui",
+		"packsGui",
+		"ultimatesGui",
+		"limitedStockGui",
+		"freeGiftsGui",
+		"inviteFriendsGui",
+		"currencyFrameGui",
+		"rightSideGui",
+		"specialOfferGui",
+		"countdownEventsGui",
+		"fortuneWheelMenuGui",
+		"fortuneOtherMenusGui",
 	}
-	local shown=0
-	local scanned=0
 
-	for _,root in ipairs(roots)do
-		if root then
-			for _,d in ipairs(root:GetDescendants())do
-				if isCancelled(my)then return "CANCELLED"end
-				scanned+=1
+	for _,name in ipairs(names) do
+		local g=p:FindFirstChild(name)
+		if g and g:IsA("ScreenGui") and not popupHidden[g] then
+			popupHidden[g]={Enabled=g.Enabled}
+			safe(function() g.Enabled=false end)
+		end
+	end
 
-				local p=pathOf(d)
-				if hasAny(p,{"trade","trading","обмен","pet","pets","пет","питом"})then
-					shown+=1
-					if shown<=100 then
-						local val=""
-						pcall(function()
-							if d:IsA("StringValue") or d:IsA("NumberValue") or d:IsA("IntValue") or d:IsA("BoolValue")then
-								val=" value="..tostring(d.Value)
-							end
-						end)
-						addLine(out,("[%02d] %s | %s%s"):format(shown,d.ClassName,p,val))
-					end
-				end
+	setMsg("popup guis hidden")
+end
 
-				yieldIf(scanned)
-				if scanned>16000 then
-					addLine(out,"STOP: data scan cap 16000 reached")
-					break
-				end
+local function basicUnlock()
+	safe(function()
+		StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.All,true)
+	end)
+
+	safe(function()
+		local ps=lp:FindFirstChild("PlayerScripts")
+		local pm=ps and ps:FindFirstChild("PlayerModule")
+		if pm then
+			local mod=require(pm)
+			local controls=mod:GetControls()
+			if controls then controls:Enable() end
+		end
+	end)
+
+	local c=lp.Character
+	if c then
+		local h=c:FindFirstChildWhichIsA("Humanoid")
+		local r=c:FindFirstChild("HumanoidRootPart")
+		if h then
+			safe(function()
+				h.PlatformStand=false
+				h.Sit=false
+				h.AutoRotate=true
+				if h.WalkSpeed<12 then h.WalkSpeed=16 end
+				h:ChangeState(Enum.HumanoidStateType.Running)
+			end)
+		end
+		if r then
+			safe(function()
+				r.Anchored=false
+				r.AssemblyLinearVelocity=Vector3.new()
+				r.AssemblyAngularVelocity=Vector3.new()
+			end)
+		end
+	end
+
+	-- Только конкретные найденные кнопки.
+	for _,path in ipairs({
+		"gameGui/sideButtons/tradeButton",
+		"gameGui/gameGuiScript/playerTradeFrame/nameLabel/tradeButton",
+		"gameGui/gameGuiScript/tradeRequestMenu/tradeButton",
+		"gameGui/tradePanel/declineButton",
+		"gameGui/tradePanel/acceptButton",
+		"gameGui/tradePanel/sideButtons/petsButton",
+		"gameGui/tradePanel/sideButtons/aurasButton",
+	}) do
+		local obj=getPath(path)
+		if obj and obj:IsA("GuiObject") then
+			safe(function()
+				obj.Visible=true
+				obj.Active=true
+				obj.ZIndex=math.max(obj.ZIndex,999)
+			end)
+			if obj:IsA("GuiButton") then
+				safe(function()
+					obj.Selectable=true
+					obj.AutoButtonColor=true
+					obj.Modal=false
+				end)
 			end
 		end
 	end
-	addLine(out,"Object name hits shown/total: "..tostring(math.min(shown,100)).."/"..tostring(shown))
-	addLine(out,"")
 
-	addLine(out,"[END]")
-	addLine(out,"Send this full report.")
-	return table.concat(out,"\n")
+	setMsg("unlocked exact trade buttons")
+end
+
+local function tradeFront()
+	local g=getPath("gameGui")
+	if g and g:IsA("ScreenGui") then
+		safe(function()
+			g.Enabled=true
+			g.DisplayOrder=999999
+			g.ZIndexBehavior=Enum.ZIndexBehavior.Sibling
+		end)
+	end
+
+	local panel=getPath("gameGui/tradePanel")
+	if panel and panel:IsA("GuiObject") then
+		safe(function()
+			panel.Visible=true
+			panel.Active=true
+			panel.ZIndex=math.max(panel.ZIndex,900)
+		end)
+		for _,d in ipairs(panel:GetDescendants()) do
+			if d:IsA("GuiObject") then
+				safe(function()
+					d.Active=true
+					d.ZIndex=math.max(d.ZIndex,900)
+				end)
+			end
+			if d:IsA("GuiButton") then
+				safe(function()
+					d.Selectable=true
+					d.AutoButtonColor=true
+					d.Modal=false
+				end)
+			end
+		end
+	end
+
+	basicUnlock()
+	setMsg("tradePanel front")
+end
+
+local function diag()
+	local lines={}
+	local function add(s) lines[#lines+1]=s end
+	add("=== TRADE DIRECT DIAG ===")
+	add("version: "..VERSION)
+
+	for _,path in ipairs({
+		"gameGui/sideButtons/tradeButton",
+		"gameGui/gameGuiScript/playerTradeFrame/nameLabel/tradeButton",
+		"gameGui/gameGuiScript/tradeRequestMenu/tradeButton",
+		"gameGui/tradePanel",
+		"gameGui/tradePanel/declineButton",
+		"gameGui/tradePanel/acceptButton",
+		"gameGui/tradePanel/sideButtons/petsButton",
+		"gameGui/tradePanel/sideButtons/aurasButton",
+	}) do
+		local o=getPath(path)
+		if o then
+			local vis,act,z,cls="?","?","?",o.ClassName
+			safe(function() vis=tostring(o.Visible) end)
+			safe(function() act=tostring(o.Active) end)
+			safe(function() z=tostring(o.ZIndex) end)
+			add(path.." | "..cls.." | visible="..vis.." active="..act.." z="..z)
+		else
+			add(path.." | NOT FOUND")
+		end
+	end
+
+	local text=table.concat(lines,"\n")
+	safe(function()
+		if setclipboard then setclipboard(text) end
+	end)
+	setMsg("diag copied / ready")
+	return text
 end
 
 -- UI
+local parent=getUiParent()
+pcall(function()
+	local old=parent:FindFirstChild("ML_TradeDirectGui")
+	if old then old:Destroy() end
+end)
+
 local gui=Instance.new("ScreenGui")
-gui.Name="ML_TradeAnalyzerGui"
+gui.Name="ML_TradeDirectGui"
 gui.ResetOnSpawn=false
 gui.IgnoreGuiInset=true
 gui.DisplayOrder=10000000
 gui.ZIndexBehavior=Enum.ZIndexBehavior.Sibling
-gui.Parent=uiParent
+gui.Parent=parent
 
 local main=Instance.new("Frame")
 main.Parent=gui
-main.Size=UDim2.new(0,330,0,248)
-main.Position=UDim2.new(0,14,0,100)
+main.Size=UDim2.new(0,286,0,202)
+main.Position=UDim2.new(0,14,0,116)
 main.BackgroundColor3=Color3.fromRGB(14,15,22)
 main.BackgroundTransparency=0.04
 main.BorderSizePixel=0
 main.Active=true
-main.ZIndex=50
+main.ZIndex=1000
 Instance.new("UICorner",main).CornerRadius=UDim.new(0,16)
-
-local stroke=Instance.new("UIStroke",main)
-stroke.Color=Color3.fromRGB(100,160,255)
-stroke.Thickness=1.3
-stroke.Transparency=0.1
+local st=Instance.new("UIStroke",main)
+st.Color=Color3.fromRGB(90,180,255)
+st.Thickness=1.3
+st.Transparency=0.1
 
 local title=Instance.new("TextLabel")
 title.Parent=main
 title.Size=UDim2.new(1,-48,0,24)
 title.Position=UDim2.new(0,12,0,8)
 title.BackgroundTransparency=1
-title.Text="TRADE ANALYZER"
+title.Text="TRADE DIRECT"
 title.TextColor3=Color3.fromRGB(235,245,255)
 title.Font=Enum.Font.GothamBlack
 title.TextSize=14
 title.TextXAlignment=Enum.TextXAlignment.Left
-title.ZIndex=51
+title.ZIndex=1001
 
 local close=Instance.new("TextButton")
 close.Parent=main
@@ -421,7 +331,7 @@ close.TextColor3=Color3.fromRGB(255,230,230)
 close.Font=Enum.Font.GothamBlack
 close.TextSize=18
 close.BorderSizePixel=0
-close.ZIndex=52
+close.ZIndex=1002
 Instance.new("UICorner",close).CornerRadius=UDim.new(0,10)
 
 local status=Instance.new("TextLabel")
@@ -429,14 +339,15 @@ status.Parent=main
 status.Size=UDim2.new(1,-24,0,28)
 status.Position=UDim2.new(0,12,0,36)
 status.BackgroundTransparency=1
-status.Text="готово | скан не запущен"
-status.TextColor3=Color3.fromRGB(210,220,245)
+status.Text="готово"
+status.TextColor3=Color3.fromRGB(215,225,245)
 status.Font=Enum.Font.GothamBold
 status.TextSize=10
 status.TextXAlignment=Enum.TextXAlignment.Left
-status.ZIndex=51
+status.ZIndex=1001
+_G.MLTradeDirectStatus=status
 
-local function mkBtn(text,x,y,w,h)
+local function mk(text,x,y,w,h)
 	local b=Instance.new("TextButton")
 	b.Parent=main
 	b.Size=UDim2.new(0,w,0,h)
@@ -447,100 +358,41 @@ local function mkBtn(text,x,y,w,h)
 	b.Font=Enum.Font.GothamBlack
 	b.TextSize=10
 	b.BorderSizePixel=0
-	b.ZIndex=52
+	b.ZIndex=1002
 	Instance.new("UICorner",b).CornerRadius=UDim.new(0,10)
 	return b
 end
 
-local scanBtn=mkBtn("SCAN",12,68,96,32)
-local copyBtn=mkBtn("COPY REPORT",118,68,104,32)
-local clearBtn=mkBtn("CLEAR",232,68,84,32)
+local unlockBtn=mk("UNLOCK",12,70,126,30)
+local frontBtn=mk("FRONT",148,70,126,30)
+local openBtn=mk("OPEN TRADE",12,106,126,30)
+local requestBtn=mk("REQUEST/REPLY",148,106,126,30)
+local petsBtn=mk("PETS TAB",12,142,126,30)
+local acceptBtn=mk("ACCEPT",148,142,126,30)
+local hideBtn=mk("HIDE POPUPS",12,176,126,22)
+local restoreBtn=mk("RESTORE",148,176,126,22)
 
-local box=Instance.new("TextBox")
-box.Parent=main
-box.Size=UDim2.new(1,-24,1,-112)
-box.Position=UDim2.new(0,12,0,108)
-box.BackgroundColor3=Color3.fromRGB(8,9,14)
-box.BackgroundTransparency=0.05
-box.BorderSizePixel=0
-box.TextColor3=Color3.fromRGB(225,230,245)
-box.Font=Enum.Font.Code
-box.TextSize=9
-box.TextXAlignment=Enum.TextXAlignment.Left
-box.TextYAlignment=Enum.TextYAlignment.Top
-box.ClearTextOnFocus=false
-box.MultiLine=true
-box.TextWrapped=false
-box.TextEditable=false
-box.Text="Нажми SCAN. Если FPS просел — жми эту же кнопку STOP."
-box.ZIndex=51
-Instance.new("UICorner",box).CornerRadius=UDim.new(0,10)
-
-local function setScanUi()
-	scanBtn.Text=scanning and "STOP" or "SCAN"
-	scanBtn.BackgroundColor3=scanning and Color3.fromRGB(140,55,65) or Color3.fromRGB(45,120,75)
-end
-
-scanBtn.Activated:Connect(function()
-	if scanning then
-		scanning=false
-		scanId+=1
-		status.Text="остановлено"
-		setScanUi()
-		return
-	end
-
-	scanning=true
-	scanId+=1
-	local my=scanId
-	status.Text="скан идёт кусками..."
-	box.Text="Scanning... кнопка стала STOP, ей же можно остановить."
-	setScanUi()
-
-	task.spawn(function()
-		local report=analyze(my)
-		if report=="CANCELLED"then
-			lastReport="CANCELLED BY USER"
-			box.Text=lastReport
-			status.Text="скан остановлен"
-		else
-			lastReport=report
-			box.Text=report
-			status.Text="готово | длина отчёта: "..tostring(#report)
-		end
-		scanning=false
-		setScanUi()
-	end)
-end)
-
-copyBtn.Activated:Connect(function()
-	local text=lastReport or box.Text or ""
-	local ok=false
-
-	safe(function()
-		if setclipboard then
-			setclipboard(text)
-			ok=true
-		end
-	end)
-
-	if ok then
-		status.Text="отчёт скопирован"
-	else
-		status.Text="setclipboard нет | выдели текст вручную"
+unlockBtn.Activated:Connect(basicUnlock)
+frontBtn.Activated:Connect(tradeFront)
+openBtn.Activated:Connect(function() click(getPath("gameGui/sideButtons/tradeButton")) end)
+requestBtn.Activated:Connect(function()
+	-- сначала ответ на запрос, потом кнопка у игрока
+	if not click(getPath("gameGui/gameGuiScript/tradeRequestMenu/tradeButton")) then
+		click(getPath("gameGui/gameGuiScript/playerTradeFrame/nameLabel/tradeButton"))
 	end
 end)
-
-clearBtn.Activated:Connect(function()
-	lastReport=""
-	box.Text=""
-	status.Text="очищено"
-end)
+petsBtn.Activated:Connect(function() click(getPath("gameGui/tradePanel/sideButtons/petsButton")) end)
+acceptBtn.Activated:Connect(function() click(getPath("gameGui/tradePanel/acceptButton")) end)
+hideBtn.Activated:Connect(hidePopupGuis)
+restoreBtn.Activated:Connect(restorePopups)
 
 close.Activated:Connect(function()
-	scanning=false
-	scanId+=1
 	gui:Destroy()
+end)
+
+-- долгое нажатие/правый клик не надо, но кнопка diag есть через title двойной click
+title.InputBegan:Connect(function()
+	diag()
 end)
 
 -- drag
@@ -563,10 +415,10 @@ UserInputService.InputEnded:Connect(function(input)
 end)
 
 UserInputService.InputChanged:Connect(function(input)
-	if dragging and (input.UserInputType==Enum.UserInputType.MouseMovement or input.UserInputType==Enum.UserInputType.Touch)then
+	if dragging and (input.UserInputType==Enum.UserInputType.MouseMovement or input.UserInputType==Enum.UserInputType.Touch) then
 		local d=input.Position-dragStart
 		main.Position=UDim2.new(startPos.X.Scale,startPos.X.Offset+d.X,startPos.Y.Scale,startPos.Y.Offset+d.Y)
 	end
 end)
 
-setScanUi()
+basicUnlock()
