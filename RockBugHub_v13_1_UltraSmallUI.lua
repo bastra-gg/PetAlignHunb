@@ -1,11 +1,11 @@
--- Muscle Legends RockBug Hub v19 BUG TIMER
+-- Muscle Legends RockBug Hub v19 FASTER BLACK
 -- Standalone: без Speed Hub. Камни через neededDurability + TP LOCK + BUG HIT + Anti AFK.
 
 local Players=game:GetService("Players")
 local RunService=game:GetService("RunService")
 local VirtualUser=game:GetService("VirtualUser")
 local lp=Players.LocalPlayer
-local HUB_VERSION="RockBugHub_v98_BugTimer"
+local HUB_VERSION="RockBugHub_v19_FasterBlack"
 
 -- Anti AFK
 local antiAfkEnabled=true
@@ -24,7 +24,7 @@ startAntiAfk()
 
 -- Анти-дубль.
 pcall(function()
-	local old=lp:WaitForChild("PlayerGui"):FindFirstChild("RockBugHub_v19_BugTimer")
+	local old=lp:WaitForChild("PlayerGui"):FindFirstChild("RockBugHub_v19_FasterBlack")
 	if old then old:Destroy() end
 end)
 
@@ -52,6 +52,17 @@ local hitting=false
 local fastHitEnabled=false
 local ultraOptEnabled=false
 local fastHitPower=1 -- v10: обычный КД, без FAST-спама
+
+-- v19: ускоренный клиентский цикл удара.
+-- Если захочешь свои значения — перед запуском поставь:
+-- _G.RockBugRemoteDelayOverride=0.04 и т.д.
+if not _G.RockBugV19NoForceSpeed then
+	_G.RockBugRemoteDelay=tonumber(_G.RockBugRemoteDelayOverride) or 0.035
+	_G.RockBugRemoteLoops=tonumber(_G.RockBugRemoteLoopsOverride) or 3
+	_G.RockBugActivateDelay=tonumber(_G.RockBugActivateDelayOverride) or 0.055
+	_G.RockBugTouchDelay=tonumber(_G.RockBugTouchDelayOverride) or 0.12
+	_G.RockBugHitDelay=tonumber(_G.RockBugHitDelayOverride) or 0.025
+end
 
 local function root()
 	local c=lp.Character
@@ -166,7 +177,7 @@ local lowMapState={
 	saved={},
 	count=0,
 	removed=0,
-	blackout={},
+	lighting={},
 	settings={},
 }
 
@@ -251,13 +262,26 @@ local function applyQualityUltra()
 		lowMapState.lighting.GlobalShadows=lighting.GlobalShadows
 		lowMapState.lighting.Brightness=lighting.Brightness
 		lowMapState.lighting.FogEnd=lighting.FogEnd
+		lowMapState.lighting.FogColor=lighting.FogColor
+		lowMapState.lighting.Ambient=lighting.Ambient
+		lowMapState.lighting.OutdoorAmbient=lighting.OutdoorAmbient
+		lowMapState.lighting.ColorShift_Top=lighting.ColorShift_Top
+		lowMapState.lighting.ColorShift_Bottom=lighting.ColorShift_Bottom
+		pcall(function()lowMapState.lighting.ExposureCompensation=lighting.ExposureCompensation end)
 		lowMapState.lighting.EnvironmentDiffuseScale=lighting.EnvironmentDiffuseScale
 		lowMapState.lighting.EnvironmentSpecularScale=lighting.EnvironmentSpecularScale
 		lowMapState.lighting.Technology=lighting.Technology
 
+		-- v19 BLACK: не "light", а максимально тёмная сцена.
 		lighting.GlobalShadows=false
 		lighting.Brightness=0
-		lighting.FogEnd=25
+		lighting.FogEnd=5
+		lighting.FogColor=Color3.fromRGB(0,0,0)
+		lighting.Ambient=Color3.fromRGB(0,0,0)
+		lighting.OutdoorAmbient=Color3.fromRGB(0,0,0)
+		lighting.ColorShift_Top=Color3.fromRGB(0,0,0)
+		lighting.ColorShift_Bottom=Color3.fromRGB(0,0,0)
+		pcall(function()lighting.ExposureCompensation=-10 end)
 		lighting.EnvironmentDiffuseScale=0
 		lighting.EnvironmentSpecularScale=0
 		pcall(function()lighting.Technology=Enum.Technology.Compatibility end)
@@ -379,7 +403,7 @@ local function setLowMap(enabled,keepModel,statusFn)
 
 		lowMapState.count=n
 		if statusFn then
-			statusFn("ULTRA ON: агро-опт, процесс сохранён")
+			statusFn("ULTRA BLACK ON: быстрый режим, процесс сохранён")
 		end
 	else
 		if not lowMapState.on then return end
@@ -741,7 +765,6 @@ local function touchRock(row)
 		if p and p:IsA("BasePart")then
 			pcall(function()
 				firetouchinterest(p,target,0)
-				task.wait()
 				firetouchinterest(p,target,1)
 			end)
 		end
@@ -789,7 +812,7 @@ local function startHit(row,statusFn)
 
 			if now-lastRemote>=(_G.RockBugRemoteDelay or 0.055) then
 				lastRemote=now
-				local loops=math.clamp(tonumber(_G.RockBugRemoteLoops or 2)or 2,1,4)
+				local loops=math.clamp(tonumber(_G.RockBugRemoteLoops or 3)or 3,1,8)
 				for _=1,loops do
 					firePunchRemote()
 				end
@@ -798,6 +821,11 @@ local function startHit(row,statusFn)
 			if tool and tool.Parent and now-lastActivate>=(_G.RockBugActivateDelay or 0.095) then
 				lastActivate=now
 				pcall(function()tool:Activate()end)
+				task.defer(function()
+					pcall(function()
+						if tool and tool.Parent then tool:Activate() end
+					end)
+				end)
 			elseif not tool or not tool.Parent then
 				activateFistTool(nil)
 			end
@@ -822,16 +850,29 @@ local function stopHit(statusFn)
 	hitLoopId+=1
 	if hitConn then hitConn:Disconnect() hitConn=nil end
 	setLowMap(false,nil,nil)
+	pcall(function()if blackBg then blackBg.Visible=false end end)
 	if statusFn then statusFn("BUG HIT: остановлен")end
 end
 
 -- UI v12: новый компактный дизайн без SCAN/COPY/лишних надписей
 local gui=Instance.new("ScreenGui")
-gui.Name="RockBugHub_v19_BugTimer"
+gui.Name="RockBugHub_v19_FasterBlack"
 gui.ResetOnSpawn=false
 gui.IgnoreGuiInset=true
 gui.DisplayOrder=999999
+gui.ZIndexBehavior=Enum.ZIndexBehavior.Sibling
 gui.Parent=lp:WaitForChild("PlayerGui")
+
+local blackBg=Instance.new("Frame")
+blackBg.Name="BLACK_OPT_BACKGROUND"
+blackBg.Parent=gui
+blackBg.Size=UDim2.new(1,0,1,0)
+blackBg.Position=UDim2.new(0,0,0,0)
+blackBg.BackgroundColor3=Color3.fromRGB(0,0,0)
+blackBg.BackgroundTransparency=0
+blackBg.BorderSizePixel=0
+blackBg.ZIndex=0
+blackBg.Visible=false
 
 local UserInputService=game:GetService("UserInputService")
 
@@ -889,6 +930,7 @@ main.BackgroundColor3=Color3.fromRGB(8,10,18)
 main.BackgroundTransparency=0.10
 main.BorderSizePixel=0
 main.Active=true
+main.ZIndex=5
 corner(main,22)
 stroke(main,Color3.fromRGB(95,85,180),1.4,0.2)
 
@@ -918,7 +960,7 @@ local title=makeText(top,"BUG HUB",18,Enum.Font.GothamBlack,Color3.fromRGB(248,2
 title.Size=UDim2.new(1,-108,0,22)
 title.Position=UDim2.new(0,46,0,6)
 
-local sub=makeText(top,HUB_VERSION.." • агро opt",10,Enum.Font.GothamBold,Color3.fromRGB(165,172,205))
+local sub=makeText(top,HUB_VERSION.." • FAST + BLACK",10,Enum.Font.GothamBold,Color3.fromRGB(165,172,205))
 sub.Size=UDim2.new(1,-108,0,16)
 sub.Position=UDim2.new(0,47,0,26)
 
@@ -938,6 +980,7 @@ mini.Size=UDim2.new(0,90,0,36)
 mini.Position=main.Position
 mini.Visible=false
 mini.TextSize=11
+mini.ZIndex=6
 
 local selectedCard=Instance.new("Frame")
 selectedCard.Parent=main
@@ -1155,7 +1198,7 @@ local unlockBtn=makeBtn(row2,"UNLOCK",Color3.fromRGB(120,70,38))
 unlockBtn.Size=UDim2.new(0.5,-5,1,0)
 unlockBtn.Position=UDim2.new(0,0,0,0)
 
-local ultraBtn=makeBtn(row2,"ULTRA 3D",Color3.fromRGB(82,58,135))
+local ultraBtn=makeBtn(row2,"ULTRA BLACK",Color3.fromRGB(82,58,135))
 ultraBtn.Size=UDim2.new(0.5,-5,1,0)
 ultraBtn.Position=UDim2.new(0.5,5,0,0)
 
@@ -1213,8 +1256,10 @@ end)
 
 ultraBtn.Activated:Connect(function()
 	ultraOptEnabled=not ultraOptEnabled
-	ultraBtn.Text=ultraOptEnabled and "ULTRA ON" or "ULTRA 3D"
+	ultraBtn.Text=ultraOptEnabled and "BLACK ON" or "ULTRA BLACK"
 	ultraBtn.BackgroundColor3=ultraOptEnabled and Color3.fromRGB(118,65,160) or Color3.fromRGB(82,58,135)
+
+	if blackBg then blackBg.Visible=ultraOptEnabled end
 
 	if ultraOptEnabled then
 		collectPunchRemotes()
@@ -1241,9 +1286,10 @@ stopBtn.Activated:Connect(function()
 	pauseBugTimer()
 	stopLock()
 	ultraOptEnabled=false
-	ultraBtn.Text="ULTRA 3D"
+	ultraBtn.Text="ULTRA BLACK"
 	ultraBtn.BackgroundColor3=Color3.fromRGB(82,58,135)
 	setLowMap(false,nil,nil)
+	if blackBg then blackBg.Visible=false end
 	setStatus("Остановлено • таймер сохранён")
 	hitBtn.Text="СТАРТ БАГА"
 	hitBtn.BackgroundColor3=Color3.fromRGB(30,125,72)
@@ -1263,6 +1309,7 @@ close.Activated:Connect(function()
 	stopHit()
 	stopLock()
 	setLowMap(false,nil,nil)
+	if blackBg then blackBg.Visible=false end
 	if bugTimerConn then bugTimerConn:Disconnect() bugTimerConn=nil end
 	if antiAfkConn then antiAfkConn:Disconnect() antiAfkConn=nil end
 	gui:Destroy()
@@ -1302,4 +1349,4 @@ local count=0
 for _,row in ipairs(ROCKS)do
 	if found[row.req]then count+=1 end
 end
-setStatus("Готово • "..count.."/"..#ROCKS.." • таймер 00:00")
+setStatus("Готово • "..count.."/"..#ROCKS.." • v19 fast black")
