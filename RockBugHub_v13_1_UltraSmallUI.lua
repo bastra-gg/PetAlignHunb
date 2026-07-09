@@ -1,11 +1,11 @@
--- Muscle Legends RockBug Hub v22 FAST SPAM
+-- Muscle Legends RockBug Hub v23 DIRECT NOCD
 -- Standalone: без Speed Hub. Камни через neededDurability + TP LOCK + BUG HIT + Anti AFK.
 
 local Players=game:GetService("Players")
 local RunService=game:GetService("RunService")
 local VirtualUser=game:GetService("VirtualUser")
 local lp=Players.LocalPlayer
-local HUB_VERSION="RockBugHub_v22_FastSpam"
+local HUB_VERSION="RockBugHub_v23_DirectNoCD"
 
 -- Anti AFK
 local antiAfkEnabled=true
@@ -24,7 +24,7 @@ startAntiAfk()
 
 -- Анти-дубль.
 pcall(function()
-	local old=lp:WaitForChild("PlayerGui"):FindFirstChild("RockBugHub_v22_FastSpam")
+	local old=lp:WaitForChild("PlayerGui"):FindFirstChild("RockBugHub_v23_DirectNoCD")
 	if old then old:Destroy() end
 end)
 
@@ -81,24 +81,25 @@ local oldAuto=nil
 local hitting=false
 local fastHitEnabled=false
 local ultraOptEnabled=false
-local fastHitPower=1 -- v22 FS: основной буст теперь через spam remote/tool/touch
+local fastHitPower=1 -- v23: direct no-cd hit attempts, не animation speed
 
--- v22 FAST SPAM: только ускорение ударов, остальное поведение v22 оставлено.
--- Если лагает/режет сервером — перед запуском можно поставить overrides:
--- _G.RockBugRemoteDelayOverride=0.035
--- _G.RockBugRemoteLoopsOverride=3
--- _G.RockBugActivateDelayOverride=0.04
--- _G.RockBugActivateBurstsOverride=2
--- _G.RockBugTouchDelayOverride=0.10
--- _G.RockBugHitDelayOverride=0.025
-if not _G.RockBugV22NoForceSpeed then
-	_G.RockBugRemoteDelay=tonumber(_G.RockBugRemoteDelayOverride) or 0.022
-	_G.RockBugRemoteLoops=tonumber(_G.RockBugRemoteLoopsOverride) or 5
-	_G.RockBugActivateDelay=tonumber(_G.RockBugActivateDelayOverride) or 0.022
-	_G.RockBugActivateBursts=tonumber(_G.RockBugActivateBurstsOverride) or 3
-	_G.RockBugTouchDelay=tonumber(_G.RockBugTouchDelayOverride) or 0.065
-	_G.RockBugTouchLoops=tonumber(_G.RockBugTouchLoopsOverride) or 2
-	_G.RockBugHitDelay=tonumber(_G.RockBugHitDelayOverride) or 0.014
+-- v23 DIRECT NOCD:
+-- Главный удар = прямой muscleEvent remote + touch по камню.
+-- Tool:Activate используется редко, только чтобы игра не потеряла Punch state.
+-- Дефолт безопасный: 12 hit cycles/sec.
+-- Overrides перед запуском:
+-- _G.RockBugHitRateOverride=10/12/15/18/20
+-- _G.RockBugRemoteLoopsOverride=1/2
+-- _G.RockBugTouchEveryOverride=2        -- touch раз в N циклов
+-- _G.RockBugActivateEveryOverride=12    -- Tool:Activate раз в N циклов
+if not _G.RockBugV23NoForceSpeed then
+	_G.RockBugHitRate=tonumber(_G.RockBugHitRateOverride) or 12
+	_G.RockBugRemoteLoops=tonumber(_G.RockBugRemoteLoopsOverride) or 1
+	_G.RockBugTouchLoops=tonumber(_G.RockBugTouchLoopsOverride) or 1
+	_G.RockBugTouchEvery=tonumber(_G.RockBugTouchEveryOverride) or 2
+	_G.RockBugActivateEvery=tonumber(_G.RockBugActivateEveryOverride) or 12
+	_G.RockBugActivateBursts=tonumber(_G.RockBugActivateBurstsOverride) or 1
+	_G.RockBugAnimSpeed=tonumber(_G.RockBugAnimSpeedOverride) or 1
 end
 
 local function root()
@@ -118,7 +119,7 @@ end
 -- v21 FIX: безопасный буст скорости анимации.
 -- В v20 ошибка была в том, что hum() вызывался ДО объявления функции.
 -- Здесь блок стоит после hum(), поэтому не должен крашить цикл.
-_G.RockBugAnimSpeed=tonumber(_G.RockBugAnimSpeedOverride) or 3.1
+_G.RockBugAnimSpeed=tonumber(_G.RockBugAnimSpeedOverride) or (_G.RockBugAnimSpeed or 1.35)
 _G.RockBugAnimBoostAll=(_G.RockBugAnimBoostAll==true)
 
 local animSpeedConn=nil
@@ -949,54 +950,73 @@ local function startHit(row,statusFn)
 	if hitConn then hitConn:Disconnect() hitConn=nil end
 
 	local tool=ensurePunchTool(statusFn)
-	local info=getRock(row)
-	startAnimSpeedBoost()
-
-	local lastTouch=0
-	local lastEquip=0
-	local lastActivate=0
-	local lastRemote=0
-
 	collectPunchRemotes()
 
+	local cycle=0
+	local lastEquip=0
+	local tickCount=0
+	local lastStat=os.clock()
+	local shownRate=0
+
 	task.spawn(function()
+		local nextHit=os.clock()
+
 		while hitting and myId==hitLoopId do
 			local now=os.clock()
 
-			if now-lastEquip>1.25 then
-				lastEquip=now
-				tool=ensurePunchTool(nil) or currentPunchTool()
-				startAnimSpeedBoost()
-			end
+			-- Ровный no-cd rate, без RenderStepped/Heartbeat и без 0 FPS.
+			local rate=math.clamp(tonumber(_G.RockBugHitRate or _G.RockBugHitRateOverride or 12)or 12,3,24)
+			local interval=1/rate
 
-			if now-lastRemote>=(_G.RockBugRemoteDelay or 0.022) then
-				lastRemote=now
+			if now>=nextHit then
+				nextHit+=interval
+				if nextHit<now-0.20 then
+					nextHit=now+interval
+				end
+
+				cycle+=1
+				tickCount+=1
+
+				-- Главное: remote hit attempt. Это не анимация.
 				firePunchRemoteSpam()
+
+				-- Touch нужен не каждый цикл, иначе лишняя нагрузка.
+				local touchEvery=math.clamp(tonumber(_G.RockBugTouchEvery or 2)or 2,1,10)
+				if cycle%touchEvery==0 then
+					spamTouchRock(row)
+				end
+
+				-- Tool:Activate редко, только для поддержки локального Punch state.
+				local activateEvery=math.clamp(tonumber(_G.RockBugActivateEvery or 12)or 12,2,60)
+				if cycle%activateEvery==0 then
+					tool=currentPunchTool() or tool
+					if tool and tool.Parent then
+						clearToolCooldowns(tool)
+						spamActivateTool(tool)
+					else
+						activateFistTool(nil)
+						tool=currentPunchTool()
+					end
+				end
 			end
 
-			if tool and tool.Parent and now-lastActivate>=(_G.RockBugActivateDelay or 0.022) then
-				lastActivate=now
-				spamActivateTool(tool)
-			elseif not tool or not tool.Parent then
-				activateFistTool(nil)
+			if now-lastEquip>=1.5 then
+				lastEquip=now
+				tool=ensurePunchTool(nil) or currentPunchTool() or tool
 			end
 
-			if now-lastTouch>=(_G.RockBugTouchDelay or 0.065) then
-				lastTouch=now
-				spamTouchRock(row)
+			if now-lastStat>=1 then
+				shownRate=tickCount/(now-lastStat)
+				tickCount=0
+				lastStat=now
 			end
 
-			if now-lastAnimBoost>0.25 then
-				lastAnimBoost=now
-				boostPunchAnimations()
-			end
-
-			task.wait(_G.RockBugHitDelay or 0.06)
+			task.wait(math.clamp(nextHit-os.clock(),0.01,0.04))
 		end
 	end)
 
 	if statusFn then
-		statusFn("БАГ КАМНЯ: FAST SPAM | remote x"..tostring(_G.RockBugRemoteLoops or 5).." | act x"..tostring(_G.RockBugActivateBursts or 3).." | anim x"..tostring(_G.RockBugAnimSpeed or 3.1)..(ultraOptEnabled and " | ULTRA ON" or "")..(selectedPunchToolName and (" | "..selectedPunchToolName) or ""))
+		statusFn("БАГ КАМНЯ: DIRECT NOCD | "..tostring(_G.RockBugHitRate or 12).."/s | remote main | touch /"..tostring(_G.RockBugTouchEvery or 2).." | act /"..tostring(_G.RockBugActivateEvery or 12)..(ultraOptEnabled and " | ULTRA ON" or "")..(selectedPunchToolName and (" | "..selectedPunchToolName) or ""))
 	end
 end
 
@@ -1013,7 +1033,7 @@ end
 
 -- UI v12: новый компактный дизайн без SCAN/COPY/лишних надписей
 local gui=Instance.new("ScreenGui")
-gui.Name="RockBugHub_v22_FastSpam"
+gui.Name="RockBugHub_v23_DirectNoCD"
 gui.ResetOnSpawn=false
 gui.IgnoreGuiInset=true
 gui.DisplayOrder=999999
@@ -1117,7 +1137,7 @@ local title=makeText(top,"BUG HUB",18,Enum.Font.GothamBlack,Color3.fromRGB(248,2
 title.Size=UDim2.new(1,-108,0,22)
 title.Position=UDim2.new(0,46,0,6)
 
-local sub=makeText(top,HUB_VERSION.." • FAST SPAM",10,Enum.Font.GothamBold,Color3.fromRGB(165,172,205))
+local sub=makeText(top,HUB_VERSION.." • DIRECT NOCD",10,Enum.Font.GothamBold,Color3.fromRGB(165,172,205))
 sub.Size=UDim2.new(1,-108,0,16)
 sub.Position=UDim2.new(0,47,0,26)
 
@@ -1132,7 +1152,7 @@ close.Position=UDim2.new(1,-33,0,9)
 close.TextSize=18
 close.TextColor3=Color3.fromRGB(255,210,218)
 
-local mini=makeBtn(gui,"BUG v22 FS",Color3.fromRGB(46,42,120))
+local mini=makeBtn(gui,"BUG v23 NC",Color3.fromRGB(46,42,120))
 mini.Size=UDim2.new(0,90,0,36)
 mini.Position=main.Position
 mini.Visible=false
