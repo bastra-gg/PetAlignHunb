@@ -1,11 +1,11 @@
--- Muscle Legends RockBug Hub v14 CLEAR TABS
+-- Muscle Legends RockBug Hub v15 MinecraftLevers
 -- Standalone: без Speed Hub. Камни через neededDurability + TP LOCK + BUG HIT + Anti AFK.
 
 local Players=game:GetService("Players")
 local RunService=game:GetService("RunService")
 local VirtualUser=game:GetService("VirtualUser")
 local lp=Players.LocalPlayer
-local HUB_VERSION="RockBugHub_v14_ClearTabs"
+local HUB_VERSION="RockBugHub_v15_MinecraftLevers"
 
 -- Anti AFK
 local antiAfkEnabled=true
@@ -22,11 +22,16 @@ local function startAntiAfk()
 end
 startAntiAfk()
 
--- Анти-дубль.
+-- Анти-дубль: сносит старые окна RockBugHub, чтобы не путаться.
 pcall(function()
-	local old=lp:WaitForChild("PlayerGui"):FindFirstChild("RockBugHub_v13_1_UltraSmallUI")
-	if old then old:Destroy() end
+	local pg=lp:WaitForChild("PlayerGui")
+	for _,g in ipairs(pg:GetChildren()) do
+		if g:IsA("ScreenGui") and tostring(g.Name):find("RockBugHub",1,true) then
+			g:Destroy()
+		end
+	end
 end)
+
 
 local ROCKS={
 	{id="AncientJungle",label="Древний лес",req=10000000,color=Color3.fromRGB(120,70,255)},
@@ -573,7 +578,6 @@ local function touchRock(row)
 		if p and p:IsA("BasePart")then
 			pcall(function()
 				firetouchinterest(p,target,0)
-				task.wait()
 				firetouchinterest(p,target,1)
 			end)
 		end
@@ -591,6 +595,12 @@ local function currentPunchTool()
 		end
 	end
 	return nil
+end
+
+
+local function collectPunchRemotes()
+	-- v15 fix: в старой сборке вызов был, функции не было, поэтому MAX PUNCH мог падать до запуска.
+	return {}
 end
 
 local function startHit(row,statusFn)
@@ -671,20 +681,69 @@ local function stopHit(statusFn)
 	hitLoopId+=1
 	if hitConn then hitConn:Disconnect() hitConn=nil end
 	setLowMap(false,nil,nil)
-	if statusFn then statusFn("BUG HIT: остановлен")end
+	if statusFn then statusFn("MAX PUNCH: OFF")end
 end
 
 
--- AUTO TRAIN: не только punch, а любые тренировочные инструменты.
-local function trainToolScore(tool)
+
+-- AUTO TRAIN v15: отдельные рычаги под каждый вид.
+local trainLoops={}
+local trainLocks={}
+local trainPosConn=nil
+local trainPosCF=nil
+local selectedTrainId=nil
+
+local TRAIN_TYPES={
+	{
+		id="Punch",
+		label="PUNCH",
+		desc="удары / сила",
+		words={"punch","fist","combat","кулак","удар"},
+		remote="punch"
+	},
+	{
+		id="Weight",
+		label="WEIGHT",
+		desc="вес / гантели / штанга",
+		words={"weight","dumb","dumbbell","barbell","bench","вес","гант","штанг","гир"},
+		remote="weight"
+	},
+	{
+		id="Push",
+		label="PUSH",
+		desc="отжимания",
+		words={"push","pushup","push-up","отжим"},
+		remote="push"
+	},
+	{
+		id="Sit",
+		label="SIT",
+		desc="пресс / situps",
+		words={"sit","situp","sit-up","abs","пресс"},
+		remote="sit"
+	},
+	{
+		id="Hand",
+		label="HAND",
+		desc="стойка на руках",
+		words={"handstand","hand stand","hand","стойк"},
+		remote="handstand"
+	},
+	{
+		id="Tread",
+		label="TREAD",
+		desc="бег / treadmill / agility",
+		words={"tread","treadmill","run","agility","speed","бег","дорож","ловк","скор"},
+		remote="treadmill"
+	},
+}
+
+local function scoreToolForType(tool,t)
 	if not tool or not tool:IsA("Tool") then return -999 end
 
 	local n=tostring(tool.Name):lower()
 	local full=""
 	pcall(function() full=tostring(tool:GetFullName()):lower() end)
-
-	-- Punch оставляем для вкладки БАГ, а КАЧ берёт веса/тренировки.
-	if toolScore(tool)>0 then return -999 end
 
 	local bad={"pet","aura","crystal","shop","trade","gift","pack","code","reward","пет","питом","крист","магаз","обмен"}
 	for _,w in ipairs(bad) do
@@ -692,27 +751,22 @@ local function trainToolScore(tool)
 	end
 
 	local score=0
-	local good={
-		{"weight",120},{"dumb",115},{"barbell",115},{"bench",100},
-		{"push",95},{"sit",90},{"handstand",90},{"pull",85},
-		{"tread",80},{"agility",70},{"durability",70},{"strength",70},
-		{"гант",120},{"штанг",115},{"гир",110},{"вес",100},
-		{"отжим",95},{"пресс",90},{"бег",80},{"сила",70}
-	}
-
-	for _,pair in ipairs(good) do
-		if n:find(pair[1],1,true) or full:find(pair[1],1,true) then
-			score=math.max(score,pair[2])
-		end
+	for _,w in ipairs(t.words) do
+		w=tostring(w):lower()
+		if n:find(w,1,true) then score=math.max(score,200) end
+		if full:find(w,1,true) then score=math.max(score,160) end
 	end
 
-	-- Если это Tool и не Punch/не мусор — даём запасной шанс.
-	if score<=0 then score=10 end
+	-- Punch для бага/кач-удара.
+	if t.id=="Punch" and toolScore(tool)>0 then
+		score=math.max(score,260)
+	end
 
+	if score<=0 then return -999 end
 	return score
 end
 
-local function findBestTrainTool()
+local function findToolForType(t)
 	local c=lp.Character
 	local bp=lp:FindFirstChildOfClass("Backpack")
 	local best=nil
@@ -722,7 +776,7 @@ local function findBestTrainTool()
 		if not container then return end
 		for _,tool in ipairs(container:GetChildren()) do
 			if tool:IsA("Tool") then
-				local sc=trainToolScore(tool)+bonus
+				local sc=scoreToolForType(tool,t)+bonus
 				if sc>bestScore then
 					bestScore=sc
 					best=tool
@@ -731,129 +785,197 @@ local function findBestTrainTool()
 		end
 	end
 
-	scan(c,20)
+	scan(c,30)
 	scan(bp,0)
 
 	if bestScore<=0 then return nil end
 	return best,bestScore
 end
 
-local function ensureTrainTool(statusFn)
+local function equipTrainTool(t,statusFn)
 	local c=lp.Character
 	local h=hum()
 	if not c or not h then return nil end
 
 	for _,tool in ipairs(c:GetChildren()) do
-		if tool:IsA("Tool") and trainToolScore(tool)>0 then
-			selectedTrainToolName=tool.Name
+		if tool:IsA("Tool") and scoreToolForType(tool,t)>0 then
+			selectedTrainId=t.id
 			return tool
 		end
 	end
 
-	local best=findBestTrainTool()
+	local best=findToolForType(t)
 	if best and best.Parent~=c then
+		pcall(function() h:UnequipTools() end)
+		task.wait(0.04)
 		pcall(function() h:EquipTool(best) end)
 		task.wait(0.06)
 	end
 
 	if best then
+		selectedTrainId=t.id
 		clearToolCooldowns(best)
-		selectedTrainToolName=best.Name
-		if statusFn then statusFn("КАЧ: выбран "..best.Name) end
+		if statusFn then statusFn("КАЧ "..t.label..": выбран "..best.Name) end
 		return best
 	end
 
-	if statusFn then statusFn("КАЧ: Tool не найден") end
+	if statusFn then statusFn("КАЧ "..t.label..": Tool не найден") end
 	return nil
 end
 
-local function fireTrainRemoteSpam()
-	if _G.RockBugAutoTrainUseRemote==false then return end
-
-	local loops=math.clamp(tonumber(_G.RockBugAutoTrainRemoteLoops or 2)or 2,0,12)
+local function fireTrainRemote(t)
+	local loops=math.clamp(tonumber(_G.RockBugTrainRemoteLoops or _G.RockBugAutoTrainRemoteLoops or 2)or 2,0,14)
 	if loops<=0 then return end
 
-	local function fireOne(ev)
+	local function send(ev)
 		if not ev or not ev.FireServer then return end
-		pcall(function()
-			ev:FireServer("rep")
-			ev:FireServer("train")
-			ev:FireServer("strength")
-			ev:FireServer("weight")
-		end)
+
+		if t.remote=="punch" then
+			pcall(function()
+				ev:FireServer("punch","rightHand")
+				ev:FireServer("punch","leftHand")
+				ev:FireServer("punch")
+			end)
+		else
+			pcall(function()
+				ev:FireServer("rep")
+				ev:FireServer("train")
+				ev:FireServer(t.remote)
+				ev:FireServer(t.id)
+			end)
+		end
 	end
 
 	for _=1,loops do
 		pcall(function()
-			if lp:FindFirstChild("muscleEvent") then fireOne(lp.muscleEvent) end
+			if lp:FindFirstChild("muscleEvent") then
+				send(lp.muscleEvent)
+			end
 		end)
 
 		pcall(function()
 			local rs=game:GetService("ReplicatedStorage")
 			local re=rs:FindFirstChild("rEvents")
 			local ev=re and re:FindFirstChild("muscleEvent")
-			fireOne(ev)
+			send(ev)
 		end)
 	end
 end
 
-local function startAutoTrain(statusFn)
-	autoTrainEnabled=true
-	autoTrainLoopId+=1
-	local myId=autoTrainLoopId
+local function stopTrainType(id,statusFn)
+	local state=trainLoops[id]
+	if state then
+		state.on=false
+		state.token+=1
+	end
+	trainLoops[id]=nil
+	if statusFn then statusFn("КАЧ "..id..": OFF") end
+end
+
+local function stopAllTrain(statusFn)
+	for id,_ in pairs(trainLoops) do
+		stopTrainType(id,nil)
+	end
+	if statusFn then statusFn("КАЧ: всё OFF") end
+end
+
+local function startTrainType(t,statusFn)
+	-- Один вид за раз, иначе инструменты будут переодевать друг друга.
+	stopAllTrain(nil)
+
+	local state={on=true,token=0}
+	trainLoops[t.id]=state
 
 	task.spawn(function()
-		local tool=ensureTrainTool(statusFn)
+		local my=state.token
+		local tool=equipTrainTool(t,statusFn)
 		local nextRep=os.clock()
 		local lastEquip=0
 
-		while autoTrainEnabled and myId==autoTrainLoopId do
+		while state.on and state.token==my do
 			local now=os.clock()
-			local rate=math.clamp(tonumber(_G.RockBugAutoTrainRate or 35)or 35,3,120)
+			local rate=math.clamp(tonumber(_G.RockBugTrainRate or _G.RockBugAutoTrainRate or 35)or 35,3,160)
 			local interval=1/rate
 
 			if now>=nextRep then
 				nextRep+=interval
 				if nextRep<now-0.15 then nextRep=now+interval end
 
-				tool=tool or ensureTrainTool(nil)
+				tool=tool or equipTrainTool(t,nil)
 
 				if tool and tool.Parent then
 					clearToolCooldowns(tool)
-					local bursts=math.clamp(tonumber(_G.RockBugAutoTrainActivateBursts or 2)or 2,1,10)
+					local bursts=math.clamp(tonumber(_G.RockBugTrainActivateBursts or _G.RockBugAutoTrainActivateBursts or 2)or 2,1,14)
 					for _=1,bursts do
 						pcall(function() tool:Activate() end)
 					end
 				end
 
-				fireTrainRemoteSpam()
+				fireTrainRemote(t)
 			end
 
-			if now-lastEquip>=1.1 then
+			if now-lastEquip>=1.0 then
 				lastEquip=now
-				tool=ensureTrainTool(nil) or tool
+				tool=equipTrainTool(t,nil) or tool
 			end
 
-			task.wait(math.clamp(nextRep-os.clock(),0,0.02))
+			task.wait(math.clamp(nextRep-os.clock(),0,0.018))
 		end
 	end)
 
 	if statusFn then
-		statusFn("АВТО КАЧ: ON | "..tostring(_G.RockBugAutoTrainRate or 35).."/s"..(selectedTrainToolName and (" | "..selectedTrainToolName) or ""))
+		statusFn("КАЧ "..t.label..": ON | "..tostring(_G.RockBugTrainRate or _G.RockBugAutoTrainRate or 35).."/s")
 	end
 end
 
-local function stopAutoTrain(statusFn)
-	autoTrainEnabled=false
-	autoTrainLoopId+=1
-	if statusFn then statusFn("АВТО КАЧ: OFF") end
+local function startTrainPositionLock(statusFn)
+	if trainPosConn then trainPosConn:Disconnect() trainPosConn=nil end
+
+	local r=root()
+	if not r then
+		if statusFn then statusFn("LOCK POS: нет root") end
+		return false
+	end
+
+	trainPosCF=r.CFrame
+
+	local h=hum()
+	if h then
+		pcall(function()
+			h.AutoRotate=false
+		end)
+	end
+
+	trainPosConn=RunService.Heartbeat:Connect(function()
+		local rr=root()
+		if rr and trainPosCF then
+			rr.CFrame=trainPosCF
+			rr.AssemblyLinearVelocity=Vector3.zero
+			rr.AssemblyAngularVelocity=Vector3.zero
+		end
+	end)
+
+	if statusFn then statusFn("LOCK POS: ON") end
+	return true
 end
 
+local function stopTrainPositionLock(statusFn)
+	if trainPosConn then trainPosConn:Disconnect() trainPosConn=nil end
+	trainPosCF=nil
 
+	local h=hum()
+	if h then
+		pcall(function()
+			h.AutoRotate=true
+		end)
+	end
 
--- UI v14 CLEAR TABS: большой переход между вкладками, без скрытых мелких кнопок
+	if statusFn then statusFn("LOCK POS: OFF") end
+end
+
+-- UI v15: большие вкладки + minecraft-style рычаги.
 local gui=Instance.new("ScreenGui")
-gui.Name="RockBugHub_v14_ClearTabs"
+gui.Name="RockBugHub_v15_MinecraftLevers"
 gui.ResetOnSpawn=false
 gui.IgnoreGuiInset=true
 gui.DisplayOrder=999999
@@ -877,7 +999,7 @@ local function stroke(o,col,t,trans)
 	return s
 end
 
-local function label(parent,text,size,font,color)
+local function makeText(parent,text,size,font,color)
 	local l=Instance.new("TextLabel")
 	l.Parent=parent
 	l.BackgroundTransparency=1
@@ -891,13 +1013,13 @@ local function label(parent,text,size,font,color)
 	return l
 end
 
-local function button(parent,text,color)
+local function makeBtn(parent,text,color)
 	local b=Instance.new("TextButton")
 	b.Parent=parent
 	b.Text=text
 	b.TextColor3=Color3.fromRGB(238,241,255)
 	b.BackgroundColor3=color
-	b.BackgroundTransparency=0.05
+	b.BackgroundTransparency=0.06
 	b.BorderSizePixel=0
 	b.AutoButtonColor=true
 	b.Font=Enum.Font.GothamBlack
@@ -909,14 +1031,14 @@ end
 
 local main=Instance.new("Frame")
 main.Parent=gui
-main.Size=UDim2.new(0,326,0,462)
-main.Position=UDim2.new(0,10,0,58)
+main.Size=UDim2.new(0,350,0,500)
+main.Position=UDim2.new(0,10,0,54)
 main.BackgroundColor3=Color3.fromRGB(8,10,18)
 main.BackgroundTransparency=0.08
 main.BorderSizePixel=0
 main.Active=true
 corner(main,22)
-stroke(main,Color3.fromRGB(95,85,180),1.4,0.18)
+stroke(main,Color3.fromRGB(95,85,180),1.4,0.2)
 
 local top=Instance.new("Frame")
 top.Parent=main
@@ -928,70 +1050,52 @@ top.BorderSizePixel=0
 corner(top,18)
 stroke(top,Color3.fromRGB(70,68,130),1,0.45)
 
-local title=label(top,"BUG HUB v14",18,Enum.Font.GothamBlack,Color3.fromRGB(248,249,255))
-title.Size=UDim2.new(1,-95,0,22)
-title.Position=UDim2.new(0,12,0,5)
+local title=makeText(top,"BUG HUB v15",18,Enum.Font.GothamBlack,Color3.fromRGB(248,249,255))
+title.Size=UDim2.new(1,-96,0,22)
+title.Position=UDim2.new(0,14,0,6)
 
-local sub=label(top,"большие вкладки сверху",10,Enum.Font.GothamBold,Color3.fromRGB(165,172,205))
-sub.Size=UDim2.new(1,-95,0,16)
-sub.Position=UDim2.new(0,13,0,26)
+local sub=makeText(top,"рычаги • вкладки • auto equip",10,Enum.Font.GothamBold,Color3.fromRGB(165,172,205))
+sub.Size=UDim2.new(1,-96,0,16)
+sub.Position=UDim2.new(0,15,0,26)
 
-local min=button(top,"−",Color3.fromRGB(42,39,78))
+local min=makeBtn(top,"−",Color3.fromRGB(42,39,78))
 min.Size=UDim2.new(0,29,0,29)
 min.Position=UDim2.new(1,-66,0,9)
 min.TextSize=18
 
-local close=button(top,"×",Color3.fromRGB(78,28,42))
+local close=makeBtn(top,"×",Color3.fromRGB(78,28,42))
 close.Size=UDim2.new(0,29,0,29)
 close.Position=UDim2.new(1,-33,0,9)
 close.TextSize=18
 close.TextColor3=Color3.fromRGB(255,210,218)
 
-local mini=button(gui,"BUG HUB v14",Color3.fromRGB(46,42,120))
-mini.Size=UDim2.new(0,98,0,36)
+local mini=makeBtn(gui,"BUG v15",Color3.fromRGB(46,42,120))
+mini.Size=UDim2.new(0,90,0,36)
 mini.Position=main.Position
 mini.Visible=false
-mini.TextSize=10
+mini.TextSize=11
 
--- Самый заметный переход между вкладками
-local tabHint=label(main,"ВЫБЕРИ РЕЖИМ:",10,Enum.Font.GothamBlack,Color3.fromRGB(150,160,200))
-tabHint.Size=UDim2.new(1,-18,0,14)
-tabHint.Position=UDim2.new(0,9,0,58)
-tabHint.TextXAlignment=Enum.TextXAlignment.Center
+local tabs=Instance.new("Frame")
+tabs.Parent=main
+tabs.Size=UDim2.new(1,-14,0,52)
+tabs.Position=UDim2.new(0,7,0,58)
+tabs.BackgroundTransparency=1
 
-local tabFrame=Instance.new("Frame")
-tabFrame.Parent=main
-tabFrame.Size=UDim2.new(1,-14,0,54)
-tabFrame.Position=UDim2.new(0,7,0,74)
-tabFrame.BackgroundTransparency=1
-
-local tabBug=button(tabFrame,"🪨 БАГ\nкамень",Color3.fromRGB(65,75,145))
-tabBug.Size=UDim2.new(0.5,-5,1,0)
+local tabBug=makeBtn(tabs,"⬅ ВКЛАДКА БАГ",Color3.fromRGB(45,145,95))
+tabBug.Size=UDim2.new(0.5,-4,1,0)
 tabBug.Position=UDim2.new(0,0,0,0)
-tabBug.TextSize=13
-tabBug.TextWrapped=true
+tabBug.TextSize=15
 
-local tabTrain=button(tabFrame,"💪 КАЧ\nавто треня",Color3.fromRGB(28,42,68))
-tabTrain.Size=UDim2.new(0.5,-5,1,0)
-tabTrain.Position=UDim2.new(0.5,5,0,0)
-tabTrain.TextSize=13
-tabTrain.TextWrapped=true
+local tabTrain=makeBtn(tabs,"ВКЛАДКА КАЧ ➜",Color3.fromRGB(32,42,65))
+tabTrain.Size=UDim2.new(0.5,-4,1,0)
+tabTrain.Position=UDim2.new(0.5,4,0,0)
+tabTrain.TextSize=15
 
-local modeTitle=label(main,"РЕЖИМ: БАГ КАМНЯ",13,Enum.Font.GothamBlack,Color3.fromRGB(255,238,185))
-modeTitle.Size=UDim2.new(1,-14,0,24)
-modeTitle.Position=UDim2.new(0,7,0,134)
-modeTitle.BackgroundColor3=Color3.fromRGB(13,15,30)
-modeTitle.BackgroundTransparency=0.10
-modeTitle.BorderSizePixel=0
-modeTitle.TextXAlignment=Enum.TextXAlignment.Center
-corner(modeTitle,12)
-stroke(modeTitle,Color3.fromRGB(60,58,110),1,0.50)
-
-local status=label(main,"Готово",11,Enum.Font.GothamBold,Color3.fromRGB(210,216,245))
+local status=makeText(main,"Вкладки сверху: БАГ / КАЧ",11,Enum.Font.GothamBold,Color3.fromRGB(210,216,245))
 status.Size=UDim2.new(1,-14,0,30)
-status.Position=UDim2.new(0,7,0,424)
+status.Position=UDim2.new(0,7,0,118)
 status.BackgroundColor3=Color3.fromRGB(9,11,24)
-status.BackgroundTransparency=0.20
+status.BackgroundTransparency=0.18
 status.BorderSizePixel=0
 status.TextXAlignment=Enum.TextXAlignment.Center
 corner(status,13)
@@ -1003,8 +1107,8 @@ end
 
 local pageBug=Instance.new("Frame")
 pageBug.Parent=main
-pageBug.Size=UDim2.new(1,-14,0,254)
-pageBug.Position=UDim2.new(0,7,0,164)
+pageBug.Size=UDim2.new(1,-14,0,332)
+pageBug.Position=UDim2.new(0,7,0,156)
 pageBug.BackgroundTransparency=1
 
 local pageTrain=Instance.new("Frame")
@@ -1014,26 +1118,124 @@ pageTrain.Position=pageBug.Position
 pageTrain.BackgroundTransparency=1
 pageTrain.Visible=false
 
-local function setMode(mode)
-	local isBug=mode=="bug"
-	pageBug.Visible=isBug
-	pageTrain.Visible=not isBug
+local versionText=makeText(main,HUB_VERSION.." • levers",9,Enum.Font.GothamBlack,Color3.fromRGB(150,158,190))
+versionText.Size=UDim2.new(1,-18,0,12)
+versionText.Position=UDim2.new(0,9,0,486)
+versionText.TextXAlignment=Enum.TextXAlignment.Center
 
-	tabBug.BackgroundColor3=isBug and Color3.fromRGB(65,75,145) or Color3.fromRGB(28,42,68)
-	tabTrain.BackgroundColor3=(not isBug) and Color3.fromRGB(65,75,145) or Color3.fromRGB(28,42,68)
-
-	tabBug.TextColor3=isBug and Color3.fromRGB(255,245,210) or Color3.fromRGB(200,208,235)
-	tabTrain.TextColor3=(not isBug) and Color3.fromRGB(255,245,210) or Color3.fromRGB(200,208,235)
-
-	modeTitle.Text=isBug and "РЕЖИМ: БАГ КАМНЯ" or "РЕЖИМ: АВТО КАЧАНИЕ"
-	modeTitle.TextColor3=isBug and Color3.fromRGB(255,238,185) or Color3.fromRGB(175,255,205)
-	setStatus(isBug and "Вкладка БАГ" or "Вкладка КАЧ")
+local function showTab(name)
+	local bug=name=="bug"
+	pageBug.Visible=bug
+	pageTrain.Visible=not bug
+	tabBug.BackgroundColor3=bug and Color3.fromRGB(45,145,95) or Color3.fromRGB(32,42,65)
+	tabTrain.BackgroundColor3=(not bug) and Color3.fromRGB(45,145,95) or Color3.fromRGB(32,42,65)
+	setStatus(bug and "Вкладка БАГ" or "Вкладка КАЧ")
 end
 
-tabBug.Activated:Connect(function() setMode("bug") end)
-tabTrain.Activated:Connect(function() setMode("train") end)
+tabBug.Activated:Connect(function() showTab("bug") end)
+tabTrain.Activated:Connect(function() showTab("train") end)
 
--- ВКЛАДКА БАГ
+local function makeLever(parent,label,desc,y,initial,callback)
+	local row=Instance.new("TextButton")
+	row.Parent=parent
+	row.Size=UDim2.new(1,0,0,46)
+	row.Position=UDim2.new(0,0,0,y)
+	row.Text=""
+	row.AutoButtonColor=false
+	row.BackgroundColor3=Color3.fromRGB(14,16,31)
+	row.BackgroundTransparency=0.08
+	row.BorderSizePixel=0
+	corner(row,15)
+	stroke(row,Color3.fromRGB(52,52,95),1,0.55)
+
+	local t=makeText(row,label,13,Enum.Font.GothamBlack,Color3.fromRGB(235,238,255))
+	t.Size=UDim2.new(1,-104,0,18)
+	t.Position=UDim2.new(0,12,0,5)
+
+	local d=makeText(row,desc or "",9,Enum.Font.GothamBold,Color3.fromRGB(142,150,183))
+	d.Size=UDim2.new(1,-104,0,17)
+	d.Position=UDim2.new(0,12,0,25)
+
+	-- Minecraft-like custom lever: база + ручка, не обычная кнопка ON/OFF.
+	local base=Instance.new("Frame")
+	base.Parent=row
+	base.Size=UDim2.new(0,74,0,26)
+	base.Position=UDim2.new(1,-86,0,10)
+	base.BackgroundColor3=Color3.fromRGB(42,44,54)
+	base.BorderSizePixel=0
+	corner(base,8)
+	stroke(base,Color3.fromRGB(95,95,110),1,0.35)
+
+	local slot=Instance.new("Frame")
+	slot.Parent=base
+	slot.Size=UDim2.new(1,-16,0,6)
+	slot.Position=UDim2.new(0,8,0,10)
+	slot.BackgroundColor3=Color3.fromRGB(20,21,28)
+	slot.BorderSizePixel=0
+	corner(slot,4)
+
+	local handle=Instance.new("Frame")
+	handle.Parent=base
+	handle.Size=UDim2.new(0,12,0,32)
+	handle.Position=UDim2.new(0,14,0,-3)
+	handle.BackgroundColor3=Color3.fromRGB(139,92,46)
+	handle.BorderSizePixel=0
+	handle.Rotation=26
+	corner(handle,4)
+	stroke(handle,Color3.fromRGB(230,170,80),1,0.2)
+
+	local head=Instance.new("Frame")
+	head.Parent=handle
+	head.Size=UDim2.new(0,20,0,12)
+	head.Position=UDim2.new(0.5,-10,0,-7)
+	head.BackgroundColor3=Color3.fromRGB(188,125,55)
+	head.BorderSizePixel=0
+	corner(head,5)
+
+	local light=Instance.new("Frame")
+	light.Parent=base
+	light.Size=UDim2.new(0,8,0,8)
+	light.Position=UDim2.new(1,-13,0,9)
+	light.BorderSizePixel=0
+	corner(light,4)
+
+	local state=initial and true or false
+	local obj={}
+
+	local function paint()
+		if state then
+			base.BackgroundColor3=Color3.fromRGB(28,74,47)
+			light.BackgroundColor3=Color3.fromRGB(85,255,135)
+			handle.Position=UDim2.new(1,-26,0,-3)
+			handle.Rotation=-26
+			row.BackgroundColor3=Color3.fromRGB(13,32,24)
+		else
+			base.BackgroundColor3=Color3.fromRGB(62,39,45)
+			light.BackgroundColor3=Color3.fromRGB(255,85,105)
+			handle.Position=UDim2.new(0,14,0,-3)
+			handle.Rotation=26
+			row.BackgroundColor3=Color3.fromRGB(14,16,31)
+		end
+	end
+
+	function obj.Set(v,silent)
+		state=v and true or false
+		paint()
+		if callback and not silent then callback(state,obj) end
+	end
+
+	function obj.Get()
+		return state
+	end
+
+	row.Activated:Connect(function()
+		obj.Set(not state,false)
+	end)
+
+	paint()
+	return obj
+end
+
 local selectedCard=Instance.new("Frame")
 selectedCard.Parent=pageBug
 selectedCard.Size=UDim2.new(1,0,0,44)
@@ -1044,17 +1246,17 @@ selectedCard.BorderSizePixel=0
 corner(selectedCard,18)
 stroke(selectedCard,Color3.fromRGB(65,62,120),1,0.45)
 
-local selectedSmall=label(selectedCard,"ВЫБРАННЫЙ КАМЕНЬ",9,Enum.Font.GothamBlack,Color3.fromRGB(135,145,180))
-selectedSmall.Size=UDim2.new(1,-24,0,14)
-selectedSmall.Position=UDim2.new(0,10,0,5)
+local selectedLabel=makeText(selectedCard,"ВЫБРАНО",9,Enum.Font.GothamBlack,Color3.fromRGB(135,145,180))
+selectedLabel.Size=UDim2.new(1,-24,0,14)
+selectedLabel.Position=UDim2.new(0,10,0,5)
 
-local selectedName=label(selectedCard,"-",17,Enum.Font.GothamBlack,Color3.fromRGB(255,238,185))
+local selectedName=makeText(selectedCard,"-",17,Enum.Font.GothamBlack,Color3.fromRGB(255,238,185))
 selectedName.Size=UDim2.new(1,-20,0,24)
 selectedName.Position=UDim2.new(0,10,0,18)
 
 local list=Instance.new("ScrollingFrame")
 list.Parent=pageBug
-list.Size=UDim2.new(1,0,0,106)
+list.Size=UDim2.new(1,0,0,112)
 list.Position=UDim2.new(0,0,0,52)
 list.BackgroundColor3=Color3.fromRGB(7,8,17)
 list.BackgroundTransparency=0.18
@@ -1101,7 +1303,7 @@ local function refreshButtons()
 		local card=Instance.new("TextButton")
 		card.Parent=list
 		card.Name="Rock_"..row.id
-		card.Size=UDim2.new(1,-4,0,38)
+		card.Size=UDim2.new(1,-4,0,36)
 		card.LayoutOrder=i
 		card.Text=""
 		card.AutoButtonColor=true
@@ -1111,25 +1313,17 @@ local function refreshButtons()
 		corner(card,15)
 		stroke(card,active and Color3.fromRGB(145,120,255) or Color3.fromRGB(52,52,95),active and 1.4 or 1,active and 0.08 or 0.45)
 
-		local bar=Instance.new("Frame")
-		bar.Parent=card
-		bar.Size=UDim2.new(0,4,1,-12)
-		bar.Position=UDim2.new(0,8,0,6)
-		bar.BackgroundColor3=info and row.color or Color3.fromRGB(75,78,100)
-		bar.BorderSizePixel=0
-		corner(bar,6)
-
-		local name=label(card,row.label,12,Enum.Font.GothamBlack,active and Color3.fromRGB(255,240,190) or Color3.fromRGB(230,234,255))
+		local name=makeText(card,row.label,12,Enum.Font.GothamBlack,active and Color3.fromRGB(255,240,190) or Color3.fromRGB(230,234,255))
 		name.Size=UDim2.new(1,-62,0,17)
-		name.Position=UDim2.new(0,20,0,4)
+		name.Position=UDim2.new(0,14,0,4)
 
-		local meta=label(card,"req "..tostring(row.req),10,Enum.Font.GothamBold,Color3.fromRGB(145,153,185))
+		local meta=makeText(card,"req "..tostring(row.req),10,Enum.Font.GothamBold,Color3.fromRGB(145,153,185))
 		meta.Size=UDim2.new(1,-72,0,16)
-		meta.Position=UDim2.new(0,20,0,21)
+		meta.Position=UDim2.new(0,14,0,20)
 
-		local ok=label(card,info and "найден" or "нет",10,Enum.Font.GothamBlack,info and Color3.fromRGB(100,255,160) or Color3.fromRGB(150,150,170))
+		local ok=makeText(card,info and "найден" or "нет",10,Enum.Font.GothamBlack,info and Color3.fromRGB(100,255,160) or Color3.fromRGB(150,150,170))
 		ok.Size=UDim2.new(0,46,0,20)
-		ok.Position=UDim2.new(1,-54,0,9)
+		ok.Position=UDim2.new(1,-54,0,8)
 		ok.TextXAlignment=Enum.TextXAlignment.Center
 		ok.BackgroundColor3=info and Color3.fromRGB(15,55,34) or Color3.fromRGB(36,36,48)
 		ok.BackgroundTransparency=0.12
@@ -1139,94 +1333,24 @@ local function refreshButtons()
 			selected=row
 			updateSelected()
 			refreshButtons()
-			if ultraOptEnabled then
-				setLowMap(false,nil,nil)
-				local old=_G.RockBugLowMapTransparency
-				_G.RockBugLowMapTransparency=1
-				local info=getRock(selected)
-				setLowMap(true,info and info.model,nil)
-				_G.RockBugLowMapTransparency=old
-			end
 			setStatus("Камень: "..row.label)
 		end)
 
 		table.insert(buttons,card)
 	end
 
-	list.CanvasSize=UDim2.new(0,0,0,#ROCKS*45+16)
+	list.CanvasSize=UDim2.new(0,0,0,#ROCKS*43+16)
 	updateSelected()
 end
 
-local function makeSwitch(parent,labelText,desc,y,initial,callback)
-	local row=Instance.new("Frame")
-	row.Parent=parent
-	row.Size=UDim2.new(1,0,0,40)
-	row.Position=UDim2.new(0,0,0,y)
-	row.BackgroundColor3=Color3.fromRGB(14,16,31)
-	row.BackgroundTransparency=0.08
-	row.BorderSizePixel=0
-	corner(row,15)
-	stroke(row,Color3.fromRGB(52,52,95),1,0.55)
+local lockLever
+local bugLever
+local ultraLever
+local afkLever
+local posLever
+local trainLevers={}
 
-	local t=label(row,labelText,12,Enum.Font.GothamBlack,Color3.fromRGB(235,238,255))
-	t.Size=UDim2.new(1,-98,0,18)
-	t.Position=UDim2.new(0,12,0,3)
-
-	local d=label(row,desc or "",9,Enum.Font.GothamBold,Color3.fromRGB(142,150,183))
-	d.Size=UDim2.new(1,-100,0,17)
-	d.Position=UDim2.new(0,12,0,20)
-
-	local sw=Instance.new("TextButton")
-	sw.Parent=row
-	sw.Size=UDim2.new(0,72,0,26)
-	sw.Position=UDim2.new(1,-82,0,7)
-	sw.BorderSizePixel=0
-	sw.AutoButtonColor=true
-	sw.Font=Enum.Font.GothamBlack
-	sw.TextSize=10
-	corner(sw,13)
-
-	local state=initial and true or false
-	local obj={}
-
-	local function paint()
-		sw.Text=state and "ON" or "OFF"
-		sw.TextColor3=state and Color3.fromRGB(230,255,236) or Color3.fromRGB(235,238,255)
-		sw.BackgroundColor3=state and Color3.fromRGB(30,135,72) or Color3.fromRGB(70,44,55)
-	end
-
-	function obj.Set(v,silent)
-		state=v and true or false
-		paint()
-		if callback and not silent then callback(state,obj) end
-	end
-
-	function obj.Get()
-		return state
-	end
-
-	sw.Activated:Connect(function()
-		obj.Set(not state,false)
-	end)
-
-	row.InputBegan:Connect(function(input)
-		if input.UserInputType==Enum.UserInputType.Touch then
-			obj.Set(not state,false)
-		end
-	end)
-
-	paint()
-	return obj
-end
-
-local lockSw
-local bugSw
-local ultraSw
-local afkSw
-local trainSw
-local trainRemoteSw
-
-lockSw=makeSwitch(pageBug,"TP LOCK","держать персонажа в камне",166,false,function(on,self)
+lockLever=makeLever(pageBug,"TP LOCK","держать внутри камня",172,false,function(on,self)
 	if on then
 		local ok,res=tpInsideRock(selected)
 		if ok then
@@ -1241,7 +1365,7 @@ lockSw=makeSwitch(pageBug,"TP LOCK","держать персонажа в кам
 	end
 end)
 
-bugSw=makeSwitch(pageBug,"MAX PUNCH","максимальные удары по камню",210,false,function(on,self)
+bugLever=makeLever(pageBug,"MAX PUNCH","исправлено: без ошибки collectPunchRemotes",224,false,function(on,self)
 	if on then
 		local ok,msg=tpInsideRock(selected)
 		if not ok then
@@ -1255,31 +1379,28 @@ bugSw=makeSwitch(pageBug,"MAX PUNCH","максимальные удары по �
 	end
 end)
 
--- ВКЛАДКА КАЧ
-local trainInfo=label(pageTrain,"Тут не камень. Это авто качание тренировочным Tool: weight / dumbbell / barbell / bench / push и т.д.",10,Enum.Font.GothamBold,Color3.fromRGB(180,190,225))
-trainInfo.Size=UDim2.new(1,0,0,38)
-trainInfo.Position=UDim2.new(0,0,0,0)
-trainInfo.BackgroundColor3=Color3.fromRGB(13,15,30)
-trainInfo.BackgroundTransparency=0.10
-trainInfo.BorderSizePixel=0
-trainInfo.TextXAlignment=Enum.TextXAlignment.Center
-corner(trainInfo,14)
-stroke(trainInfo,Color3.fromRGB(55,60,110),1,0.50)
+local jumpTrain=makeBtn(pageBug,"ПЕРЕЙТИ В КАЧ ➜",Color3.fromRGB(45,95,145))
+jumpTrain.Size=UDim2.new(1,0,0,30)
+jumpTrain.Position=UDim2.new(0,0,0,282)
+jumpTrain.TextSize=13
+jumpTrain.Activated:Connect(function() showTab("train") end)
 
-trainSw=makeSwitch(pageTrain,"AUTO TRAIN","спамить тренировочный Tool",48,false,function(on,self)
+local jumpBug=makeBtn(pageTrain,"⬅ ВЕРНУТЬСЯ В БАГ",Color3.fromRGB(45,95,145))
+jumpBug.Size=UDim2.new(1,0,0,28)
+jumpBug.Position=UDim2.new(0,0,0,0)
+jumpBug.TextSize=13
+jumpBug.Activated:Connect(function() showTab("bug") end)
+
+posLever=makeLever(pageTrain,"LOCK POSITION","держать текущую позицию в кач",36,false,function(on,self)
 	if on then
-		startAutoTrain(setStatus)
+		local ok=startTrainPositionLock(setStatus)
+		if not ok then self.Set(false,true) end
 	else
-		stopAutoTrain(setStatus)
+		stopTrainPositionLock(setStatus)
 	end
 end)
 
-trainRemoteSw=makeSwitch(pageTrain,"TRAIN REMOTE","добавлять rep/train remote",92,_G.RockBugAutoTrainUseRemote~=false,function(on)
-	_G.RockBugAutoTrainUseRemote=on
-	setStatus("TRAIN REMOTE "..(on and "ON" or "OFF"))
-end)
-
-ultraSw=makeSwitch(pageTrain,"ULTRA MAP","убрать карту, оставить нужное",136,false,function(on,self)
+ultraLever=makeLever(pageTrain,"ULTRA MAP","убрать карту, оставить нужное",84,false,function(on,self)
 	ultraOptEnabled=on
 	if on then
 		local old=_G.RockBugLowMapTransparency
@@ -1292,26 +1413,46 @@ ultraSw=makeSwitch(pageTrain,"ULTRA MAP","убрать карту, остави�
 	end
 end)
 
-afkSw=makeSwitch(pageTrain,"ANTI AFK","не кикать за простой",180,antiAfkEnabled,function(on)
+afkLever=makeLever(pageTrain,"ANTI AFK","не кикать за простой",132,antiAfkEnabled,function(on)
 	antiAfkEnabled=on
 	setStatus("AFK "..(on and "ON" or "OFF"))
 end)
 
-local allOffSw=makeSwitch(pageTrain,"ALL OFF","выключить всё",224,false,function(on,self)
-	if on then
-		stopAutoTrain()
-		stopHit()
-		stopLock()
-		ultraOptEnabled=false
-		setLowMap(false,nil,nil)
-		if bugSw then bugSw.Set(false,true) end
-		if lockSw then lockSw.Set(false,true) end
-		if ultraSw then ultraSw.Set(false,true) end
-		if trainSw then trainSw.Set(false,true) end
-		setStatus("ALL OFF")
-		task.defer(function() self.Set(false,true) end)
+-- отдельные рычаги кача
+local trainScroll=Instance.new("ScrollingFrame")
+trainScroll.Parent=pageTrain
+trainScroll.Size=UDim2.new(1,0,0,150)
+trainScroll.Position=UDim2.new(0,0,0,180)
+trainScroll.BackgroundColor3=Color3.fromRGB(7,8,17)
+trainScroll.BackgroundTransparency=0.18
+trainScroll.BorderSizePixel=0
+trainScroll.ScrollBarThickness=3
+trainScroll.CanvasSize=UDim2.new(0,0,0,0)
+corner(trainScroll,18)
+stroke(trainScroll,Color3.fromRGB(48,48,90),1,0.52)
+
+local function turnOffOtherTrain(id)
+	for tid,lever in pairs(trainLevers) do
+		if tid~=id and lever and lever.Get() then
+			lever.Set(false,true)
+			stopTrainType(tid,nil)
+		end
 	end
-end)
+end
+
+for i,t in ipairs(TRAIN_TYPES) do
+	local y=(i-1)*50+7
+	local lever=makeLever(trainScroll,t.label,t.desc,y,false,function(on,self)
+		if on then
+			turnOffOtherTrain(t.id)
+			startTrainType(t,setStatus)
+		else
+			stopTrainType(t.id,setStatus)
+		end
+	end)
+	trainLevers[t.id]=lever
+end
+trainScroll.CanvasSize=UDim2.new(0,0,0,#TRAIN_TYPES*50+14)
 
 min.Activated:Connect(function()
 	main.Visible=false
@@ -1324,7 +1465,8 @@ mini.Activated:Connect(function()
 end)
 
 close.Activated:Connect(function()
-	stopAutoTrain()
+	stopAllTrain()
+	stopTrainPositionLock()
 	stopHit()
 	stopLock()
 	setLowMap(false,nil,nil)
@@ -1361,5 +1503,5 @@ end)
 
 rockCache=scanRocks()
 refreshButtons()
-setMode("bug")
-setStatus("Готово. Вкладки сверху: БАГ / КАЧ")
+showTab("bug")
+setStatus("v15: баг исправлен, рычаги готовы")
