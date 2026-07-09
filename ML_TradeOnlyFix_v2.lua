@@ -1,22 +1,20 @@
--- ML_ServerResync_Trade_v1
--- Мягкий ресинк после зависшего "loading/input locked" состояния.
--- НЕ жмёт трейд, НЕ FireServer/InvokeServer, НЕ чёрный экран, НЕ сканит каждый кадр.
--- Одна кнопка RESYNC -> STOP. Работает медленно 15 сек, можно остановить той же кнопкой.
+-- ML_GameGuiRelink_v1
+-- Цель: восстановить обработчики кнопок gameGui/trade без спама и без циклов.
+-- НЕ FireServer/InvokeServer, НЕ kick/rejoin, НЕ чёрный экран, НЕ Heartbeat.
+-- Одна кнопка REPAIR -> STOP. Если не поможет, COPY REPORT.
 
 local Players=game:GetService("Players")
 local StarterGui=game:GetService("StarterGui")
-local ReplicatedFirst=game:GetService("ReplicatedFirst")
-local UserInputService=game:GetService("UserInputService")
 local CoreGui=game:GetService("CoreGui")
+local UserInputService=game:GetService("UserInputService")
 local Stats=game:GetService("Stats")
 
 local lp=Players.LocalPlayer
-local VERSION="ML_ServerResync_Trade_v1"
+local VERSION="ML_GameGuiRelink_v1"
 
 local running=false
 local runId=0
-local hidden={}
-local lastReport="Сначала нажми RESYNC или COPY REPORT."
+local lastReport="Нажми REPAIR. Если не поможет — COPY REPORT."
 
 local function safe(fn)
 	local ok,res=pcall(fn)
@@ -50,55 +48,35 @@ end
 local function pathOf(obj)
 	local parts={}
 	local cur=obj
-	local limit=0
-	while cur and cur~=game and limit<20 do
+	local n=0
+	while cur and cur~=game and n<20 do
 		table.insert(parts,1,tostring(cur.Name))
 		cur=cur.Parent
-		limit+=1
+		n+=1
 	end
 	return table.concat(parts,"/")
 end
 
-local EXACT_TRADE_PATHS={
-	"gameGui",
+local TARGET_BUTTON_PATHS={
 	"gameGui/sideButtons/tradeButton",
-	"gameGui/gameGuiScript",
-	"gameGui/gameGuiScript/playerTradeFrame",
 	"gameGui/gameGuiScript/playerTradeFrame/nameLabel/tradeButton",
-	"gameGui/gameGuiScript/tradeRequestMenu",
 	"gameGui/gameGuiScript/tradeRequestMenu/tradeButton",
-	"gameGui/tradePanel",
 	"gameGui/tradePanel/acceptButton",
 	"gameGui/tradePanel/declineButton",
 	"gameGui/tradePanel/sideButtons/petsButton",
 }
 
 local function setStatus(t)
-	if _G.MLServerResyncStatus then
-		_G.MLServerResyncStatus.Text=tostring(t)
+	if _G.MLRelinkStatus then
+		_G.MLRelinkStatus.Text=tostring(t)
 	end
 end
 
 local function setBtn()
-	if _G.MLServerResyncButton then
-		_G.MLServerResyncButton.Text=running and "STOP" or "RESYNC"
-		_G.MLServerResyncButton.BackgroundColor3=running and Color3.fromRGB(135,55,65) or Color3.fromRGB(45,130,75)
+	if _G.MLRelinkButton then
+		_G.MLRelinkButton.Text=running and "STOP" or "REPAIR"
+		_G.MLRelinkButton.BackgroundColor3=running and Color3.fromRGB(135,55,65) or Color3.fromRGB(45,130,75)
 	end
-end
-
-local function connCount(sig)
-	if type(getconnections)~="function" or not sig then return "no_getconnections" end
-	local ok,cons=pcall(getconnections,sig)
-	if not ok or type(cons)~="table" then return "err" end
-	local enabled=0
-	for _,c in ipairs(cons) do
-		local dis=false
-		pcall(function()
-			if c.Enabled==false then dis=true end
-		end)
-		if not dis then enabled+=1 end
-	end
-	return tostring(enabled).."/"..tostring(#cons)
 end
 
 local function getPing()
@@ -112,8 +90,59 @@ local function getPing()
 	return "unknown"
 end
 
+local function countCons(sig)
+	if type(getconnections)~="function" or not sig then
+		return -1,-1
+	end
+	local ok,cons=pcall(getconnections,sig)
+	if not ok or type(cons)~="table" then
+		return -1,-1
+	end
+	local enabled=0
+	for _,c in ipairs(cons) do
+		local disabled=false
+		safe(function()
+			if c.Enabled==false then disabled=true end
+		end)
+		if not disabled then enabled+=1 end
+	end
+	return enabled,#cons
+end
+
+local function buttonConnText(btn)
+	if not btn or not btn:IsA("GuiButton") then return "not_button" end
+	local ae,at=countCons(btn.Activated)
+	local me,mt=countCons(btn.MouseButton1Click)
+	if ae<0 then return "no_getconnections" end
+	return ("Activated=%s/%s Mouse=%s/%s"):format(ae,at,me,mt)
+end
+
+local function totalTargetConnections()
+	local total=0
+	local known=false
+
+	for _,path in ipairs(TARGET_BUTTON_PATHS) do
+		local b=getPath(path)
+		if b and b:IsA("GuiButton") then
+			local ae,at=countCons(b.Activated)
+			local me,mt=countCons(b.MouseButton1Click)
+			if ae>=0 then
+				known=true
+				total+=ae+me
+			end
+		end
+	end
+
+	return known,total
+end
+
+local function setScriptEnabled(scr,on)
+	if not scr then return end
+	safe(function() scr.Disabled=not on end)
+	safe(function() scr.Enabled=on end)
+end
+
 local function basicUnlock()
-	safe(function() ReplicatedFirst:RemoveDefaultLoadingScreen() end)
 	safe(function() StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.All,true) end)
 
 	safe(function()
@@ -126,297 +155,260 @@ local function basicUnlock()
 		end
 	end)
 
-	local cam=workspace.CurrentCamera
 	local c=lp.Character
-	local hum=c and c:FindFirstChildWhichIsA("Humanoid")
-	local root=c and c:FindFirstChild("HumanoidRootPart")
-
-	if cam and hum then
-		safe(function()
-			cam.CameraType=Enum.CameraType.Custom
-			cam.CameraSubject=hum
-		end)
-	end
-
-	if hum then
-		safe(function()
-			hum.PlatformStand=false
-			hum.Sit=false
-			hum.AutoRotate=true
-			if hum.WalkSpeed<12 then hum.WalkSpeed=16 end
-			if hum.UseJumpPower then
-				if hum.JumpPower<35 then hum.JumpPower=50 end
-			else
-				if hum.JumpHeight<5 then hum.JumpHeight=7.2 end
-			end
-			hum:ChangeState(Enum.HumanoidStateType.Running)
-		end)
-	end
-
-	if root then
-		safe(function()
-			root.Anchored=false
-			root.AssemblyLinearVelocity=Vector3.new()
-			root.AssemblyAngularVelocity=Vector3.new()
-		end)
-	end
-
-	-- точечно делаем найденные trade элементы кликабельными, без открытия/нажатия
-	for _,path in ipairs(EXACT_TRADE_PATHS) do
-		local o=getPath(path)
-		if o and o:IsA("ScreenGui") then
+	if c then
+		local hum=c:FindFirstChildWhichIsA("Humanoid")
+		local root=c:FindFirstChild("HumanoidRootPart")
+		if hum then
 			safe(function()
-				o.Enabled=true
-				o.DisplayOrder=math.max(o.DisplayOrder,100)
+				hum.PlatformStand=false
+				hum.Sit=false
+				hum.AutoRotate=true
+				if hum.WalkSpeed<12 then hum.WalkSpeed=16 end
+				hum:ChangeState(Enum.HumanoidStateType.Running)
 			end)
-		elseif o and o:IsA("GuiObject") then
+		end
+		if root then
 			safe(function()
-				o.Visible=true
-				o.Active=true
-				o.ZIndex=math.max(o.ZIndex,100)
+				root.Anchored=false
+				root.AssemblyLinearVelocity=Vector3.new()
+				root.AssemblyAngularVelocity=Vector3.new()
 			end)
-			if o:IsA("GuiButton") then
+		end
+	end
+
+	local gameGui=getPath("gameGui")
+	if gameGui and gameGui:IsA("ScreenGui") then
+		safe(function()
+			gameGui.Enabled=true
+			gameGui.DisplayOrder=math.max(gameGui.DisplayOrder,200)
+			gameGui.ZIndexBehavior=Enum.ZIndexBehavior.Sibling
+		end)
+	end
+
+	for _,path in ipairs(TARGET_BUTTON_PATHS) do
+		local b=getPath(path)
+		if b and b:IsA("GuiObject") then
+			safe(function()
+				b.Visible=true
+				b.Active=true
+				b.ZIndex=math.max(b.ZIndex,200)
+			end)
+			if b:IsA("GuiButton") then
 				safe(function()
-					o.Selectable=true
-					o.AutoButtonColor=true
-					o.Modal=false
+					b.Selectable=true
+					b.AutoButtonColor=true
+					b.Modal=false
 				end)
 			end
 		end
 	end
 end
 
-local function restartGameGuiScripts()
-	local p=pg()
-	if not p then return 0 end
-	local gameGui=p:FindFirstChild("gameGui")
-	if not gameGui then return 0 end
-
-	local restarted=0
-	local targets={}
-
-	local exact=gameGui:FindFirstChild("gameGuiScript")
-	if exact and exact:IsA("LocalScript") then
-		table.insert(targets,exact)
+local function restartOriginalScript()
+	local scr=getPath("gameGui/gameGuiScript")
+	if not scr or not scr:IsA("LocalScript") then
+		return false,"gameGuiScript not found/not LocalScript"
 	end
 
-	for _,d in ipairs(gameGui:GetDescendants()) do
-		if d:IsA("LocalScript") then
-			local n=tostring(d.Name):lower()
-			if n:find("game",1,true) or n:find("trade",1,true) or n:find("gui",1,true) then
-				table.insert(targets,d)
+	setStatus("restart original...")
+	setScriptEnabled(scr,false)
+	task.wait(0.25)
+	setScriptEnabled(scr,true)
+	task.wait(0.9)
+
+	return true,"original toggled"
+end
+
+local function cleanClones()
+	local gameGui=getPath("gameGui")
+	if not gameGui then return 0 end
+	local n=0
+
+	for _,d in ipairs(gameGui:GetChildren()) do
+		local name=tostring(d.Name)
+		if name:find("ML_RELINK_",1,true) then
+			safe(function()
+				if d:IsA("LocalScript") then setScriptEnabled(d,false) end
+				d:Destroy()
+			end)
+			n+=1
+		end
+	end
+
+	return n
+end
+
+local function cloneGameGuiScript()
+	local gameGui=getPath("gameGui")
+	local scr=getPath("gameGui/gameGuiScript")
+
+	if not gameGui then return false,"gameGui missing" end
+	if not scr or not scr:IsA("LocalScript") then return false,"gameGuiScript missing" end
+
+	cleanClones()
+	task.wait(0.15)
+
+	local ok,clone=safe(function()
+		scr.Archivable=true
+		return scr:Clone()
+	end)
+
+	if not ok or not clone then
+		return false,"clone failed"
+	end
+
+	clone.Name="ML_RELINK_gameGuiScript_CLONE"
+	setScriptEnabled(clone,false)
+	clone.Parent=gameGui
+
+	-- Клон содержит свои playerTradeFrame/tradeRequestMenu. Поднимем только trade-похожие части, без открытия магазина.
+	for _,d in ipairs(clone:GetDescendants()) do
+		local n=tostring(d.Name):lower()
+		if d:IsA("GuiObject") and (n:find("trade",1,true) or n:find("pet",1,true) or n:find("offer",1,true) or n:find("accept",1,true)) then
+			safe(function()
+				d.Visible=true
+				d.Active=true
+				d.ZIndex=math.max(d.ZIndex,350)
+			end)
+			if d:IsA("GuiButton") then
+				safe(function()
+					d.Selectable=true
+					d.AutoButtonColor=true
+					d.Modal=false
+				end)
 			end
 		end
-		if #targets>=12 then break end
 	end
 
-	local seen={}
-	for _,s in ipairs(targets) do
-		if not seen[s] then
-			seen[s]=true
-			safe(function()
-				s.Disabled=true
-			end)
-			task.wait(0.08)
-			safe(function()
-				s.Disabled=false
-			end)
-			restarted+=1
-		end
-	end
+	setStatus("starting clone...")
+	task.wait(0.25)
+	setScriptEnabled(clone,true)
+	task.wait(1.5)
 
-	return restarted
+	return true,"clone started: "..clone.Name
 end
 
-local function requestStream()
-	local c=lp.Character
-	local root=c and c:FindFirstChild("HumanoidRootPart")
-	if not root then return false end
+local function findCloneConnections()
+	local gameGui=getPath("gameGui")
+	if not gameGui then return "no gameGui" end
 
-	local ok=safe(function()
-		lp:RequestStreamAroundAsync(root.Position, 4)
-	end)
-
-	-- маленький сетевой "пинок" через обычное движение, не remotes
-	local hum=c:FindFirstChildWhichIsA("Humanoid")
-	if hum then
-		safe(function()
-			hum.Jump=true
-			hum:Move(Vector3.new(0,0,-0.01),true)
-			task.wait(0.05)
-			hum:Move(Vector3.new(0,0,0),true)
-		end)
-	end
-
-	return ok
-end
-
-local function areaOf(o)
-	local ok,res=safe(function()
-		local cam=workspace.CurrentCamera
-		local vp=cam and cam.ViewportSize or Vector2.new(0,0)
-		if vp.X<=0 or vp.Y<=0 then return 0 end
-		local sz=o.AbsoluteSize
-		return (sz.X*sz.Y)/(vp.X*vp.Y)
-	end)
-	if ok then return tonumber(res) or 0 end
-	return 0
-end
-
-local LOADING_WORDS={
-	"loading","load","загрузка","intro","fade","black","transition","teleport","blocker","input","cover","wait"
-}
-
-local function hideLoadingBlockers()
-	local p=pg()
-	if not p then return 0 end
-	local gameGui=p:FindFirstChild("gameGui")
-	if not gameGui then return 0 end
-
-	local count=0
-	local scanned=0
-
+	local lines={}
+	local found=0
 	for _,d in ipairs(gameGui:GetDescendants()) do
-		scanned+=1
-		if scanned>1200 then break end
-
-		if d:IsA("GuiObject") then
-			local name=tostring(d.Name):lower()
-			local area=areaOf(d)
-			local visible=false
-			local active=false
-			local bg=1
-
-			safe(function() visible=d.Visible end)
-			safe(function() active=d.Active end)
-			safe(function() bg=d.BackgroundTransparency end)
-
-			if visible and area>0.35 and (active or bg<0.95) then
-				local isLoading=false
-				for _,w in ipairs(LOADING_WORDS) do
-					if name:find(w,1,true) then isLoading=true break end
-				end
-
-				-- Только подозрительные loading/fade/blocker, не весь GUI.
-				if isLoading and not hidden[d] then
-					hidden[d]={Visible=d.Visible,Active=d.Active,BackgroundTransparency=d.BackgroundTransparency}
-					safe(function()
-						d.Visible=false
-						d.Active=false
-						d.BackgroundTransparency=1
-					end)
-					count+=1
+		if d:IsA("GuiButton") then
+			local p=pathOf(d)
+			local low=p:lower()
+			if low:find("ml_relink",1,true) and (low:find("trade",1,true) or low:find("accept",1,true) or low:find("pet",1,true)) then
+				found+=1
+				if found<=25 then
+					lines[#lines+1]=p.." | "..buttonConnText(d)
 				end
 			end
 		end
 	end
 
-	return count
-end
-
-local function restoreHidden()
-	for obj,rec in pairs(hidden) do
-		if obj and obj.Parent then
-			if rec.Visible~=nil then safe(function() obj.Visible=rec.Visible end) end
-			if rec.Active~=nil then safe(function() obj.Active=rec.Active end) end
-			if rec.BackgroundTransparency~=nil then safe(function() obj.BackgroundTransparency=rec.BackgroundTransparency end) end
-		end
-	end
-	hidden={}
-	setStatus("hidden restored")
+	if #lines==0 then return "no clone trade buttons found" end
+	return table.concat(lines,"\n")
 end
 
 local function makeReport()
 	local lines={}
 	local function add(s) lines[#lines+1]=s end
 
-	add("=== ML SERVER RESYNC REPORT ===")
+	add("=== ML GAMEGUI RELINK REPORT ===")
 	add("version: "..VERSION)
 	add("ping: "..getPing())
 	add("PlayerGui: "..tostring(pg()~=nil))
-	add("hidden loading blockers: "..tostring((function() local n=0 for _ in pairs(hidden) do n+=1 end return n end)()))
 	add("")
 
-	for _,path in ipairs(EXACT_TRADE_PATHS) do
-		local o=getPath(path)
-		if o then
-			local info=path.." | "..o.ClassName
-			if o:IsA("GuiObject") then
-				local vis,act,z="?","?","?"
-				safe(function() vis=tostring(o.Visible) end)
-				safe(function() act=tostring(o.Active) end)
-				safe(function() z=tostring(o.ZIndex) end)
-				info=info.." | visible="..vis.." active="..act.." z="..z
-			elseif o:IsA("ScreenGui") then
-				info=info.." | enabled="..tostring(o.Enabled).." order="..tostring(o.DisplayOrder)
-			end
+	local scr=getPath("gameGui/gameGuiScript")
+	if scr then
+		local dis,en="?","?"
+		safe(function() dis=tostring(scr.Disabled) end)
+		safe(function() en=tostring(scr.Enabled) end)
+		add("gameGuiScript: "..scr.ClassName.." Disabled="..dis.." Enabled="..en)
+	else
+		add("gameGuiScript: NOT FOUND")
+	end
 
-			if o:IsA("GuiButton") then
-				info=info.." | ActivatedConns="..connCount(o.Activated).." MouseConns="..connCount(o.MouseButton1Click)
-			end
-
-			if o:IsA("LocalScript") then
-				info=info.." | Disabled="..tostring(o.Disabled)
-			end
-
-			add(info)
+	add("")
+	add("[ORIGINAL BUTTON CONNECTIONS]")
+	for _,path in ipairs(TARGET_BUTTON_PATHS) do
+		local b=getPath(path)
+		if b then
+			local vis,act,z="?","?","?"
+			safe(function() vis=tostring(b.Visible) end)
+			safe(function() act=tostring(b.Active) end)
+			safe(function() z=tostring(b.ZIndex) end)
+			add(path.." | "..b.ClassName.." visible="..vis.." active="..act.." z="..z.." | "..buttonConnText(b))
 		else
 			add(path.." | NOT FOUND")
 		end
 	end
 
+	add("")
+	add("[CLONE BUTTON CONNECTIONS]")
+	add(findCloneConnections())
+
 	lastReport=table.concat(lines,"\n")
 	return lastReport
 end
 
-local function resyncLoop(my)
-	local restartedOnce=false
-	local start=os.clock()
-	local steps=0
-	local hiddenCount=0
-	local restarted=0
-	local streamed=false
-
-	while running and runId==my and os.clock()-start<15 do
-		steps+=1
-		basicUnlock()
-
-		if not restartedOnce then
-			restartedOnce=true
-			restarted=restartGameGuiScripts()
-			streamed=requestStream()
-		end
-
-		hiddenCount+=hideLoadingBlockers()
-
-		setStatus(("resync %.0fs | scripts:%s stream:%s hidden:%s ping:%s"):format(
-			math.max(0,15-(os.clock()-start)),
-			tostring(restarted),
-			tostring(streamed),
-			tostring(hiddenCount),
-			getPing()
-		))
-
-		task.wait(0.55)
+local function repair(my)
+	local log={}
+	local function add(s)
+		log[#log+1]=s
+		setStatus(s)
 	end
 
-	if runId==my then
+	add("basic unlock...")
+	basicUnlock()
+	task.wait(0.3)
+
+	local known,before=totalTargetConnections()
+	add("before conns: "..(known and tostring(before) or "unknown"))
+	task.wait(0.1)
+
+	if running and runId==my then
+		local ok,msg=restartOriginalScript()
+		add("restart: "..tostring(ok).." | "..tostring(msg))
+	end
+
+	basicUnlock()
+	task.wait(0.4)
+
+	local known2,afterRestart=totalTargetConnections()
+	add("after restart conns: "..(known2 and tostring(afterRestart) or "unknown"))
+
+	if running and runId==my and known2 and afterRestart==0 then
+		local ok,msg=cloneGameGuiScript()
+		add("clone: "..tostring(ok).." | "..tostring(msg))
+		basicUnlock()
+	end
+
+	task.wait(0.4)
+	makeReport()
+
+	if running and runId==my then
 		running=false
 		setBtn()
-		makeReport()
-		setStatus("done | copy report")
+		setStatus("done | try trade or COPY REPORT")
+		if _G.MLRelinkBox then
+			_G.MLRelinkBox.Text=lastReport
+		end
 	end
 end
 
 -- UI
 local parent=getUiParent()
 pcall(function()
-	local old=parent:FindFirstChild("ML_ServerResyncGui")
+	local old=parent:FindFirstChild("ML_GameGuiRelinkGui")
 	if old then old:Destroy() end
 end)
 
 local gui=Instance.new("ScreenGui")
-gui.Name="ML_ServerResyncGui"
+gui.Name="ML_GameGuiRelinkGui"
 gui.ResetOnSpawn=false
 gui.IgnoreGuiInset=true
 gui.DisplayOrder=10000000
@@ -425,7 +417,7 @@ gui.Parent=parent
 
 local main=Instance.new("Frame")
 main.Parent=gui
-main.Size=UDim2.new(0,318,0,166)
+main.Size=UDim2.new(0,324,0,178)
 main.Position=UDim2.new(0,14,0,112)
 main.BackgroundColor3=Color3.fromRGB(14,15,22)
 main.BackgroundTransparency=0.04
@@ -433,17 +425,18 @@ main.BorderSizePixel=0
 main.Active=true
 main.ZIndex=1000
 Instance.new("UICorner",main).CornerRadius=UDim.new(0,16)
-local st=Instance.new("UIStroke",main)
-st.Color=Color3.fromRGB(90,190,255)
-st.Thickness=1.3
-st.Transparency=0.1
+
+local stroke=Instance.new("UIStroke",main)
+stroke.Color=Color3.fromRGB(90,190,255)
+stroke.Thickness=1.3
+stroke.Transparency=0.1
 
 local title=Instance.new("TextLabel")
 title.Parent=main
 title.Size=UDim2.new(1,-48,0,24)
 title.Position=UDim2.new(0,12,0,8)
 title.BackgroundTransparency=1
-title.Text="SERVER RESYNC"
+title.Text="GAMEGUI RELINK"
 title.TextColor3=Color3.fromRGB(235,245,255)
 title.Font=Enum.Font.GothamBlack
 title.TextSize=14
@@ -465,17 +458,17 @@ Instance.new("UICorner",close).CornerRadius=UDim.new(0,10)
 
 local status=Instance.new("TextLabel")
 status.Parent=main
-status.Size=UDim2.new(1,-24,0,40)
+status.Size=UDim2.new(1,-24,0,38)
 status.Position=UDim2.new(0,12,0,38)
 status.BackgroundTransparency=1
-status.Text="готово | RESYNC можно остановить той же кнопкой"
+status.Text="готово | REPAIR можно остановить той же кнопкой"
 status.TextColor3=Color3.fromRGB(215,225,245)
 status.Font=Enum.Font.GothamBold
 status.TextSize=10
 status.TextWrapped=true
 status.TextXAlignment=Enum.TextXAlignment.Left
 status.ZIndex=1001
-_G.MLServerResyncStatus=status
+_G.MLRelinkStatus=status
 
 local function mk(text,x,y,w,h)
 	local b=Instance.new("TextButton")
@@ -493,34 +486,38 @@ local function mk(text,x,y,w,h)
 	return b
 end
 
-local resyncBtn=mk("RESYNC",12,88,94,34)
-local copyBtn=mk("COPY REPORT",116,88,104,34)
-local restoreBtn=mk("RESTORE HIDDEN",230,88,76,34)
-local reportBox=Instance.new("TextBox")
-reportBox.Parent=main
-reportBox.Size=UDim2.new(1,-24,0,30)
-reportBox.Position=UDim2.new(0,12,0,130)
-reportBox.BackgroundColor3=Color3.fromRGB(8,9,14)
-reportBox.BackgroundTransparency=0.05
-reportBox.BorderSizePixel=0
-reportBox.TextColor3=Color3.fromRGB(220,230,245)
-reportBox.Font=Enum.Font.Code
-reportBox.TextSize=8
-reportBox.ClearTextOnFocus=false
-reportBox.TextXAlignment=Enum.TextXAlignment.Left
-reportBox.Text="report preview here"
-reportBox.ZIndex=1001
-Instance.new("UICorner",reportBox).CornerRadius=UDim.new(0,10)
+local repairBtn=mk("REPAIR",12,84,92,34)
+local copyBtn=mk("COPY REPORT",114,84,104,34)
+local cleanBtn=mk("CLEAN CLONE",228,84,84,34)
 
-_G.MLServerResyncButton=resyncBtn
+local box=Instance.new("TextBox")
+box.Parent=main
+box.Size=UDim2.new(1,-24,0,44)
+box.Position=UDim2.new(0,12,0,126)
+box.BackgroundColor3=Color3.fromRGB(8,9,14)
+box.BackgroundTransparency=0.05
+box.BorderSizePixel=0
+box.TextColor3=Color3.fromRGB(220,230,245)
+box.Font=Enum.Font.Code
+box.TextSize=8
+box.TextXAlignment=Enum.TextXAlignment.Left
+box.TextYAlignment=Enum.TextYAlignment.Top
+box.ClearTextOnFocus=false
+box.MultiLine=true
+box.Text="report preview"
+box.ZIndex=1001
+Instance.new("UICorner",box).CornerRadius=UDim.new(0,10)
 
-resyncBtn.Activated:Connect(function()
+_G.MLRelinkButton=repairBtn
+_G.MLRelinkBox=box
+
+repairBtn.Activated:Connect(function()
 	if running then
 		running=false
 		runId+=1
 		setBtn()
 		makeReport()
-		reportBox.Text=lastReport
+		box.Text=lastReport
 		setStatus("stopped | copy report")
 		return
 	end
@@ -528,13 +525,13 @@ resyncBtn.Activated:Connect(function()
 	running=true
 	runId+=1
 	setBtn()
-	reportBox.Text="running..."
-	task.spawn(resyncLoop,runId)
+	box.Text="repair running..."
+	task.spawn(repair,runId)
 end)
 
 copyBtn.Activated:Connect(function()
 	local rep=makeReport()
-	reportBox.Text=rep
+	box.Text=rep
 	local ok=false
 	safe(function()
 		if setclipboard then
@@ -542,13 +539,15 @@ copyBtn.Activated:Connect(function()
 			ok=true
 		end
 	end)
-	setStatus(ok and "report copied" or "no setclipboard | copy from box")
+	setStatus(ok and "report copied" or "no setclipboard | copy box")
 end)
 
-restoreBtn.Activated:Connect(function()
-	restoreHidden()
+cleanBtn.Activated:Connect(function()
+	local n=cleanClones()
+	basicUnlock()
 	makeReport()
-	reportBox.Text=lastReport
+	box.Text=lastReport
+	setStatus("cleaned clones: "..tostring(n))
 end)
 
 close.Activated:Connect(function()
@@ -585,4 +584,4 @@ end)
 
 setBtn()
 makeReport()
-reportBox.Text=lastReport
+box.Text=lastReport
