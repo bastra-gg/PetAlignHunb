@@ -497,12 +497,14 @@ end
 local COOLDOWN_NAMES={
 	"Cooldown","cooldown","CD","cd","Delay","delay",
 	"AttackCooldown","attackCooldown","SwingCooldown","swingCooldown",
+	"AttackTime","attackTime","PunchCooldown","punchCooldown",
 	"LastUse","lastUse","LastSwing","lastSwing","LastAttack","lastAttack",
 	"CanUse","canUse","CanSwing","canSwing","Ready","ready"
 }
 
 local function clearCooldownsOnce(tool)
 	if not tool then return end
+	safe(function() tool.Enabled=true end)
 
 	local function fix(obj)
 		for _,name in ipairs(COOLDOWN_NAMES) do
@@ -849,8 +851,9 @@ local function lockCharacterAt(cf)
 	r.AssemblyLinearVelocity=Vector3.new(0,0,0)
 	r.AssemblyAngularVelocity=Vector3.new(0,0,0)
 
-	-- Anchored lock: no server/client fight and no inside/outside flashing.
-	r.Anchored=true
+	-- Keep the assembly movable so punch animation/touch can replicate.
+	-- The scheduler only corrects the CFrame after real drift.
+	r.Anchored=false
 
 	Runtime.lockCF=cf
 	return true
@@ -871,15 +874,22 @@ local function oneTouch()
 
 	if not target or not c or not target:IsA("BasePart") then return end
 
-	local hand=c:FindFirstChild("RightHand")
-		or c:FindFirstChild("Right Arm")
-		or c:FindFirstChild("HumanoidRootPart")
+	local hands={
+		c:FindFirstChild("RightHand") or c:FindFirstChild("Right Arm"),
+		c:FindFirstChild("LeftHand") or c:FindFirstChild("Left Arm"),
+	}
 
-	if hand and hand:IsA("BasePart") then
-		safe(function()
-			firetouchinterest(hand,target,0)
-			firetouchinterest(hand,target,1)
-		end)
+	if not hands[1] and not hands[2] then
+		hands[1]=c:FindFirstChild("HumanoidRootPart")
+	end
+
+	for _,hand in ipairs(hands) do
+		if hand and hand:IsA("BasePart") then
+			safe(function()
+				firetouchinterest(hand,target,0)
+				firetouchinterest(hand,target,1)
+			end)
+		end
 	end
 end
 
@@ -890,18 +900,20 @@ local function insideRockCF(row)
 	local body=info.body
 	local left=info.left
 	local right=info.right
+	local hit=info.hit
 	local cf=nil
 
-	-- Best center: midpoint between the two hands. biggestPart alone can be a platform/hitbox.
-	if left and left:IsA("BasePart") and right and right:IsA("BasePart") then
+	-- Stand inside the server-facing hit part so physical punches can register.
+	if hit and hit:IsA("BasePart") then
+		local offsetY=math.clamp(hit.Size.Y*0.03,0,0.75)
+		cf=hit.CFrame*CFrame.new(0,offsetY,0)
+	elseif left and left:IsA("BasePart") and right and right:IsA("BasePart") then
 		local center=(left.Position+right.Position)/2
 		local rot=(body and body:IsA("BasePart")) and (body.CFrame-body.Position) or CFrame.new()
 		cf=CFrame.new(center)*rot
 	elseif body and body:IsA("BasePart") then
 		local offsetY=math.clamp(body.Size.Y*0.08,0,2)
 		cf=body.CFrame*CFrame.new(0,offsetY,0)
-	elseif info.hit and info.hit:IsA("BasePart") then
-		cf=info.hit.CFrame
 	end
 
 	if not cf then return nil,"нет точки внутри камня" end
@@ -1071,11 +1083,19 @@ local function startBug()
 	Runtime.nextEquip=0
 	Runtime.nextCooldownSweep=0
 	Runtime.nextNearCheck=0
+	local _,remoteLimit=effectiveRates()
+	Runtime.remoteTokens=remoteLimit
 
 	if Runtime.leverRefs.bug then Runtime.leverRefs.bug.Set(true,true) end
 	if Runtime.leverRefs.lockRock then Runtime.leverRefs.lockRock.Set(true,true) end
 
-	setStatus("BUG ON | "..tostring(msg))
+	clearCooldownsOnce(tool)
+	safe(function() tool:Activate() end)
+	oneTouch()
+
+	local remoteState=findMuscleRemote() and "remote OK" or "remote missing"
+	local touchState=type(firetouchinterest)=="function" and "touch OK" or "touch missing"
+	setStatus("BUG ON | "..tostring(msg).." | "..remoteState.." | "..touchState)
 	return true
 end
 
@@ -1136,17 +1156,15 @@ local function scheduler()
 		end
 
 		if Runtime.mode=="bug" then
-			-- Root is anchored once at the correct point. No repeated CFrame teleport.
+			-- Keep physical punching enabled; correct only after actual drift.
 			if Runtime.lockRock and Runtime.lockCF then
 				local r=root()
 				if not r then
 					stopMode("AUTO STOP: нет root")
-				elseif not r.Anchored then
-					-- Recover the lock only if another script/game unanchored it.
+				elseif (r.Position-Runtime.lockCF.Position).Magnitude>1.25 then
 					r.CFrame=Runtime.lockCF
 					r.AssemblyLinearVelocity=Vector3.new(0,0,0)
 					r.AssemblyAngularVelocity=Vector3.new(0,0,0)
-					r.Anchored=true
 				end
 			end
 
@@ -1177,10 +1195,8 @@ local function scheduler()
 				-- One bounded direct remote attempt, never loops.
 				tryPunchRemote()
 
-				-- Touch only every third cycle.
-				if Runtime.punchCycle%3==0 then
-					oneTouch()
-				end
+				-- Touch on every bounded action so Delta can register either hand.
+				oneTouch()
 			end
 
 			if now>=Runtime.nextCooldownSweep then
