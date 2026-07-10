@@ -1328,6 +1328,7 @@ rail.Parent=main
 rail.Size=UDim2.new(0,54,1,0)
 rail.BackgroundColor3=Color3.fromRGB(20,23,29)
 rail.BorderSizePixel=0
+rail.ClipsDescendants=true
 corner(rail,20)
 
 local brand=label(rail,"B\nA\nS\nT\nR\nA",12,Enum.Font.GothamBlack,Color3.fromRGB(160,210,255))
@@ -1357,10 +1358,11 @@ content.Size=UDim2.new(1,-62,1,-10)
 content.Position=UDim2.new(0,58,0,5)
 content.BackgroundColor3=Color3.fromRGB(8,10,14)
 content.BorderSizePixel=0
+content.ClipsDescendants=true
 corner(content,16)
 
 local title=label(content,"VALIDATED",16,Enum.Font.GothamBlack,Color3.fromRGB(240,245,255))
-title.Size=UDim2.new(1,-76,0,22)
+title.Size=UDim2.new(1,-110,0,22)
 title.Position=UDim2.new(0,11,0,6)
 
 local author=label(content,"The Great Bastra • v20",10,Enum.Font.GothamBold,Color3.fromRGB(120,170,215))
@@ -1371,6 +1373,11 @@ local closeBtn=button(content,"×",Color3.fromRGB(90,28,42))
 closeBtn.Size=UDim2.new(0,28,0,28)
 closeBtn.Position=UDim2.new(1,-34,0,6)
 closeBtn.TextSize=18
+
+local minimizeBtn=button(content,"−",Color3.fromRGB(45,70,100))
+minimizeBtn.Size=UDim2.new(0,28,0,28)
+minimizeBtn.Position=UDim2.new(1,-66,0,6)
+minimizeBtn.TextSize=18
 
 local net=label(content,"PING 0ms | REMOTE 0/s",9,Enum.Font.GothamBold,Color3.fromRGB(150,160,180))
 net.Size=UDim2.new(1,-16,0,14)
@@ -1707,16 +1714,44 @@ for _,t in ipairs(TRAIN_TYPES) do
 	Runtime.leverRefs.train[t.id]=slider
 end
 
+local activeTab="bug"
+local minimized=false
+
 local function showTab(name)
+	activeTab=name
 	local bug=name=="bug"
-	bugPage.Visible=bug
-	trainPage.Visible=not bug
+	bugPage.Visible=(not minimized) and bug
+	trainPage.Visible=(not minimized) and (not bug)
 	bugTab.BackgroundColor3=bug and Color3.fromRGB(38,105,155) or Color3.fromRGB(35,40,50)
 	trainTab.BackgroundColor3=(not bug) and Color3.fromRGB(35,130,80) or Color3.fromRGB(35,40,50)
 end
 
+local function setMinimized(on)
+	minimized=on and true or false
+	main.Size=minimized and UDim2.new(0,292,0,48) or UDim2.new(0,292,0,392)
+	minimizeBtn.Text=minimized and "+" or "−"
+	title.Text=minimized and "ROCKBUGHUB" or "VALIDATED"
+
+	brand.Visible=not minimized
+	bugTab.Visible=not minimized
+	trainTab.Visible=not minimized
+	rescanBtn.Visible=not minimized
+	panicBtn.Visible=not minimized
+	author.Visible=not minimized
+	net.Visible=not minimized
+	status.Visible=not minimized
+
+	if minimized then
+		bugPage.Visible=false
+		trainPage.Visible=false
+	else
+		showTab(activeTab)
+	end
+end
+
 addConn(bugTab.Activated:Connect(function() showTab("bug") end))
 addConn(trainTab.Activated:Connect(function() showTab("train") end))
+addConn(minimizeBtn.Activated:Connect(function() setMinimized(not minimized) end))
 
 addConn(rescanBtn.Activated:Connect(function()
 	setStatus("SCAN...")
