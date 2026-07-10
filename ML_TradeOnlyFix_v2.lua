@@ -1271,6 +1271,21 @@ gui.IgnoreGuiInset=true
 gui.DisplayOrder=999999
 gui.Parent=playerGui
 
+local THEME={
+	Bg=Color3.fromRGB(13,15,26),
+	Panel=Color3.fromRGB(27,23,48),
+	Surface=Color3.fromRGB(31,34,52),
+	SurfaceAlt=Color3.fromRGB(39,43,65),
+	Accent=Color3.fromRGB(139,92,246),
+	Accent2=Color3.fromRGB(34,211,238),
+	Success=Color3.fromRGB(52,211,153),
+	Danger=Color3.fromRGB(244,63,94),
+	Text=Color3.fromRGB(241,245,249),
+	Muted=Color3.fromRGB(148,163,184),
+	Border=Color3.fromRGB(129,140,248),
+	Warm=Color3.fromRGB(251,191,36),
+}
+
 local function corner(o,r)
 	local c=Instance.new("UICorner")
 	c.CornerRadius=UDim.new(0,r)
@@ -1285,12 +1300,20 @@ local function stroke(o,color,thickness,transparency)
 	s.Parent=o
 end
 
+local function gradient(o,fromColor,toColor,rotation)
+	local g=Instance.new("UIGradient")
+	g.Color=ColorSequence.new(fromColor,toColor)
+	g.Rotation=rotation or 0
+	g.Parent=o
+	return g
+end
+
 local function label(parent,text,size,font,color)
 	local l=Instance.new("TextLabel")
 	l.Parent=parent
 	l.BackgroundTransparency=1
 	l.Text=text
-	l.TextColor3=color or Color3.fromRGB(235,240,250)
+	l.TextColor3=color or THEME.Text
 	l.Font=font or Enum.Font.GothamBold
 	l.TextSize=size or 12
 	l.TextXAlignment=Enum.TextXAlignment.Left
@@ -1303,8 +1326,9 @@ local function button(parent,text,color)
 	local b=Instance.new("TextButton")
 	b.Parent=parent
 	b.Text=text
-	b.TextColor3=Color3.fromRGB(245,248,255)
+	b.TextColor3=THEME.Text
 	b.BackgroundColor3=color
+	b.BackgroundTransparency=0.08
 	b.BorderSizePixel=0
 	b.AutoButtonColor=true
 	b.Font=Enum.Font.GothamBlack
@@ -1317,38 +1341,42 @@ local main=Instance.new("Frame")
 main.Parent=gui
 main.Size=UDim2.new(0,292,0,392)
 main.Position=UDim2.new(0,8,0,48)
-main.BackgroundColor3=Color3.fromRGB(12,14,18)
+main.BackgroundColor3=THEME.Bg
+main.BackgroundTransparency=0.10
 main.BorderSizePixel=0
 main.Active=true
 corner(main,20)
-stroke(main,Color3.fromRGB(75,90,115),1.4,0.15)
+stroke(main,THEME.Border,1.4,0.25)
+gradient(main,THEME.Bg,THEME.Panel,135)
 
 local rail=Instance.new("Frame")
 rail.Parent=main
 rail.Size=UDim2.new(0,54,1,0)
-rail.BackgroundColor3=Color3.fromRGB(20,23,29)
+rail.BackgroundColor3=THEME.Panel
+rail.BackgroundTransparency=0.12
 rail.BorderSizePixel=0
 rail.ClipsDescendants=true
 corner(rail,20)
+gradient(rail,THEME.Panel,THEME.SurfaceAlt,90)
 
-local brand=label(rail,"B\nA\nS\nT\nR\nA",12,Enum.Font.GothamBlack,Color3.fromRGB(160,210,255))
+local brand=label(rail,"B\nA\nS\nT\nR\nA",12,Enum.Font.GothamBlack,THEME.Accent2)
 brand.Size=UDim2.new(1,0,0,130)
 brand.Position=UDim2.new(0,0,0,8)
 brand.TextXAlignment=Enum.TextXAlignment.Center
 
-local bugTab=button(rail,"БАГ",Color3.fromRGB(38,105,155))
+local bugTab=button(rail,"БАГ",THEME.Accent)
 bugTab.Size=UDim2.new(1,-10,0,32)
 bugTab.Position=UDim2.new(0,5,0,132)
 
-local trainTab=button(rail,"КАЧ",Color3.fromRGB(35,40,50))
+local trainTab=button(rail,"КАЧ",THEME.Surface)
 trainTab.Size=UDim2.new(1,-10,0,32)
 trainTab.Position=UDim2.new(0,5,0,171)
 
-local rescanBtn=button(rail,"SCAN",Color3.fromRGB(35,40,50))
+local rescanBtn=button(rail,"SCAN",THEME.SurfaceAlt)
 rescanBtn.Size=UDim2.new(1,-10,0,29)
 rescanBtn.Position=UDim2.new(0,5,0,210)
 
-local panicBtn=button(rail,"STOP",Color3.fromRGB(125,32,47))
+local panicBtn=button(rail,"STOP",THEME.Danger)
 panicBtn.Size=UDim2.new(1,-10,0,38)
 panicBtn.Position=UDim2.new(0,5,1,-44)
 
@@ -1356,39 +1384,41 @@ local content=Instance.new("Frame")
 content.Parent=main
 content.Size=UDim2.new(1,-62,1,-10)
 content.Position=UDim2.new(0,58,0,5)
-content.BackgroundColor3=Color3.fromRGB(8,10,14)
+content.BackgroundColor3=THEME.Bg
+content.BackgroundTransparency=0.18
 content.BorderSizePixel=0
 content.ClipsDescendants=true
 corner(content,16)
+gradient(content,THEME.Bg,THEME.Surface,135)
 
-local title=label(content,"VALIDATED",16,Enum.Font.GothamBlack,Color3.fromRGB(240,245,255))
+local title=label(content,"VALIDATED",16,Enum.Font.GothamBlack,THEME.Text)
 title.Size=UDim2.new(1,-110,0,22)
 title.Position=UDim2.new(0,11,0,6)
 
-local author=label(content,"The Great Bastra • v20",10,Enum.Font.GothamBold,Color3.fromRGB(120,170,215))
+local author=label(content,"The Great Bastra • v20",10,Enum.Font.GothamBold,THEME.Accent2)
 author.Size=UDim2.new(1,-76,0,16)
 author.Position=UDim2.new(0,12,0,25)
 
-local closeBtn=button(content,"×",Color3.fromRGB(90,28,42))
+local closeBtn=button(content,"×",THEME.Danger)
 closeBtn.Size=UDim2.new(0,28,0,28)
 closeBtn.Position=UDim2.new(1,-34,0,6)
 closeBtn.TextSize=18
 
-local minimizeBtn=button(content,"−",Color3.fromRGB(45,70,100))
+local minimizeBtn=button(content,"−",THEME.Accent)
 minimizeBtn.Size=UDim2.new(0,28,0,28)
 minimizeBtn.Position=UDim2.new(1,-66,0,6)
 minimizeBtn.TextSize=18
 
-local net=label(content,"PING 0ms | REMOTE 0/s",9,Enum.Font.GothamBold,Color3.fromRGB(150,160,180))
+local net=label(content,"PING 0ms | REMOTE 0/s",9,Enum.Font.GothamBold,THEME.Muted)
 net.Size=UDim2.new(1,-16,0,14)
 net.Position=UDim2.new(0,8,0,40)
 net.TextXAlignment=Enum.TextXAlignment.Center
 
-local status=label(content,"ready",10,Enum.Font.GothamBold,Color3.fromRGB(220,230,245))
+local status=label(content,"ready",10,Enum.Font.GothamBold,THEME.Text)
 status.Size=UDim2.new(1,-16,0,25)
 status.Position=UDim2.new(0,8,0,56)
-status.BackgroundColor3=Color3.fromRGB(18,22,30)
-status.BackgroundTransparency=0
+status.BackgroundColor3=THEME.Surface
+status.BackgroundTransparency=0.18
 status.BorderSizePixel=0
 status.TextXAlignment=Enum.TextXAlignment.Center
 corner(status,11)
@@ -1402,7 +1432,7 @@ bugPage.Position=UDim2.new(0,6,0,87)
 bugPage.BackgroundTransparency=1
 bugPage.BorderSizePixel=0
 bugPage.ScrollBarThickness=3
-bugPage.ScrollBarImageColor3=Color3.fromRGB(90,160,220)
+bugPage.ScrollBarImageColor3=THEME.Accent
 bugPage.CanvasSize=UDim2.new(0,0,0,0)
 
 local trainPage=Instance.new("ScrollingFrame")
@@ -1412,7 +1442,7 @@ trainPage.Position=bugPage.Position
 trainPage.BackgroundTransparency=1
 trainPage.BorderSizePixel=0
 trainPage.ScrollBarThickness=3
-trainPage.ScrollBarImageColor3=Color3.fromRGB(80,200,125)
+trainPage.ScrollBarImageColor3=THEME.Success
 trainPage.CanvasSize=UDim2.new(0,0,0,0)
 trainPage.Visible=false
 
@@ -1448,10 +1478,11 @@ local function card(parent,height)
 	local f=Instance.new("Frame")
 	f.Parent=parent
 	f.Size=UDim2.new(1,0,0,height)
-	f.BackgroundColor3=Color3.fromRGB(18,21,27)
+	f.BackgroundColor3=THEME.Surface
+	f.BackgroundTransparency=0.16
 	f.BorderSizePixel=0
 	corner(f,14)
-	stroke(f,Color3.fromRGB(55,65,80),1,0.55)
+	stroke(f,THEME.Border,1,0.62)
 	return f
 end
 
@@ -1461,16 +1492,17 @@ local function makeSlider(parent,name,desc,initial,callback)
 	row.Size=UDim2.new(1,0,0,44)
 	row.Text=""
 	row.AutoButtonColor=false
-	row.BackgroundColor3=Color3.fromRGB(18,21,27)
+	row.BackgroundColor3=THEME.Surface
+	row.BackgroundTransparency=0.14
 	row.BorderSizePixel=0
 	corner(row,13)
-	stroke(row,Color3.fromRGB(55,65,80),1,0.55)
+	stroke(row,THEME.Border,1,0.62)
 
-	local n=label(row,name,11,Enum.Font.GothamBlack,Color3.fromRGB(238,242,250))
+	local n=label(row,name,11,Enum.Font.GothamBlack,THEME.Text)
 	n.Size=UDim2.new(1,-78,0,17)
 	n.Position=UDim2.new(0,9,0,4)
 
-	local d=label(row,desc,8,Enum.Font.GothamBold,Color3.fromRGB(135,145,165))
+	local d=label(row,desc,8,Enum.Font.GothamBold,THEME.Muted)
 	d.Size=UDim2.new(1,-78,0,15)
 	d.Position=UDim2.new(0,9,0,23)
 
@@ -1479,13 +1511,14 @@ local function makeSlider(parent,name,desc,initial,callback)
 	track.Size=UDim2.new(0,54,0,25)
 	track.Position=UDim2.new(1,-62,0,9)
 	track.BorderSizePixel=0
+	track.BackgroundTransparency=0.04
 	corner(track,13)
 
 	local knob=Instance.new("Frame")
 	knob.Parent=track
 	knob.Size=UDim2.new(0,19,0,19)
 	knob.Position=UDim2.new(0,3,0,3)
-	knob.BackgroundColor3=Color3.fromRGB(242,245,250)
+	knob.BackgroundColor3=THEME.Text
 	knob.BorderSizePixel=0
 	corner(knob,10)
 
@@ -1494,10 +1527,10 @@ local function makeSlider(parent,name,desc,initial,callback)
 
 	local function paint()
 		if state then
-			track.BackgroundColor3=Color3.fromRGB(40,150,85)
+			track.BackgroundColor3=THEME.Success
 			knob.Position=UDim2.new(1,-22,0,3)
 		else
-			track.BackgroundColor3=Color3.fromRGB(92,48,58)
+			track.BackgroundColor3=THEME.SurfaceAlt
 			knob.Position=UDim2.new(0,3,0,3)
 		end
 	end
@@ -1523,16 +1556,16 @@ end
 -- BUG PAGE
 
 local selectCard=card(bugPage,62)
-local selectTitle=label(selectCard,"АВТО-КАМЕНЬ ПО РЕБАМ",9,Enum.Font.GothamBlack,Color3.fromRGB(120,190,255))
+local selectTitle=label(selectCard,"АВТО-КАМЕНЬ ПО РЕБАМ",9,Enum.Font.GothamBlack,THEME.Accent2)
 selectTitle.Size=UDim2.new(1,-20,0,18)
 selectTitle.Position=UDim2.new(0,12,0,8)
 
-local selectName=label(selectCard,"-",15,Enum.Font.GothamBlack,Color3.fromRGB(255,235,175))
+local selectName=label(selectCard,"-",15,Enum.Font.GothamBlack,THEME.Warm)
 selectName.Size=UDim2.new(1,-20,0,28)
 selectName.Position=UDim2.new(0,12,0,30)
 
 local rockCard=card(bugPage,142)
-local rockTitle=label(rockCard,"КАМНИ",12,Enum.Font.GothamBlack,Color3.fromRGB(230,235,245))
+local rockTitle=label(rockCard,"КАМНИ",12,Enum.Font.GothamBlack,THEME.Text)
 rockTitle.Size=UDim2.new(1,-20,0,20)
 rockTitle.Position=UDim2.new(0,12,0,8)
 
@@ -1574,7 +1607,7 @@ local function refreshRockList()
 		local active=Runtime.selectedRock and Runtime.selectedRock.id==row.id
 
 		local b=button(rockList,(active and "● " or "○ ")..row.label.."  |  "..(info and "found" or "missing"),
-			active and Color3.fromRGB(40,85,125) or Color3.fromRGB(22,27,35))
+			active and THEME.Accent or THEME.SurfaceAlt)
 		b.Size=UDim2.new(1,-3,0,32)
 		b.LayoutOrder=i
 		b.TextXAlignment=Enum.TextXAlignment.Left
@@ -1681,7 +1714,7 @@ local afkSlider=makeSlider(trainPage,"ANTI AFK","по умолчанию вык�
 end)
 
 local trainHeader=card(trainPage,42)
-local th=label(trainHeader,"ОТДЕЛЬНЫЕ ВИДЫ КАЧА",12,Enum.Font.GothamBlack,Color3.fromRGB(225,235,245))
+local th=label(trainHeader,"ОТДЕЛЬНЫЕ ВИДЫ КАЧА",12,Enum.Font.GothamBlack,THEME.Text)
 th.Size=UDim2.new(1,-20,1,0)
 th.Position=UDim2.new(0,10,0,0)
 th.TextXAlignment=Enum.TextXAlignment.Center
@@ -1722,8 +1755,8 @@ local function showTab(name)
 	local bug=name=="bug"
 	bugPage.Visible=(not minimized) and bug
 	trainPage.Visible=(not minimized) and (not bug)
-	bugTab.BackgroundColor3=bug and Color3.fromRGB(38,105,155) or Color3.fromRGB(35,40,50)
-	trainTab.BackgroundColor3=(not bug) and Color3.fromRGB(35,130,80) or Color3.fromRGB(35,40,50)
+	bugTab.BackgroundColor3=bug and THEME.Accent or THEME.Surface
+	trainTab.BackgroundColor3=(not bug) and THEME.Success or THEME.Surface
 end
 
 local function setMinimized(on)
