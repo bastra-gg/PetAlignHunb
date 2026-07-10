@@ -8,8 +8,40 @@ local RunService=game:GetService("RunService")
 local Stats=game:GetService("Stats")
 local VirtualUser=game:GetService("VirtualUser")
 local UserInputService=game:GetService("UserInputService")
+local StarterGui=game:GetService("StarterGui")
+
+-- Delta/auto-execute can run before the client has finished creating LocalPlayer.
+if not game:IsLoaded() then
+	game.Loaded:Wait()
+end
 
 local lp=Players.LocalPlayer
+while not lp do
+	task.wait()
+	lp=Players.LocalPlayer
+end
+
+local playerGui=lp:WaitForChild("PlayerGui",30)
+if not playerGui then
+	warn("[RockBugHub] PlayerGui was not created")
+	pcall(function()
+		StarterGui:SetCore("SendNotification",{
+			Title="RockBugHub",
+			Text="Ошибка запуска: PlayerGui не найден",
+			Duration=8,
+		})
+	end)
+	return
+end
+
+pcall(function()
+	StarterGui:SetCore("SendNotification",{
+		Title="RockBugHub",
+		Text="Скрипт загружен, создаю интерфейс...",
+		Duration=3,
+	})
+end)
+
 local HUB_VERSION="RockBugHub_v20_ValidatedCompact"
 
 local ENV=(type(getgenv)=="function" and getgenv()) or _G
@@ -23,8 +55,7 @@ end)
 
 -- Remove old windows only. No invasive getgc scan.
 pcall(function()
-	local pg=lp:WaitForChild("PlayerGui")
-	for _,g in ipairs(pg:GetChildren()) do
+	for _,g in ipairs(playerGui:GetChildren()) do
 		if g:IsA("ScreenGui") and tostring(g.Name):find("RockBugHub",1,true) then
 			g:Destroy()
 		end
@@ -1222,7 +1253,7 @@ gui.Name=HUB_VERSION
 gui.ResetOnSpawn=false
 gui.IgnoreGuiInset=true
 gui.DisplayOrder=999999
-gui.Parent=lp:WaitForChild("PlayerGui")
+gui.Parent=playerGui
 
 local function corner(o,r)
 	local c=Instance.new("UICorner")
