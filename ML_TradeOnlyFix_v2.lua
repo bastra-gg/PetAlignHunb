@@ -1,4 +1,4 @@
--- RockBugHub v19 CompactStable
+-- RockBugHub v20 Validated Compact
 -- Clean rebuild: single scheduler, hard stop, adaptive network throttle.
 -- No getgc patching, no full workspace scans inside fast loops, no unknown train remote spam.
 
@@ -10,7 +10,7 @@ local VirtualUser=game:GetService("VirtualUser")
 local UserInputService=game:GetService("UserInputService")
 
 local lp=Players.LocalPlayer
-local HUB_VERSION="RockBugHub_v19_CompactStable"
+local HUB_VERSION="RockBugHub_v20_ValidatedCompact"
 
 local ENV=(type(getgenv)=="function" and getgenv()) or _G
 
@@ -60,7 +60,9 @@ local Runtime={
 	visualLow=false,
 	visualSaved={},
 	characterCollisionSaved={},
-	characterGhost=false,
+	characterLockSaved=nil,
+	lastSchedulerTick=0,
+	lastError=nil,
 	status="ready",
 	ui=nil,
 	leverRefs={},
@@ -626,7 +628,7 @@ local function effectiveRates()
 		return 8,5
 	end
 
-	return 10,7
+	return 9,5
 end
 
 local function refillRemoteTokens()
@@ -693,63 +695,82 @@ local function tryPunchRemote()
 	return false
 end
 
+-- ---------- STABLE CHARACTER LOCK ----------
 
--- ---------- CHARACTER STABILITY ----------
-
-local function setCharacterGhost(on)
-	if on==Runtime.characterGhost then return end
-	Runtime.characterGhost=on
-
+local function restoreCharacterLock()
+	local saved=Runtime.characterLockSaved
 	local c=char()
-	if not c then return end
+	local r=root()
+	local h=hum()
 
-	if on then
-		Runtime.characterCollisionSaved={}
+	if r then
+		safe(function()
+			r.Anchored=saved and saved.rootAnchored or false
+			r.AssemblyLinearVelocity=Vector3.new(0,0,0)
+			r.AssemblyAngularVelocity=Vector3.new(0,0,0)
+		end)
+	end
 
-		for _,part in ipairs(c:GetDescendants()) do
-			if part:IsA("BasePart") then
-				Runtime.characterCollisionSaved[part]={
-					CanCollide=part.CanCollide,
-					CanTouch=part.CanTouch,
-					Massless=part.Massless,
-				}
+	if h then
+		safe(function()
+			h.AutoRotate=saved and saved.autoRotate or true
+			if saved and saved.walkSpeed~=nil then h.WalkSpeed=saved.walkSpeed end
+		end)
+	end
 
-				safe(function()
-					part.CanCollide=false
-					part.CanTouch=false
-					part.Massless=true
-				end)
-			end
-		end
-
-		local h=hum()
-		if h then
+	for part,state in pairs(Runtime.characterCollisionSaved) do
+		if part and part.Parent then
 			safe(function()
-				h.AutoRotate=false
-				h.PlatformStand=false
-			end)
-		end
-	else
-		for part,state in pairs(Runtime.characterCollisionSaved) do
-			if part and part.Parent then
-				safe(function()
-					part.CanCollide=state.CanCollide
-					part.CanTouch=state.CanTouch
-					part.Massless=state.Massless
-				end)
-			end
-		end
-
-		Runtime.characterCollisionSaved={}
-
-		local h=hum()
-		if h then
-			safe(function()
-				h.AutoRotate=true
-				h.PlatformStand=false
+				part.CanCollide=state.CanCollide
+				part.CanTouch=state.CanTouch
 			end)
 		end
 	end
+
+	Runtime.characterCollisionSaved={}
+	Runtime.characterLockSaved=nil
+end
+
+local function lockCharacterAt(cf)
+	local c=char()
+	local r=root()
+	local h=hum()
+	if not c or not r then return false,"нет персонажа" end
+
+	-- Restore any previous lock first, then save a fresh clean state.
+	restoreCharacterLock()
+
+	Runtime.characterLockSaved={
+		rootAnchored=r.Anchored,
+		autoRotate=h and h.AutoRotate or true,
+		walkSpeed=h and h.WalkSpeed or 16,
+	}
+	Runtime.characterCollisionSaved={}
+
+	for _,part in ipairs(c:GetDescendants()) do
+		if part:IsA("BasePart") then
+			Runtime.characterCollisionSaved[part]={
+				CanCollide=part.CanCollide,
+				CanTouch=part.CanTouch,
+			}
+			part.CanCollide=false
+		end
+	end
+
+	if h then
+		h.AutoRotate=false
+		h.WalkSpeed=0
+	end
+
+	r.CFrame=cf
+	r.AssemblyLinearVelocity=Vector3.new(0,0,0)
+	r.AssemblyAngularVelocity=Vector3.new(0,0,0)
+
+	-- Anchored lock: no server/client fight and no inside/outside flashing.
+	r.Anchored=true
+
+	Runtime.lockCF=cf
+	return true
 end
 
 -- ---------- SAFE TOUCH / LOCK ----------
@@ -783,40 +804,40 @@ local function insideRockCF(row)
 	local info=getRockInfo(row)
 	if not info then return nil,"камень не найден" end
 
-	local body=info.body or info.hit
-	if not body or not body:IsA("BasePart") then return nil,"нет BasePart камня" end
+	local body=info.body
+	local left=info.left
+	local right=info.right
+	local cf=nil
 
-	local pos=body.Position
-
-	if info.left and info.right
-		and info.left:IsA("BasePart")
-		and info.right:IsA("BasePart") then
-		pos=(info.left.Position+info.right.Position)/2
+	-- Best center: midpoint between the two hands. biggestPart alone can be a platform/hitbox.
+	if left and left:IsA("BasePart") and right and right:IsA("BasePart") then
+		local center=(left.Position+right.Position)/2
+		local rot=(body and body:IsA("BasePart")) and (body.CFrame-body.Position) or CFrame.new()
+		cf=CFrame.new(center)*rot
+	elseif body and body:IsA("BasePart") then
+		local offsetY=math.clamp(body.Size.Y*0.08,0,2)
+		cf=body.CFrame*CFrame.new(0,offsetY,0)
 	elseif info.hit and info.hit:IsA("BasePart") then
-		local towardBody=body.Position-info.hit.Position
-		if towardBody.Magnitude>0.01 then
-			pos=info.hit.Position+towardBody.Unit*math.min(towardBody.Magnitude*0.65,8)
-		end
+		cf=info.hit.CFrame
 	end
 
-	pos=pos-Vector3.new(0,1.6,0)
-	return CFrame.new(pos)*CFrame.Angles(0,math.rad(body.Orientation.Y),0)
+	if not cf then return nil,"нет точки внутри камня" end
+
+	local custom=ENV.RockBugInsideOffset
+	if typeof(custom)=="Vector3" then
+		cf=cf*CFrame.new(custom)
+	end
+
+	return cf
 end
 
 local function teleportInsideSelected()
-	local r=root()
-	if not r then return false,"нет HumanoidRootPart" end
-
 	local cf,err=insideRockCF(Runtime.selectedRock)
 	if not cf then return false,err end
 
-	setCharacterGhost(true)
+	local ok,why=lockCharacterAt(cf)
+	if not ok then return false,why end
 
-	r.CFrame=cf
-	r.AssemblyLinearVelocity=Vector3.new(0,0,0)
-	r.AssemblyAngularVelocity=Vector3.new(0,0,0)
-
-	Runtime.lockCF=cf
 	Runtime.nextLockTick=0
 	return true
 end
@@ -884,7 +905,16 @@ local function unequip()
 	if h then safe(function() h:UnequipTools() end) end
 end
 
-local function stopMode(reason)
+local function setAllModeLeversOff()
+	if Runtime.leverRefs.bug then Runtime.leverRefs.bug.Set(false,true) end
+	if Runtime.leverRefs.lockRock then Runtime.leverRefs.lockRock.Set(false,true) end
+
+	for _,lever in pairs(Runtime.leverRefs.train or {}) do
+		if lever then lever.Set(false,true) end
+	end
+end
+
+local function clearModeState(reason,updateLevers)
 	Runtime.modeToken=Runtime.modeToken+1
 	Runtime.mode=nil
 	Runtime.selectedTrain=nil
@@ -896,34 +926,34 @@ local function stopMode(reason)
 	Runtime.lockRock=false
 	Runtime.lockCF=nil
 
-	setCharacterGhost(false)
+	restoreCharacterLock()
 	unequip()
 
-	if Runtime.leverRefs.bug then Runtime.leverRefs.bug.Set(false,true) end
-
-	for _,lever in pairs(Runtime.leverRefs.train or {}) do
-		if lever then lever.Set(false,true) end
+	if updateLevers then
+		setAllModeLeversOff()
 	end
 
-	if Runtime.leverRefs.lockRock then Runtime.leverRefs.lockRock.Set(false,true) end
+	if reason then setStatus(reason) end
+end
 
-	setStatus(reason or "STOP")
+local function stopMode(reason)
+	clearModeState(reason or "STOP",true)
 end
 
 local function panicStop()
-	stopMode("PANIC STOP")
+	clearModeState("PANIC STOP",true)
 	Runtime.lockPosition=false
 	Runtime.positionCF=nil
 
 	if Runtime.leverRefs.lockPosition then Runtime.leverRefs.lockPosition.Set(false,true) end
 
 	setVisualLow(false)
-
 	if Runtime.leverRefs.visualLow then Runtime.leverRefs.visualLow.Set(false,true) end
 end
 
 local function startBug()
-	stopMode(nil)
+	-- Stop previous mode without turning the newly pressed BUG lever back off.
+	clearModeState(nil,false)
 
 	if not Runtime.selectedRock then
 		setStatus("камень не выбран")
@@ -937,8 +967,13 @@ local function startBug()
 	end
 
 	local tool,msg=ensurePunchTool()
-	Runtime.activeTool=tool
+	if not tool then
+		restoreCharacterLock()
+		setStatus(tostring(msg))
+		return false
+	end
 
+	Runtime.activeTool=tool
 	Runtime.modeToken=Runtime.modeToken+1
 	Runtime.mode="bug"
 	Runtime.lockRock=true
@@ -947,6 +982,7 @@ local function startBug()
 	Runtime.nextCooldownSweep=0
 	Runtime.nextNearCheck=0
 
+	if Runtime.leverRefs.bug then Runtime.leverRefs.bug.Set(true,true) end
 	if Runtime.leverRefs.lockRock then Runtime.leverRefs.lockRock.Set(true,true) end
 
 	setStatus("BUG ON | "..tostring(msg))
@@ -954,17 +990,24 @@ local function startBug()
 end
 
 local function startTrain(t)
-	stopMode(nil)
+	clearModeState(nil,false)
 
 	local tool,msg=ensureTrainTool(t)
+	if not tool then
+		setStatus(tostring(msg))
+		return false
+	end
+
 	Runtime.activeTool=tool
 	Runtime.selectedTrain=t
-
 	Runtime.modeToken=Runtime.modeToken+1
 	Runtime.mode="train"
 	Runtime.nextAction=0
 	Runtime.nextEquip=0
 	Runtime.nextCooldownSweep=0
+
+	local lever=Runtime.leverRefs.train and Runtime.leverRefs.train[t.id]
+	if lever then lever.Set(true,true) end
 
 	setStatus("TRAIN ON | "..tostring(msg))
 	return true
@@ -975,6 +1018,7 @@ end
 local function scheduler()
 	while Runtime.alive do
 		local now=os.clock()
+		Runtime.lastSchedulerTick=now
 
 		if now>=Runtime.nextNetUpdate then
 			Runtime.nextNetUpdate=now+1
@@ -1000,19 +1044,17 @@ local function scheduler()
 		end
 
 		if Runtime.mode=="bug" then
-			if Runtime.lockRock and Runtime.lockCF and now>=Runtime.nextLockTick then
-				Runtime.nextLockTick=now+0.08
+			-- Root is anchored once at the correct point. No repeated CFrame teleport.
+			if Runtime.lockRock and Runtime.lockCF then
 				local r=root()
-
-				if r then
-					local drift=(r.Position-Runtime.lockCF.Position).Magnitude
-
-					if drift>2.25 then
-						r.CFrame=Runtime.lockCF
-					end
-
+				if not r then
+					stopMode("AUTO STOP: нет root")
+				elseif not r.Anchored then
+					-- Recover the lock only if another script/game unanchored it.
+					r.CFrame=Runtime.lockCF
 					r.AssemblyLinearVelocity=Vector3.new(0,0,0)
 					r.AssemblyAngularVelocity=Vector3.new(0,0,0)
+					r.Anchored=true
 				end
 			end
 
@@ -1165,87 +1207,71 @@ end
 
 local main=Instance.new("Frame")
 main.Parent=gui
-main.Size=UDim2.new(0,390,0,510)
-main.Position=UDim2.new(0,10,0,50)
+main.Size=UDim2.new(0,292,0,392)
+main.Position=UDim2.new(0,8,0,48)
 main.BackgroundColor3=Color3.fromRGB(12,14,18)
 main.BorderSizePixel=0
 main.Active=true
-
-local uiScale=Instance.new("UIScale")
-uiScale.Scale=0.82
-uiScale.Parent=main
-
 corner(main,20)
 stroke(main,Color3.fromRGB(75,90,115),1.4,0.15)
 
 local rail=Instance.new("Frame")
 rail.Parent=main
-rail.Size=UDim2.new(0,78,1,0)
+rail.Size=UDim2.new(0,54,1,0)
 rail.BackgroundColor3=Color3.fromRGB(20,23,29)
 rail.BorderSizePixel=0
 corner(rail,20)
 
-local brand=label(rail,"B\nA\nS\nT\nR\nA",17,Enum.Font.GothamBlack,Color3.fromRGB(160,210,255))
-brand.Size=UDim2.new(1,0,0,160)
-brand.Position=UDim2.new(0,0,0,12)
+local brand=label(rail,"B\nA\nS\nT\nR\nA",12,Enum.Font.GothamBlack,Color3.fromRGB(160,210,255))
+brand.Size=UDim2.new(1,0,0,130)
+brand.Position=UDim2.new(0,0,0,8)
 brand.TextXAlignment=Enum.TextXAlignment.Center
 
 local bugTab=button(rail,"БАГ",Color3.fromRGB(38,105,155))
-bugTab.Size=UDim2.new(1,-14,0,42)
-bugTab.Position=UDim2.new(0,7,0,188)
+bugTab.Size=UDim2.new(1,-10,0,32)
+bugTab.Position=UDim2.new(0,5,0,132)
 
 local trainTab=button(rail,"КАЧ",Color3.fromRGB(35,40,50))
-trainTab.Size=UDim2.new(1,-14,0,42)
-trainTab.Position=UDim2.new(0,7,0,238)
+trainTab.Size=UDim2.new(1,-10,0,32)
+trainTab.Position=UDim2.new(0,5,0,171)
 
 local rescanBtn=button(rail,"SCAN",Color3.fromRGB(35,40,50))
-rescanBtn.Size=UDim2.new(1,-14,0,36)
-rescanBtn.Position=UDim2.new(0,7,0,296)
+rescanBtn.Size=UDim2.new(1,-10,0,29)
+rescanBtn.Position=UDim2.new(0,5,0,210)
 
 local panicBtn=button(rail,"STOP",Color3.fromRGB(125,32,47))
-panicBtn.Size=UDim2.new(1,-14,0,48)
-panicBtn.Position=UDim2.new(0,7,1,-60)
+panicBtn.Size=UDim2.new(1,-10,0,38)
+panicBtn.Position=UDim2.new(0,5,1,-44)
 
 local content=Instance.new("Frame")
 content.Parent=main
-content.Size=UDim2.new(1,-92,1,-16)
-content.Position=UDim2.new(0,86,0,8)
+content.Size=UDim2.new(1,-62,1,-10)
+content.Position=UDim2.new(0,58,0,5)
 content.BackgroundColor3=Color3.fromRGB(8,10,14)
 content.BorderSizePixel=0
 corner(content,16)
 
-local title=label(content,"COMPACT NET",19,Enum.Font.GothamBlack,Color3.fromRGB(240,245,255))
-title.Size=UDim2.new(1,-86,0,26)
-title.Position=UDim2.new(0,14,0,8)
+local title=label(content,"VALIDATED",16,Enum.Font.GothamBlack,Color3.fromRGB(240,245,255))
+title.Size=UDim2.new(1,-76,0,22)
+title.Position=UDim2.new(0,11,0,6)
 
-local author=label(content,"The Great Bastra • v19",10,Enum.Font.GothamBold,Color3.fromRGB(120,170,215))
-author.Size=UDim2.new(1,-86,0,18)
-author.Position=UDim2.new(0,15,0,31)
-
-local minBtn=button(content,"—",Color3.fromRGB(35,45,62))
-minBtn.Size=UDim2.new(0,32,0,32)
-minBtn.Position=UDim2.new(1,-76,0,8)
-minBtn.TextSize=17
+local author=label(content,"The Great Bastra • v20",10,Enum.Font.GothamBold,Color3.fromRGB(120,170,215))
+author.Size=UDim2.new(1,-76,0,16)
+author.Position=UDim2.new(0,12,0,25)
 
 local closeBtn=button(content,"×",Color3.fromRGB(90,28,42))
-closeBtn.Size=UDim2.new(0,32,0,32)
-closeBtn.Position=UDim2.new(1,-40,0,8)
+closeBtn.Size=UDim2.new(0,28,0,28)
+closeBtn.Position=UDim2.new(1,-34,0,6)
 closeBtn.TextSize=18
 
-local restoreBtn=button(gui,"BASTRA",Color3.fromRGB(24,70,105))
-restoreBtn.Size=UDim2.new(0,78,0,34)
-restoreBtn.Position=UDim2.new(0,10,0,50)
-restoreBtn.TextSize=11
-restoreBtn.Visible=false
-
 local net=label(content,"PING 0ms | REMOTE 0/s",9,Enum.Font.GothamBold,Color3.fromRGB(150,160,180))
-net.Size=UDim2.new(1,-28,0,18)
-net.Position=UDim2.new(0,14,0,52)
+net.Size=UDim2.new(1,-16,0,14)
+net.Position=UDim2.new(0,8,0,40)
 net.TextXAlignment=Enum.TextXAlignment.Center
 
 local status=label(content,"ready",10,Enum.Font.GothamBold,Color3.fromRGB(220,230,245))
-status.Size=UDim2.new(1,-28,0,32)
-status.Position=UDim2.new(0,14,0,72)
+status.Size=UDim2.new(1,-16,0,25)
+status.Position=UDim2.new(0,8,0,56)
 status.BackgroundColor3=Color3.fromRGB(18,22,30)
 status.BackgroundTransparency=0
 status.BorderSizePixel=0
@@ -1256,8 +1282,8 @@ Runtime.ui={status=status,net=net}
 
 local bugPage=Instance.new("ScrollingFrame")
 bugPage.Parent=content
-bugPage.Size=UDim2.new(1,-20,1,-120)
-bugPage.Position=UDim2.new(0,10,0,112)
+bugPage.Size=UDim2.new(1,-12,1,-92)
+bugPage.Position=UDim2.new(0,6,0,87)
 bugPage.BackgroundTransparency=1
 bugPage.BorderSizePixel=0
 bugPage.ScrollBarThickness=3
@@ -1315,32 +1341,38 @@ local function card(parent,height)
 end
 
 local function makeSlider(parent,name,desc,initial,callback)
-	local row=card(parent,54)
+	local row=Instance.new("TextButton")
+	row.Parent=parent
+	row.Size=UDim2.new(1,0,0,44)
+	row.Text=""
+	row.AutoButtonColor=false
+	row.BackgroundColor3=Color3.fromRGB(18,21,27)
+	row.BorderSizePixel=0
+	corner(row,13)
+	stroke(row,Color3.fromRGB(55,65,80),1,0.55)
 
-	local n=label(row,name,13,Enum.Font.GothamBlack,Color3.fromRGB(238,242,250))
-	n.Size=UDim2.new(1,-100,0,21)
-	n.Position=UDim2.new(0,12,0,6)
+	local n=label(row,name,11,Enum.Font.GothamBlack,Color3.fromRGB(238,242,250))
+	n.Size=UDim2.new(1,-78,0,17)
+	n.Position=UDim2.new(0,9,0,4)
 
-	local d=label(row,desc,9,Enum.Font.GothamBold,Color3.fromRGB(135,145,165))
-	d.Size=UDim2.new(1,-100,0,18)
-	d.Position=UDim2.new(0,12,0,29)
+	local d=label(row,desc,8,Enum.Font.GothamBold,Color3.fromRGB(135,145,165))
+	d.Size=UDim2.new(1,-78,0,15)
+	d.Position=UDim2.new(0,9,0,23)
 
-	local track=Instance.new("TextButton")
+	local track=Instance.new("Frame")
 	track.Parent=row
-	track.Size=UDim2.new(0,74,0,32)
-	track.Position=UDim2.new(1,-86,0,11)
-	track.Text=""
-	track.AutoButtonColor=false
+	track.Size=UDim2.new(0,54,0,25)
+	track.Position=UDim2.new(1,-62,0,9)
 	track.BorderSizePixel=0
-	corner(track,16)
+	corner(track,13)
 
 	local knob=Instance.new("Frame")
 	knob.Parent=track
-	knob.Size=UDim2.new(0,26,0,26)
+	knob.Size=UDim2.new(0,19,0,19)
 	knob.Position=UDim2.new(0,3,0,3)
 	knob.BackgroundColor3=Color3.fromRGB(242,245,250)
 	knob.BorderSizePixel=0
-	corner(knob,13)
+	corner(knob,10)
 
 	local state=initial and true or false
 	local api={}
@@ -1348,7 +1380,7 @@ local function makeSlider(parent,name,desc,initial,callback)
 	local function paint()
 		if state then
 			track.BackgroundColor3=Color3.fromRGB(40,150,85)
-			knob.Position=UDim2.new(1,-29,0,3)
+			knob.Position=UDim2.new(1,-22,0,3)
 		else
 			track.BackgroundColor3=Color3.fromRGB(92,48,58)
 			knob.Position=UDim2.new(0,3,0,3)
@@ -1358,17 +1390,14 @@ local function makeSlider(parent,name,desc,initial,callback)
 	function api.Set(v,silent)
 		state=v and true or false
 		paint()
-
-		if callback and not silent then
-			callback(state,api)
-		end
+		if callback and not silent then callback(state,api) end
 	end
 
 	function api.Get()
 		return state
 	end
 
-	addConn(track.Activated:Connect(function()
+	addConn(row.Activated:Connect(function()
 		api.Set(not state,false)
 	end))
 
@@ -1378,24 +1407,24 @@ end
 
 -- BUG PAGE
 
-local selectCard=card(bugPage,72)
+local selectCard=card(bugPage,62)
 local selectTitle=label(selectCard,"АВТО-КАМЕНЬ ПО РЕБАМ",9,Enum.Font.GothamBlack,Color3.fromRGB(120,190,255))
 selectTitle.Size=UDim2.new(1,-20,0,18)
 selectTitle.Position=UDim2.new(0,12,0,8)
 
-local selectName=label(selectCard,"-",17,Enum.Font.GothamBlack,Color3.fromRGB(255,235,175))
+local selectName=label(selectCard,"-",15,Enum.Font.GothamBlack,Color3.fromRGB(255,235,175))
 selectName.Size=UDim2.new(1,-20,0,28)
 selectName.Position=UDim2.new(0,12,0,30)
 
-local rockCard=card(bugPage,165)
+local rockCard=card(bugPage,142)
 local rockTitle=label(rockCard,"КАМНИ",12,Enum.Font.GothamBlack,Color3.fromRGB(230,235,245))
 rockTitle.Size=UDim2.new(1,-20,0,20)
 rockTitle.Position=UDim2.new(0,12,0,8)
 
 local rockList=Instance.new("ScrollingFrame")
 rockList.Parent=rockCard
-rockList.Size=UDim2.new(1,-16,0,126)
-rockList.Position=UDim2.new(0,8,0,32)
+rockList.Size=UDim2.new(1,-14,0,105)
+rockList.Position=UDim2.new(0,7,0,30)
 rockList.BackgroundTransparency=1
 rockList.BorderSizePixel=0
 rockList.ScrollBarThickness=2
@@ -1445,7 +1474,7 @@ end
 local lockRockSlider
 local bugSlider
 
-lockRockSlider=makeSlider(bugPage,"TP LOCK","держать позицию внутри камня",false,function(on,api)
+lockRockSlider=makeSlider(bugPage,"TP LOCK","без дёрганья: коррекция только при сдвиге",false,function(on,api)
 	if on then
 		local ok,err=teleportInsideSelected()
 
@@ -1459,16 +1488,18 @@ lockRockSlider=makeSlider(bugPage,"TP LOCK","держать позицию вн�
 		Runtime.nextLockTick=0
 		setStatus("TP LOCK: ON")
 	else
-		Runtime.lockRock=false
-		Runtime.lockCF=nil
-		if Runtime.mode~="bug" then
-			setCharacterGhost(false)
+		if Runtime.mode=="bug" then
+			stopMode("TP LOCK OFF / BUG STOP")
+		else
+			Runtime.lockRock=false
+			Runtime.lockCF=nil
+			restoreCharacterLock()
+			setStatus("TP LOCK: OFF")
 		end
-		setStatus("TP LOCK: OFF")
 	end
 end)
 
-bugSlider=makeSlider(bugPage,"STABLE PUNCH","10 действий/с, remote ограничен по ping",false,function(on,api)
+bugSlider=makeSlider(bugPage,"STABLE PUNCH","9 действий/с, remote максимум 5/с",false,function(on,api)
 	if on then
 		if not startBug() then
 			api.Set(false,true)
@@ -1481,7 +1512,7 @@ end)
 Runtime.leverRefs.lockRock=lockRockSlider
 Runtime.leverRefs.bug=bugSlider
 
-local remoteSlider=makeSlider(bugPage,"DIRECT REMOTE","bounded: максимум 7/s при хорошем ping",true,function(on)
+local remoteSlider=makeSlider(bugPage,"DIRECT REMOTE","bounded: максимум 5/s при хорошем ping",true,function(on)
 	Runtime.directRemoteEnabled=on
 	setStatus("DIRECT REMOTE: "..(on and "ON" or "OFF"))
 end)
@@ -1543,7 +1574,9 @@ for _,t in ipairs(TRAIN_TYPES) do
 	slider=makeSlider(trainPage,t.label,t.desc,false,function(on,api)
 		if on then
 			turnOffOtherTrain(t.id)
-			startTrain(t)
+			if not startTrain(t) then
+				api.Set(false,true)
+			end
 		else
 			if Runtime.mode=="train" and Runtime.selectedTrain and Runtime.selectedTrain.id==t.id then
 				stopMode(t.label..": OFF")
@@ -1603,18 +1636,7 @@ addConn(UserInputService.InputChanged:Connect(function(input)
 	if dragging and dragStart and startPos and (input.UserInputType==Enum.UserInputType.MouseMovement or input.UserInputType==Enum.UserInputType.Touch) then
 		local delta=input.Position-dragStart
 		main.Position=UDim2.new(startPos.X.Scale,startPos.X.Offset+delta.X,startPos.Y.Scale,startPos.Y.Offset+delta.Y)
-		restoreBtn.Position=main.Position
 	end
-end))
-
-addConn(minBtn.Activated:Connect(function()
-	main.Visible=false
-	restoreBtn.Visible=true
-end))
-
-addConn(restoreBtn.Activated:Connect(function()
-	main.Visible=true
-	restoreBtn.Visible=false
 end))
 
 function Runtime:Stop(reason)
@@ -1641,8 +1663,6 @@ addConn(lp.CharacterAdded:Connect(function()
 	Runtime.positionCF=nil
 	Runtime.lockRock=false
 	Runtime.lockPosition=false
-	Runtime.characterCollisionSaved={}
-	Runtime.characterGhost=false
 	stopMode("RESPAWN: режимы остановлены")
 
 	if Runtime.leverRefs.lockPosition then Runtime.leverRefs.lockPosition.Set(false,true) end
@@ -1656,6 +1676,16 @@ selectName.Text=autoRock.label.." | "..tostring(autoWhy)
 refreshRockList()
 showTab("bug")
 updateCanvas()
-setStatus("v19 ready | "..tostring(autoWhy))
+setStatus("v20 ready | "..tostring(autoWhy))
 
-task.spawn(scheduler)
+task.spawn(function()
+	local ok,err=xpcall(scheduler,function(e)
+		return tostring(e).."\n"..tostring(debug.traceback())
+	end)
+
+	if not ok and Runtime.alive then
+		Runtime.lastError=err
+		setStatus("SCHEDULER ERROR: "..tostring(err):sub(1,120))
+		panicStop()
+	end
+end)
