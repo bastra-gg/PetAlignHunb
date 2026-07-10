@@ -69,6 +69,10 @@ local Runtime={
 	connections={},
 	selectedTrain=nil,
 	selectedRock=nil,
+	autoRebirth=false,
+	rebirthInFlight=false,
+	kingLock=false,
+	kingCF=nil,
 	lockRock=false,
 	lockPosition=false,
 	lockCF=nil,
@@ -78,6 +82,8 @@ local Runtime={
 	nextEquip=0,
 	nextNearCheck=0,
 	nextPosTick=0,
+	nextRebirth=0,
+	nextKingTick=0,
 	nextNetUpdate=0,
 	nextCooldownSweep=0,
 	punchCycle=0,
@@ -769,6 +775,61 @@ local function tryPunchRemote()
 	return false
 end
 
+-- ---------- REBIRTH / MUSCLE KING ----------
+
+local DEFAULT_KING_CF=CFrame.new(
+	-8625.93262,17.2325287,-5730.47217,
+	0.765763462,-1.84813775e-09,0.643122315,
+	-1.32089262e-09,1,4.44647785e-09,
+	-0.643122315,-4.25444568e-09,0.765763462
+)
+
+local function findRebirthRemote()
+	local events=ReplicatedStorage:FindFirstChild("rEvents")
+	local remote=events and events:FindFirstChild("rebirthRemote")
+
+	if remote and (remote:IsA("RemoteFunction") or remote:IsA("RemoteEvent")) then
+		return remote
+	end
+
+	return nil
+end
+
+local function tryRebirth()
+	local remote=findRebirthRemote()
+	if not remote then return false,"rebirthRemote не найден" end
+
+	local ok,err=safe(function()
+		if remote:IsA("RemoteFunction") then
+			remote:InvokeServer("rebirthRequest")
+		else
+			remote:FireServer("rebirthRequest")
+		end
+	end)
+
+	return ok,err
+end
+
+local function kingTargetCF()
+	local custom=ENV.RockBugKingCF
+	if typeof(custom)=="CFrame" then return custom end
+	return DEFAULT_KING_CF
+end
+
+local function enableKingLock()
+	local r=root()
+	if not r then return false,"нет root" end
+
+	Runtime.kingCF=kingTargetCF()
+	Runtime.kingLock=true
+	Runtime.nextKingTick=0
+
+	r.CFrame=Runtime.kingCF
+	r.AssemblyLinearVelocity=Vector3.new(0,0,0)
+	r.AssemblyAngularVelocity=Vector3.new(0,0,0)
+	return true
+end
+
 -- ---------- STABLE CHARACTER LOCK ----------
 
 local function restoreCharacterLock()
@@ -1039,8 +1100,14 @@ local function panicStop()
 	clearModeState("PANIC STOP",true)
 	Runtime.lockPosition=false
 	Runtime.positionCF=nil
+	Runtime.autoRebirth=false
+	Runtime.rebirthInFlight=false
+	Runtime.kingLock=false
+	Runtime.kingCF=nil
 
 	if Runtime.leverRefs.lockPosition then Runtime.leverRefs.lockPosition.Set(false,true) end
+	if Runtime.leverRefs.autoRebirth then Runtime.leverRefs.autoRebirth.Set(false,true) end
+	if Runtime.leverRefs.kingLock then Runtime.leverRefs.kingLock.Set(false,true) end
 
 	setVisualLow(false)
 	if Runtime.leverRefs.visualLow then Runtime.leverRefs.visualLow.Set(false,true) end
@@ -1053,8 +1120,13 @@ local function startBug()
 	-- Position lock belongs to TRAIN and would fight the rock CFrame lock.
 	Runtime.lockPosition=false
 	Runtime.positionCF=nil
+	Runtime.kingLock=false
+	Runtime.kingCF=nil
 	if Runtime.leverRefs.lockPosition then
 		Runtime.leverRefs.lockPosition.Set(false,true)
+	end
+	if Runtime.leverRefs.kingLock then
+		Runtime.leverRefs.kingLock.Set(false,true)
 	end
 
 	if not Runtime.selectedRock then
@@ -1141,6 +1213,29 @@ local function scheduler()
 				setStatus("NETWORK THROTTLE: remote paused, ping "..math.floor(Runtime.pingMs))
 			elseif Runtime.pingMs>=450 and Runtime.mode then
 				setStatus("NETWORK THROTTLE: ping "..math.floor(Runtime.pingMs))
+			end
+		end
+
+		if Runtime.autoRebirth and not Runtime.rebirthInFlight and now>=Runtime.nextRebirth then
+			Runtime.nextRebirth=now+1.2
+			Runtime.rebirthInFlight=true
+			task.spawn(function()
+				local ok,err=tryRebirth()
+				Runtime.rebirthInFlight=false
+				if not ok and Runtime.alive and Runtime.autoRebirth then
+					setStatus("AUTO REB: "..tostring(err))
+				end
+			end)
+		end
+
+		if Runtime.kingLock and Runtime.kingCF and now>=Runtime.nextKingTick then
+			Runtime.nextKingTick=now+0.08
+			local r=root()
+
+			if r and (r.Position-Runtime.kingCF.Position).Magnitude>0.75 then
+				r.CFrame=Runtime.kingCF
+				r.AssemblyLinearVelocity=Vector3.new(0,0,0)
+				r.AssemblyAngularVelocity=Vector3.new(0,0,0)
 			end
 		end
 
@@ -1372,9 +1467,13 @@ local trainTab=button(rail,"КАЧ",THEME.Surface)
 trainTab.Size=UDim2.new(1,-10,0,32)
 trainTab.Position=UDim2.new(0,5,0,171)
 
+local rebTab=button(rail,"РЕБ",THEME.Surface)
+rebTab.Size=UDim2.new(1,-10,0,32)
+rebTab.Position=UDim2.new(0,5,0,210)
+
 local rescanBtn=button(rail,"SCAN",THEME.SurfaceAlt)
 rescanBtn.Size=UDim2.new(1,-10,0,29)
-rescanBtn.Position=UDim2.new(0,5,0,210)
+rescanBtn.Position=UDim2.new(0,5,0,249)
 
 local panicBtn=button(rail,"STOP",THEME.Danger)
 panicBtn.Size=UDim2.new(1,-10,0,38)
@@ -1446,6 +1545,17 @@ trainPage.ScrollBarImageColor3=THEME.Success
 trainPage.CanvasSize=UDim2.new(0,0,0,0)
 trainPage.Visible=false
 
+local rebPage=Instance.new("ScrollingFrame")
+rebPage.Parent=content
+rebPage.Size=bugPage.Size
+rebPage.Position=bugPage.Position
+rebPage.BackgroundTransparency=1
+rebPage.BorderSizePixel=0
+rebPage.ScrollBarThickness=3
+rebPage.ScrollBarImageColor3=THEME.Accent2
+rebPage.CanvasSize=UDim2.new(0,0,0,0)
+rebPage.Visible=false
+
 local function listLayout(frame)
 	local pad=Instance.new("UIPadding")
 	pad.Parent=frame
@@ -1463,16 +1573,19 @@ end
 
 local bugList=listLayout(bugPage)
 local trainList=listLayout(trainPage)
+local rebList=listLayout(rebPage)
 
 local function updateCanvas()
 	task.defer(function()
 		bugPage.CanvasSize=UDim2.new(0,0,0,bugList.AbsoluteContentSize.Y+20)
 		trainPage.CanvasSize=UDim2.new(0,0,0,trainList.AbsoluteContentSize.Y+20)
+		rebPage.CanvasSize=UDim2.new(0,0,0,rebList.AbsoluteContentSize.Y+20)
 	end)
 end
 
 addConn(bugList:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(updateCanvas))
 addConn(trainList:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(updateCanvas))
+addConn(rebList:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(updateCanvas))
 
 local function card(parent,height)
 	local f=Instance.new("Frame")
@@ -1692,6 +1805,9 @@ local lockPosSlider=makeSlider(trainPage,"LOCK POSITION","удерживать �
 		Runtime.positionCF=r.CFrame
 		Runtime.lockPosition=true
 		Runtime.nextPosTick=0
+		Runtime.kingLock=false
+		Runtime.kingCF=nil
+		if Runtime.leverRefs.kingLock then Runtime.leverRefs.kingLock.Set(false,true) end
 		setStatus("LOCK POSITION: ON")
 	else
 		Runtime.lockPosition=false
@@ -1747,16 +1863,70 @@ for _,t in ipairs(TRAIN_TYPES) do
 	Runtime.leverRefs.train[t.id]=slider
 end
 
+-- REBIRTH PAGE
+
+local rebInfo=card(rebPage,66)
+local rebInfoTitle=label(rebInfo,"AUTO REBIRTH",12,Enum.Font.GothamBlack,THEME.Accent2)
+rebInfoTitle.Size=UDim2.new(1,-20,0,20)
+rebInfoTitle.Position=UDim2.new(0,10,0,8)
+
+local rebInfoText=label(rebInfo,"Rebirth каждые 1.2с • King Gym: -8626 / 17 / -5730",9,Enum.Font.GothamBold,THEME.Muted)
+rebInfoText.Size=UDim2.new(1,-20,0,28)
+rebInfoText.Position=UDim2.new(0,10,0,31)
+
+local autoRebSlider=makeSlider(rebPage,"AUTO REBIRTH","автоматический rebirth при доступной силе",false,function(on,api)
+	if on and not findRebirthRemote() then
+		api.Set(false,true)
+		setStatus("AUTO REB: rebirthRemote не найден")
+		return
+	end
+
+	Runtime.autoRebirth=on
+	Runtime.nextRebirth=0
+	setStatus("AUTO REBIRTH: "..(on and "ON" or "OFF"))
+end)
+
+Runtime.leverRefs.autoRebirth=autoRebSlider
+
+local kingLockSlider=makeSlider(rebPage,"KING LOCK","телепорт и удержание в Muscle King Gym",false,function(on,api)
+	if on then
+		if Runtime.mode=="bug" then stopMode("BUG STOP / KING LOCK") end
+
+		Runtime.lockPosition=false
+		Runtime.positionCF=nil
+		if Runtime.leverRefs.lockPosition then Runtime.leverRefs.lockPosition.Set(false,true) end
+
+		local ok,err=enableKingLock()
+		if not ok then
+			api.Set(false,true)
+			setStatus("KING LOCK: "..tostring(err))
+			return
+		end
+
+		setStatus("KING LOCK: ON")
+	else
+		Runtime.kingLock=false
+		Runtime.kingCF=nil
+		setStatus("KING LOCK: OFF")
+	end
+end)
+
+Runtime.leverRefs.kingLock=kingLockSlider
+
 local activeTab="bug"
 local minimized=false
 
 local function showTab(name)
 	activeTab=name
 	local bug=name=="bug"
+	local train=name=="train"
+	local reb=name=="reb"
 	bugPage.Visible=(not minimized) and bug
-	trainPage.Visible=(not minimized) and (not bug)
+	trainPage.Visible=(not minimized) and train
+	rebPage.Visible=(not minimized) and reb
 	bugTab.BackgroundColor3=bug and THEME.Accent or THEME.Surface
-	trainTab.BackgroundColor3=(not bug) and THEME.Success or THEME.Surface
+	trainTab.BackgroundColor3=train and THEME.Success or THEME.Surface
+	rebTab.BackgroundColor3=reb and THEME.Accent2 or THEME.Surface
 end
 
 local function setMinimized(on)
@@ -1768,6 +1938,7 @@ local function setMinimized(on)
 	brand.Visible=not minimized
 	bugTab.Visible=not minimized
 	trainTab.Visible=not minimized
+	rebTab.Visible=not minimized
 	rescanBtn.Visible=not minimized
 	panicBtn.Visible=not minimized
 	author.Visible=not minimized
@@ -1777,6 +1948,7 @@ local function setMinimized(on)
 	if minimized then
 		bugPage.Visible=false
 		trainPage.Visible=false
+		rebPage.Visible=false
 	else
 		showTab(activeTab)
 	end
@@ -1784,6 +1956,7 @@ end
 
 addConn(bugTab.Activated:Connect(function() showTab("bug") end))
 addConn(trainTab.Activated:Connect(function() showTab("train") end))
+addConn(rebTab.Activated:Connect(function() showTab("reb") end))
 addConn(minimizeBtn.Activated:Connect(function() setMinimized(not minimized) end))
 
 addConn(rescanBtn.Activated:Connect(function()
