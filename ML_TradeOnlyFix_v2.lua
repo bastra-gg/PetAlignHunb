@@ -782,6 +782,32 @@ local function tryPunchRemote()
 	return false
 end
 
+local function tryTrainRemote()
+	if not Runtime.directRemoteEnabled then return false end
+
+	refillRemoteTokens()
+
+	if Runtime.remoteTokens<1 then
+		return false
+	end
+
+	local remote=findMuscleRemote()
+	if not remote then return false end
+
+	Runtime.remoteTokens=Runtime.remoteTokens-1
+
+	local ok=safe(function()
+		remote:FireServer("rep")
+	end)
+
+	if ok then
+		countRemoteSent()
+		return true
+	end
+
+	return false
+end
+
 -- ---------- REBIRTH / MUSCLE KING ----------
 
 local DEFAULT_KING_CF=CFrame.new(
@@ -1326,11 +1352,17 @@ local function startTrain(t)
 	Runtime.nextAction=0
 	Runtime.nextEquip=0
 	Runtime.nextCooldownSweep=0
+	local _,remoteLimit=effectiveRates()
+	Runtime.remoteTokens=remoteLimit
 
 	local lever=Runtime.leverRefs.train and Runtime.leverRefs.train[t.id]
 	if lever then lever.Set(true,true) end
 
-	setStatus("TRAIN ON | "..tostring(msg))
+	clearCooldownsOnce(tool)
+	safe(function() tool:Activate() end)
+	tryTrainRemote()
+
+	setStatus("TRAIN FAST ON | "..tostring(msg))
 	return true
 end
 
@@ -1467,13 +1499,8 @@ local function scheduler()
 			end
 		elseif Runtime.mode=="train" then
 			if now>=Runtime.nextAction then
-				local ping=Runtime.pingMs or 0
-				local rate=12
-
-				if ping>=500 then rate=4
-				elseif ping>=300 then rate=7
-				elseif ping>=200 then rate=9 end
-
+				-- Match the validated punch cadence and its adaptive network throttle.
+				local rate=effectiveRates()
 				Runtime.nextAction=now+(1/rate)
 
 				if Runtime.selectedTrain then
@@ -1483,6 +1510,7 @@ local function scheduler()
 
 					if Runtime.activeTool then
 						safe(function() Runtime.activeTool:Activate() end)
+						tryTrainRemote()
 					end
 				end
 			end
