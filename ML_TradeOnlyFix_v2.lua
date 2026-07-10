@@ -78,6 +78,7 @@ local Runtime={
 	kingCF=nil,
 	kingRoot=nil,
 	kingSavedAnchored=nil,
+	kingPresenceInFlight=false,
 	lockRock=false,
 	lockPosition=false,
 	lockCF=nil,
@@ -100,7 +101,7 @@ local Runtime={
 	remoteWindowStart=os.clock(),
 	remotePps=0,
 	directRemoteEnabled=true,
-	antiAfkEnabled=false,
+	antiAfkEnabled=true,
 	visualLow=false,
 	visualSaved={},
 	characterCollisionSaved={},
@@ -852,6 +853,92 @@ local function kingTargetCF()
 	return DEFAULT_KING_CF
 end
 
+local function findKingTriggerPart()
+	local targetPosition=kingTargetCF().Position
+	local best=nil
+	local bestScore=-math.huge
+	local scanned=0
+
+	for _,d in ipairs(workspace:GetDescendants()) do
+		scanned=scanned+1
+		if scanned>12000 then break end
+
+		if d:IsA("BasePart") then
+			local distance=(d.Position-targetPosition).Magnitude
+			if distance<=320 then
+				local full=tostring(d:GetFullName()):lower()
+				local score=-distance*0.08
+				local hasTouch=d:FindFirstChildOfClass("TouchTransmitter")~=nil
+
+				if hasTouch then score=score+100 end
+				if full:find("muscle king",1,true) or full:find("muscleking",1,true) then score=score+80 end
+				if full:find("king",1,true) then score=score+35 end
+				if containsAny(full,{"trigger","zone","area","hill","gym","capture","touch"}) then score=score+45 end
+
+				if score>bestScore and (hasTouch or score>=45) then
+					best=d
+					bestScore=score
+				end
+			end
+		end
+	end
+
+	return best
+end
+
+local function triggerKingPresence(r)
+	if Runtime.kingPresenceInFlight or not Runtime.kingLock or not r or not r.Parent then return false end
+	Runtime.kingPresenceInFlight=true
+
+	local ok,err=xpcall(function()
+		local cf=Runtime.kingCF or kingTargetCF()
+		r.Anchored=false
+		r.CFrame=cf*CFrame.new(0,6,0)
+		r.AssemblyLinearVelocity=Vector3.new(0,-18,0)
+		r.AssemblyAngularVelocity=Vector3.new(0,0,0)
+		task.wait(0.18)
+
+		if not Runtime.alive or not Runtime.kingLock or Runtime.kingRoot~=r or not r.Parent then return end
+
+		r.CFrame=cf
+		r.AssemblyLinearVelocity=Vector3.new(0,0,0)
+		r.AssemblyAngularVelocity=Vector3.new(0,0,0)
+
+		local trigger=findKingTriggerPart()
+		if trigger and type(firetouchinterest)=="function" then
+			local c=char()
+			local contacts={
+				r,
+				c and (c:FindFirstChild("LeftFoot") or c:FindFirstChild("Left Leg")),
+				c and (c:FindFirstChild("RightFoot") or c:FindFirstChild("Right Leg")),
+			}
+
+			for _,part in ipairs(contacts) do
+				if part and part:IsA("BasePart") then
+					safe(function()
+						firetouchinterest(part,trigger,0)
+						firetouchinterest(part,trigger,1)
+					end)
+				end
+			end
+		end
+
+		task.wait(0.18)
+		if Runtime.alive and Runtime.kingLock and Runtime.kingRoot==r and r.Parent then
+			r.CFrame=cf
+			r.AssemblyLinearVelocity=Vector3.new(0,0,0)
+			r.AssemblyAngularVelocity=Vector3.new(0,0,0)
+			r.Anchored=true
+		end
+	end,function(e)
+		return tostring(e)
+	end)
+
+	Runtime.kingPresenceInFlight=false
+	if not ok and Runtime.alive then setStatus("KING TRIGGER: "..tostring(err)) end
+	return ok
+end
+
 local function disableKingLock()
 	local savedRoot=Runtime.kingRoot
 	if savedRoot and savedRoot.Parent and Runtime.kingSavedAnchored~=nil then
@@ -862,6 +949,7 @@ local function disableKingLock()
 	Runtime.kingCF=nil
 	Runtime.kingRoot=nil
 	Runtime.kingSavedAnchored=nil
+	Runtime.kingPresenceInFlight=false
 end
 
 local function enableKingLock()
@@ -876,10 +964,7 @@ local function enableKingLock()
 	Runtime.kingSavedAnchored=r.Anchored
 	Runtime.nextKingTick=0
 
-	r.CFrame=Runtime.kingCF
-	r.AssemblyLinearVelocity=Vector3.new(0,0,0)
-	r.AssemblyAngularVelocity=Vector3.new(0,0,0)
-	r.Anchored=true
+	triggerKingPresence(r)
 	return true
 end
 
@@ -1302,15 +1387,13 @@ local function scheduler()
 				if Runtime.kingRoot~=r then
 					Runtime.kingRoot=r
 					Runtime.kingSavedAnchored=r.Anchored
-					r.CFrame=Runtime.kingCF
-					r.AssemblyLinearVelocity=Vector3.new(0,0,0)
-					r.AssemblyAngularVelocity=Vector3.new(0,0,0)
-					r.Anchored=true
+					if not Runtime.kingPresenceInFlight then
+						task.spawn(function() triggerKingPresence(r) end)
+					end
 				elseif not r.Anchored or (r.Position-Runtime.kingCF.Position).Magnitude>0.75 then
-					r.CFrame=Runtime.kingCF
-					r.AssemblyLinearVelocity=Vector3.new(0,0,0)
-					r.AssemblyAngularVelocity=Vector3.new(0,0,0)
-					r.Anchored=true
+					if not Runtime.kingPresenceInFlight then
+						task.spawn(function() triggerKingPresence(r) end)
+					end
 				end
 			end
 		end
@@ -1966,7 +2049,7 @@ end)
 
 Runtime.leverRefs.visualLow=visualSlider
 
-local afkSlider=makeSlider(trainPage,"ANTI AFK","по умолчанию выключен",false,function(on)
+local afkSlider=makeSlider(trainPage,"ANTI AFK","автоматически включён после запуска",true,function(on)
 	Runtime.antiAfkEnabled=on
 	setStatus("ANTI AFK: "..(on and "ON" or "OFF"))
 end)
