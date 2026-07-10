@@ -1,4 +1,4 @@
--- RockBugHub v18 StableNet
+-- RockBugHub v19 CompactStable
 -- Clean rebuild: single scheduler, hard stop, adaptive network throttle.
 -- No getgc patching, no full workspace scans inside fast loops, no unknown train remote spam.
 
@@ -10,7 +10,7 @@ local VirtualUser=game:GetService("VirtualUser")
 local UserInputService=game:GetService("UserInputService")
 
 local lp=Players.LocalPlayer
-local HUB_VERSION="RockBugHub_v18_StableNet"
+local HUB_VERSION="RockBugHub_v19_CompactStable"
 
 local ENV=(type(getgenv)=="function" and getgenv()) or _G
 
@@ -59,6 +59,8 @@ local Runtime={
 	antiAfkEnabled=false,
 	visualLow=false,
 	visualSaved={},
+	characterCollisionSaved={},
+	characterGhost=false,
 	status="ready",
 	ui=nil,
 	leverRefs={},
@@ -691,6 +693,65 @@ local function tryPunchRemote()
 	return false
 end
 
+
+-- ---------- CHARACTER STABILITY ----------
+
+local function setCharacterGhost(on)
+	if on==Runtime.characterGhost then return end
+	Runtime.characterGhost=on
+
+	local c=char()
+	if not c then return end
+
+	if on then
+		Runtime.characterCollisionSaved={}
+
+		for _,part in ipairs(c:GetDescendants()) do
+			if part:IsA("BasePart") then
+				Runtime.characterCollisionSaved[part]={
+					CanCollide=part.CanCollide,
+					CanTouch=part.CanTouch,
+					Massless=part.Massless,
+				}
+
+				safe(function()
+					part.CanCollide=false
+					part.CanTouch=false
+					part.Massless=true
+				end)
+			end
+		end
+
+		local h=hum()
+		if h then
+			safe(function()
+				h.AutoRotate=false
+				h.PlatformStand=false
+			end)
+		end
+	else
+		for part,state in pairs(Runtime.characterCollisionSaved) do
+			if part and part.Parent then
+				safe(function()
+					part.CanCollide=state.CanCollide
+					part.CanTouch=state.CanTouch
+					part.Massless=state.Massless
+				end)
+			end
+		end
+
+		Runtime.characterCollisionSaved={}
+
+		local h=hum()
+		if h then
+			safe(function()
+				h.AutoRotate=true
+				h.PlatformStand=false
+			end)
+		end
+	end
+end
+
 -- ---------- SAFE TOUCH / LOCK ----------
 
 local function targetPart()
@@ -725,8 +786,21 @@ local function insideRockCF(row)
 	local body=info.body or info.hit
 	if not body or not body:IsA("BasePart") then return nil,"нет BasePart камня" end
 
-	local y=math.max(0,math.min(2,body.Size.Y*0.08))
-	return body.CFrame*CFrame.new(0,y,0)
+	local pos=body.Position
+
+	if info.left and info.right
+		and info.left:IsA("BasePart")
+		and info.right:IsA("BasePart") then
+		pos=(info.left.Position+info.right.Position)/2
+	elseif info.hit and info.hit:IsA("BasePart") then
+		local towardBody=body.Position-info.hit.Position
+		if towardBody.Magnitude>0.01 then
+			pos=info.hit.Position+towardBody.Unit*math.min(towardBody.Magnitude*0.65,8)
+		end
+	end
+
+	pos=pos-Vector3.new(0,1.6,0)
+	return CFrame.new(pos)*CFrame.Angles(0,math.rad(body.Orientation.Y),0)
 end
 
 local function teleportInsideSelected()
@@ -735,6 +809,8 @@ local function teleportInsideSelected()
 
 	local cf,err=insideRockCF(Runtime.selectedRock)
 	if not cf then return false,err end
+
+	setCharacterGhost(true)
 
 	r.CFrame=cf
 	r.AssemblyLinearVelocity=Vector3.new(0,0,0)
@@ -820,6 +896,7 @@ local function stopMode(reason)
 	Runtime.lockRock=false
 	Runtime.lockCF=nil
 
+	setCharacterGhost(false)
 	unequip()
 
 	if Runtime.leverRefs.bug then Runtime.leverRefs.bug.Set(false,true) end
@@ -924,11 +1001,16 @@ local function scheduler()
 
 		if Runtime.mode=="bug" then
 			if Runtime.lockRock and Runtime.lockCF and now>=Runtime.nextLockTick then
-				Runtime.nextLockTick=now+0.05
+				Runtime.nextLockTick=now+0.08
 				local r=root()
 
 				if r then
-					r.CFrame=Runtime.lockCF
+					local drift=(r.Position-Runtime.lockCF.Position).Magnitude
+
+					if drift>2.25 then
+						r.CFrame=Runtime.lockCF
+					end
+
 					r.AssemblyLinearVelocity=Vector3.new(0,0,0)
 					r.AssemblyAngularVelocity=Vector3.new(0,0,0)
 				end
@@ -1088,6 +1170,11 @@ main.Position=UDim2.new(0,10,0,50)
 main.BackgroundColor3=Color3.fromRGB(12,14,18)
 main.BorderSizePixel=0
 main.Active=true
+
+local uiScale=Instance.new("UIScale")
+uiScale.Scale=0.82
+uiScale.Parent=main
+
 corner(main,20)
 stroke(main,Color3.fromRGB(75,90,115),1.4,0.15)
 
@@ -1127,18 +1214,29 @@ content.BackgroundColor3=Color3.fromRGB(8,10,14)
 content.BorderSizePixel=0
 corner(content,16)
 
-local title=label(content,"STABLE NET",19,Enum.Font.GothamBlack,Color3.fromRGB(240,245,255))
+local title=label(content,"COMPACT NET",19,Enum.Font.GothamBlack,Color3.fromRGB(240,245,255))
 title.Size=UDim2.new(1,-86,0,26)
 title.Position=UDim2.new(0,14,0,8)
 
-local author=label(content,"The Great Bastra • v18",10,Enum.Font.GothamBold,Color3.fromRGB(120,170,215))
+local author=label(content,"The Great Bastra • v19",10,Enum.Font.GothamBold,Color3.fromRGB(120,170,215))
 author.Size=UDim2.new(1,-86,0,18)
 author.Position=UDim2.new(0,15,0,31)
+
+local minBtn=button(content,"—",Color3.fromRGB(35,45,62))
+minBtn.Size=UDim2.new(0,32,0,32)
+minBtn.Position=UDim2.new(1,-76,0,8)
+minBtn.TextSize=17
 
 local closeBtn=button(content,"×",Color3.fromRGB(90,28,42))
 closeBtn.Size=UDim2.new(0,32,0,32)
 closeBtn.Position=UDim2.new(1,-40,0,8)
 closeBtn.TextSize=18
+
+local restoreBtn=button(gui,"BASTRA",Color3.fromRGB(24,70,105))
+restoreBtn.Size=UDim2.new(0,78,0,34)
+restoreBtn.Position=UDim2.new(0,10,0,50)
+restoreBtn.TextSize=11
+restoreBtn.Visible=false
 
 local net=label(content,"PING 0ms | REMOTE 0/s",9,Enum.Font.GothamBold,Color3.fromRGB(150,160,180))
 net.Size=UDim2.new(1,-28,0,18)
@@ -1363,6 +1461,9 @@ lockRockSlider=makeSlider(bugPage,"TP LOCK","держать позицию вн�
 	else
 		Runtime.lockRock=false
 		Runtime.lockCF=nil
+		if Runtime.mode~="bug" then
+			setCharacterGhost(false)
+		end
 		setStatus("TP LOCK: OFF")
 	end
 end)
@@ -1502,7 +1603,18 @@ addConn(UserInputService.InputChanged:Connect(function(input)
 	if dragging and dragStart and startPos and (input.UserInputType==Enum.UserInputType.MouseMovement or input.UserInputType==Enum.UserInputType.Touch) then
 		local delta=input.Position-dragStart
 		main.Position=UDim2.new(startPos.X.Scale,startPos.X.Offset+delta.X,startPos.Y.Scale,startPos.Y.Offset+delta.Y)
+		restoreBtn.Position=main.Position
 	end
+end))
+
+addConn(minBtn.Activated:Connect(function()
+	main.Visible=false
+	restoreBtn.Visible=true
+end))
+
+addConn(restoreBtn.Activated:Connect(function()
+	main.Visible=true
+	restoreBtn.Visible=false
 end))
 
 function Runtime:Stop(reason)
@@ -1529,6 +1641,8 @@ addConn(lp.CharacterAdded:Connect(function()
 	Runtime.positionCF=nil
 	Runtime.lockRock=false
 	Runtime.lockPosition=false
+	Runtime.characterCollisionSaved={}
+	Runtime.characterGhost=false
 	stopMode("RESPAWN: режимы остановлены")
 
 	if Runtime.leverRefs.lockPosition then Runtime.leverRefs.lockPosition.Set(false,true) end
@@ -1542,6 +1656,6 @@ selectName.Text=autoRock.label.." | "..tostring(autoWhy)
 refreshRockList()
 showTab("bug")
 updateCanvas()
-setStatus("v18 ready | "..tostring(autoWhy))
+setStatus("v19 ready | "..tostring(autoWhy))
 
 task.spawn(scheduler)
