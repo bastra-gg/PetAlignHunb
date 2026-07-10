@@ -71,8 +71,13 @@ local Runtime={
 	selectedRock=nil,
 	autoRebirth=false,
 	rebirthInFlight=false,
+	autoSize=false,
+	sizeTarget=1,
+	sizeInFlight=false,
 	kingLock=false,
 	kingCF=nil,
+	kingRoot=nil,
+	kingSavedAnchored=nil,
 	lockRock=false,
 	lockPosition=false,
 	lockCF=nil,
@@ -83,6 +88,7 @@ local Runtime={
 	nextNearCheck=0,
 	nextPosTick=0,
 	nextRebirth=0,
+	nextSize=0,
 	nextKingTick=0,
 	nextNetUpdate=0,
 	nextCooldownSweep=0,
@@ -810,23 +816,70 @@ local function tryRebirth()
 	return ok,err
 end
 
+local function findSizeRemote()
+	local events=ReplicatedStorage:FindFirstChild("rEvents")
+	local remote=events and events:FindFirstChild("changeSpeedSizeRemote")
+
+	if remote and (remote:IsA("RemoteFunction") or remote:IsA("RemoteEvent")) then
+		return remote
+	end
+
+	return nil
+end
+
+local function trySetSize(value)
+	local remote=findSizeRemote()
+	if not remote then return false,"changeSpeedSizeRemote не найден" end
+
+	local size=tonumber(value)
+	if not size then return false,"неверный размер" end
+	size=math.clamp(size,0.1,1000)
+
+	local ok,err=safe(function()
+		if remote:IsA("RemoteFunction") then
+			remote:InvokeServer("changeSize",size)
+		else
+			remote:FireServer("changeSize",size)
+		end
+	end)
+
+	return ok,err
+end
+
 local function kingTargetCF()
 	local custom=ENV.RockBugKingCF
 	if typeof(custom)=="CFrame" then return custom end
 	return DEFAULT_KING_CF
 end
 
+local function disableKingLock()
+	local savedRoot=Runtime.kingRoot
+	if savedRoot and savedRoot.Parent and Runtime.kingSavedAnchored~=nil then
+		safe(function() savedRoot.Anchored=Runtime.kingSavedAnchored end)
+	end
+
+	Runtime.kingLock=false
+	Runtime.kingCF=nil
+	Runtime.kingRoot=nil
+	Runtime.kingSavedAnchored=nil
+end
+
 local function enableKingLock()
 	local r=root()
 	if not r then return false,"нет root" end
 
+	disableKingLock()
+
 	Runtime.kingCF=kingTargetCF()
 	Runtime.kingLock=true
+	Runtime.kingRoot=r
+	Runtime.kingSavedAnchored=r.Anchored
 	Runtime.nextKingTick=0
 
 	r.CFrame=Runtime.kingCF
 	r.AssemblyLinearVelocity=Vector3.new(0,0,0)
 	r.AssemblyAngularVelocity=Vector3.new(0,0,0)
+	r.Anchored=true
 	return true
 end
 
@@ -1102,11 +1155,12 @@ local function panicStop()
 	Runtime.positionCF=nil
 	Runtime.autoRebirth=false
 	Runtime.rebirthInFlight=false
-	Runtime.kingLock=false
-	Runtime.kingCF=nil
+	Runtime.autoSize=false
+	disableKingLock()
 
 	if Runtime.leverRefs.lockPosition then Runtime.leverRefs.lockPosition.Set(false,true) end
 	if Runtime.leverRefs.autoRebirth then Runtime.leverRefs.autoRebirth.Set(false,true) end
+	if Runtime.leverRefs.autoSize then Runtime.leverRefs.autoSize.Set(false,true) end
 	if Runtime.leverRefs.kingLock then Runtime.leverRefs.kingLock.Set(false,true) end
 
 	setVisualLow(false)
@@ -1120,8 +1174,7 @@ local function startBug()
 	-- Position lock belongs to TRAIN and would fight the rock CFrame lock.
 	Runtime.lockPosition=false
 	Runtime.positionCF=nil
-	Runtime.kingLock=false
-	Runtime.kingCF=nil
+	disableKingLock()
 	if Runtime.leverRefs.lockPosition then
 		Runtime.leverRefs.lockPosition.Set(false,true)
 	end
@@ -1228,14 +1281,37 @@ local function scheduler()
 			end)
 		end
 
+		if Runtime.autoSize and not Runtime.sizeInFlight and now>=Runtime.nextSize then
+			Runtime.nextSize=now+0.25
+			Runtime.sizeInFlight=true
+			local requestedSize=Runtime.sizeTarget
+			task.spawn(function()
+				local ok,err=trySetSize(requestedSize)
+				Runtime.sizeInFlight=false
+				if not ok and Runtime.alive and Runtime.autoSize then
+					setStatus("AUTO SIZE: "..tostring(err))
+				end
+			end)
+		end
+
 		if Runtime.kingLock and Runtime.kingCF and now>=Runtime.nextKingTick then
-			Runtime.nextKingTick=now+0.08
+			Runtime.nextKingTick=now+0.25
 			local r=root()
 
-			if r and (r.Position-Runtime.kingCF.Position).Magnitude>0.75 then
-				r.CFrame=Runtime.kingCF
-				r.AssemblyLinearVelocity=Vector3.new(0,0,0)
-				r.AssemblyAngularVelocity=Vector3.new(0,0,0)
+			if r then
+				if Runtime.kingRoot~=r then
+					Runtime.kingRoot=r
+					Runtime.kingSavedAnchored=r.Anchored
+					r.CFrame=Runtime.kingCF
+					r.AssemblyLinearVelocity=Vector3.new(0,0,0)
+					r.AssemblyAngularVelocity=Vector3.new(0,0,0)
+					r.Anchored=true
+				elseif not r.Anchored or (r.Position-Runtime.kingCF.Position).Magnitude>0.75 then
+					r.CFrame=Runtime.kingCF
+					r.AssemblyLinearVelocity=Vector3.new(0,0,0)
+					r.AssemblyAngularVelocity=Vector3.new(0,0,0)
+					r.Anchored=true
+				end
 			end
 		end
 
@@ -1666,6 +1742,73 @@ local function makeSlider(parent,name,desc,initial,callback)
 	return api,row
 end
 
+local function makeNumberInput(parent,name,desc,initial,callback)
+	local row=Instance.new("Frame")
+	row.Parent=parent
+	row.Size=UDim2.new(1,0,0,50)
+	row.BackgroundColor3=THEME.Surface
+	row.BackgroundTransparency=0.14
+	row.BorderSizePixel=0
+	corner(row,13)
+	stroke(row,THEME.Border,1,0.62)
+
+	local n=label(row,name,11,Enum.Font.GothamBlack,THEME.Text)
+	n.Size=UDim2.new(1,-84,0,18)
+	n.Position=UDim2.new(0,9,0,5)
+
+	local d=label(row,desc,8,Enum.Font.GothamBold,THEME.Muted)
+	d.Size=UDim2.new(1,-84,0,16)
+	d.Position=UDim2.new(0,9,0,27)
+
+	local box=Instance.new("TextBox")
+	box.Parent=row
+	box.Size=UDim2.new(0,68,0,30)
+	box.Position=UDim2.new(1,-76,0,10)
+	box.BackgroundColor3=THEME.SurfaceAlt
+	box.BackgroundTransparency=0.05
+	box.BorderSizePixel=0
+	box.TextColor3=THEME.Text
+	box.PlaceholderColor3=THEME.Muted
+	box.PlaceholderText="1"
+	box.ClearTextOnFocus=false
+	box.Font=Enum.Font.GothamBlack
+	box.TextSize=12
+	box.Text=tostring(initial or 1)
+	corner(box,10)
+	stroke(box,THEME.Accent2,1,0.45)
+
+	local value=tonumber(initial) or 1
+	local api={}
+
+	local function commit()
+		local parsed=tonumber((tostring(box.Text):gsub(",",".")))
+		if not parsed then
+			box.Text=tostring(value)
+			setStatus(name..": введи число")
+			return
+		end
+
+		value=math.clamp(parsed,0.1,1000)
+		box.Text=tostring(value)
+		if callback then callback(value,api) end
+	end
+
+	function api.Get()
+		return value
+	end
+
+	function api.Set(v,silent)
+		local parsed=tonumber(v)
+		if not parsed then return end
+		value=math.clamp(parsed,0.1,1000)
+		box.Text=tostring(value)
+		if callback and not silent then callback(value,api) end
+	end
+
+	addConn(box.FocusLost:Connect(commit))
+	return api,row
+end
+
 -- BUG PAGE
 
 local selectCard=card(bugPage,62)
@@ -1805,8 +1948,7 @@ local lockPosSlider=makeSlider(trainPage,"LOCK POSITION","удерживать �
 		Runtime.positionCF=r.CFrame
 		Runtime.lockPosition=true
 		Runtime.nextPosTick=0
-		Runtime.kingLock=false
-		Runtime.kingCF=nil
+		disableKingLock()
 		if Runtime.leverRefs.kingLock then Runtime.leverRefs.kingLock.Set(false,true) end
 		setStatus("LOCK POSITION: ON")
 	else
@@ -1888,7 +2030,28 @@ end)
 
 Runtime.leverRefs.autoRebirth=autoRebSlider
 
-local kingLockSlider=makeSlider(rebPage,"KING LOCK","телепорт и удержание в Muscle King Gym",false,function(on,api)
+local sizeInput=makeNumberInput(rebPage,"TARGET SIZE","число от 0.1 до 1000",1,function(value)
+	Runtime.sizeTarget=value
+	if Runtime.autoSize then Runtime.nextSize=0 end
+	setStatus("TARGET SIZE: "..tostring(value))
+end)
+
+local autoSizeSlider=makeSlider(rebPage,"AUTO SET SIZE","удерживать размер на введённом значении",false,function(on,api)
+	if on and not findSizeRemote() then
+		api.Set(false,true)
+		setStatus("AUTO SIZE: changeSpeedSizeRemote не найден")
+		return
+	end
+
+	Runtime.sizeTarget=sizeInput.Get()
+	Runtime.autoSize=on
+	Runtime.nextSize=0
+	setStatus(("AUTO SET SIZE: %s | target %s"):format(on and "ON" or "OFF",tostring(Runtime.sizeTarget)))
+end)
+
+Runtime.leverRefs.autoSize=autoSizeSlider
+
+local kingLockSlider=makeSlider(rebPage,"KING LOCK","телепорт и зависание в воздухе Muscle King Gym",false,function(on,api)
 	if on then
 		if Runtime.mode=="bug" then stopMode("BUG STOP / KING LOCK") end
 
@@ -1905,8 +2068,7 @@ local kingLockSlider=makeSlider(rebPage,"KING LOCK","телепорт и уде�
 
 		setStatus("KING LOCK: ON")
 	else
-		Runtime.kingLock=false
-		Runtime.kingCF=nil
+		disableKingLock()
 		setStatus("KING LOCK: OFF")
 	end
 end)
