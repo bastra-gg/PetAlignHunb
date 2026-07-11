@@ -98,6 +98,7 @@ local Runtime={
 	pingAvailable=false,
 	netGuardEnabled=true,
 	networkPaused=false,
+	manualNetworkHold=false,
 	networkState="HEALTHY",
 	networkBadSamples=0,
 	networkGoodSamples=0,
@@ -107,6 +108,10 @@ local Runtime={
 	networkProbeUnsupported=false,
 	networkReason=nil,
 	networkRecoveries=0,
+	networkHoldRoot=nil,
+	networkHoldCF=nil,
+	networkHoldSavedAnchored=nil,
+	nextNetworkHoldTick=0,
 	transientFailures={},
 	respawnGeneration=0,
 	autoResumeAfterRespawn=true,
@@ -741,6 +746,47 @@ local function getPingMs()
 	return nil
 end
 
+local function releaseNetworkCharacterHold()
+	local heldRoot=Runtime.networkHoldRoot
+	if heldRoot and heldRoot.Parent and Runtime.networkHoldSavedAnchored~=nil then
+		safe(function()
+			if Runtime.kingLock and Runtime.kingRoot==heldRoot then
+				heldRoot.Anchored=true
+			else
+				heldRoot.Anchored=Runtime.networkHoldSavedAnchored
+			end
+			heldRoot.AssemblyLinearVelocity=Vector3.new(0,0,0)
+			heldRoot.AssemblyAngularVelocity=Vector3.new(0,0,0)
+		end)
+	end
+
+	Runtime.networkHoldRoot=nil
+	Runtime.networkHoldCF=nil
+	Runtime.networkHoldSavedAnchored=nil
+	Runtime.nextNetworkHoldTick=0
+end
+
+local function keepNetworkCharacterHold()
+	local r=root()
+	if not r then return false end
+
+	if Runtime.networkHoldRoot~=r then
+		releaseNetworkCharacterHold()
+		Runtime.networkHoldRoot=r
+		Runtime.networkHoldCF=r.CFrame
+		Runtime.networkHoldSavedAnchored=r.Anchored
+	end
+
+	local cf=Runtime.networkHoldCF or r.CFrame
+	safe(function()
+		r.CFrame=cf
+		r.AssemblyLinearVelocity=Vector3.new(0,0,0)
+		r.AssemblyAngularVelocity=Vector3.new(0,0,0)
+		r.Anchored=true
+	end)
+	return true
+end
+
 local function enterNetworkHold(reason,now)
 	if not Runtime.netGuardEnabled then return end
 	now=now or os.clock()
@@ -757,6 +803,7 @@ local function enterNetworkHold(reason,now)
 	end
 
 	Runtime.networkReason=tostring(reason or "connection unstable")
+	keepNetworkCharacterHold()
 	setStatus("NET GUARD: HOLD | "..Runtime.networkReason)
 end
 
@@ -776,6 +823,7 @@ local function leaveNetworkHold(now,reason)
 	Runtime.nextAction=now+0.25
 	Runtime.nextRebirth=now+0.5
 	Runtime.nextSize=now+0.5
+	releaseNetworkCharacterHold()
 
 	if wasPaused then
 		Runtime.networkRecoveries=Runtime.networkRecoveries+1
@@ -802,6 +850,12 @@ local function updateNetworkGuard(now)
 	if not Runtime.netGuardEnabled then
 		Runtime.networkBadSamples=0
 		Runtime.networkGoodSamples=0
+		return sample
+	end
+
+	if Runtime.manualNetworkHold then
+		enterNetworkHold("manual WiFi hold",now)
+		Runtime.networkState="MANUAL HOLD"
 		return sample
 	end
 
@@ -1375,6 +1429,21 @@ local function nearSelectedRock()
 	return true
 end
 
+local function insideSelectedRockLockZone(r)
+	local info=getRockInfo(Runtime.selectedRock)
+	local zone=info and (info.body or info.hit)
+	if not r or not zone or not zone:IsA("BasePart") then return false end
+
+	local localPosition=zone.CFrame:PointToObjectSpace(r.Position)
+	local half=zone.Size*0.5
+	local maxSize=math.max(zone.Size.X,zone.Size.Y,zone.Size.Z)
+	local margin=math.clamp(maxSize*0.18,8,22)
+
+	return math.abs(localPosition.X)<=half.X+margin
+		and math.abs(localPosition.Y)<=half.Y+margin
+		and math.abs(localPosition.Z)<=half.Z+margin
+end
+
 -- ---------- SAFE VISUAL LOW ----------
 
 local function setVisualLow(on)
@@ -1577,6 +1646,11 @@ local function scheduler()
 			setNetText()
 		end
 
+		if Runtime.networkPaused and now>=Runtime.nextNetworkHoldTick then
+			Runtime.nextNetworkHoldTick=now+0.05
+			keepNetworkCharacterHold()
+		end
+
 		if not Runtime.networkPaused and Runtime.autoRebirth and not Runtime.rebirthInFlight and now>=Runtime.nextRebirth then
 			Runtime.nextRebirth=now+1.2
 			Runtime.rebirthInFlight=true
@@ -1643,9 +1717,16 @@ local function scheduler()
 					end
 				elseif (r.Position-Runtime.lockCF.Position).Magnitude>1.25 then
 					clearTransientFailure("bugRoot")
-					r.CFrame=Runtime.lockCF
-					r.AssemblyLinearVelocity=Vector3.new(0,0,0)
-					r.AssemblyAngularVelocity=Vector3.new(0,0,0)
+					local drift=(r.Position-Runtime.lockCF.Position).Magnitude
+					if insideSelectedRockLockZone(r) then
+						-- Physics may push the character from the center toward a valid edge.
+						-- Follow that stable contact point instead of teleporting to center.
+						Runtime.lockCF=r.CFrame
+					elseif drift>8 then
+						r.CFrame=Runtime.lockCF
+						r.AssemblyLinearVelocity=Vector3.new(0,0,0)
+						r.AssemblyAngularVelocity=Vector3.new(0,0,0)
+					end
 				else
 					clearTransientFailure("bugRoot")
 				end
@@ -1754,18 +1835,18 @@ gui.DisplayOrder=999999
 gui.Parent=playerGui
 
 local THEME={
-	Bg=Color3.fromRGB(13,15,26),
-	Panel=Color3.fromRGB(27,23,48),
-	Surface=Color3.fromRGB(31,34,52),
-	SurfaceAlt=Color3.fromRGB(39,43,65),
+	Bg=Color3.fromRGB(7,10,18),
+	Panel=Color3.fromRGB(12,17,31),
+	Surface=Color3.fromRGB(16,22,39),
+	SurfaceAlt=Color3.fromRGB(24,31,52),
 	Accent=Color3.fromRGB(139,92,246),
-	Accent2=Color3.fromRGB(34,211,238),
-	Success=Color3.fromRGB(52,211,153),
-	Danger=Color3.fromRGB(244,63,94),
-	Text=Color3.fromRGB(241,245,249),
-	Muted=Color3.fromRGB(148,163,184),
-	Border=Color3.fromRGB(129,140,248),
-	Warm=Color3.fromRGB(251,191,36),
+	Accent2=Color3.fromRGB(32,216,210),
+	Success=Color3.fromRGB(77,226,168),
+	Danger=Color3.fromRGB(255,102,119),
+	Text=Color3.fromRGB(238,242,255),
+	Muted=Color3.fromRGB(153,163,187),
+	Border=Color3.fromRGB(173,139,255),
+	Warm=Color3.fromRGB(255,180,84),
 }
 
 local function corner(o,r)
@@ -1780,6 +1861,7 @@ local function stroke(o,color,thickness,transparency)
 	s.Thickness=thickness
 	s.Transparency=transparency
 	s.Parent=o
+	return s
 end
 
 local function gradient(o,fromColor,toColor,rotation)
@@ -1810,7 +1892,7 @@ local function button(parent,text,color)
 	b.Text=text
 	b.TextColor3=THEME.Text
 	b.BackgroundColor3=color
-	b.BackgroundTransparency=0.08
+	b.BackgroundTransparency=0.16
 	b.BorderSizePixel=0
 	b.AutoButtonColor=true
 	b.Font=Enum.Font.GothamBlack
@@ -1821,46 +1903,47 @@ end
 
 local main=Instance.new("Frame")
 main.Parent=gui
-main.Size=UDim2.new(0,292,0,392)
-main.Position=UDim2.new(0,8,0,48)
+main.Size=UDim2.new(0,310,0,420)
+main.Position=UDim2.new(0,8,0,42)
 main.BackgroundColor3=THEME.Bg
-main.BackgroundTransparency=0.10
+main.BackgroundTransparency=0.20
 main.BorderSizePixel=0
 main.Active=true
-corner(main,20)
-stroke(main,THEME.Border,1.4,0.25)
+corner(main,24)
+local mainStroke=stroke(main,THEME.Border,1.5,0.20)
+gradient(mainStroke,THEME.Accent,THEME.Accent2,45)
 gradient(main,THEME.Bg,THEME.Panel,135)
 
 local rail=Instance.new("Frame")
 rail.Parent=main
-rail.Size=UDim2.new(0,54,1,0)
+rail.Size=UDim2.new(0,58,1,0)
 rail.BackgroundColor3=THEME.Panel
-rail.BackgroundTransparency=0.12
+rail.BackgroundTransparency=0.24
 rail.BorderSizePixel=0
 rail.ClipsDescendants=true
-corner(rail,20)
-gradient(rail,THEME.Panel,THEME.SurfaceAlt,90)
+corner(rail,24)
+gradient(rail,THEME.Panel,THEME.Bg,90)
 
-local brand=label(rail,"B\nA\nS\nT\nR\nA",12,Enum.Font.GothamBlack,THEME.Accent2)
-brand.Size=UDim2.new(1,0,0,130)
+local brand=label(rail,"R\nO\nC\nK",14,Enum.Font.GothamBlack,THEME.Accent2)
+brand.Size=UDim2.new(1,0,0,104)
 brand.Position=UDim2.new(0,0,0,8)
 brand.TextXAlignment=Enum.TextXAlignment.Center
 
 local bugTab=button(rail,"БАГ",THEME.Accent)
 bugTab.Size=UDim2.new(1,-10,0,32)
-bugTab.Position=UDim2.new(0,5,0,132)
+bugTab.Position=UDim2.new(0,5,0,116)
 
 local trainTab=button(rail,"КАЧ",THEME.Surface)
 trainTab.Size=UDim2.new(1,-10,0,32)
-trainTab.Position=UDim2.new(0,5,0,171)
+trainTab.Position=UDim2.new(0,5,0,155)
 
 local rebTab=button(rail,"РЕБ",THEME.Surface)
 rebTab.Size=UDim2.new(1,-10,0,32)
-rebTab.Position=UDim2.new(0,5,0,210)
+rebTab.Position=UDim2.new(0,5,0,194)
 
 local rescanBtn=button(rail,"SCAN",THEME.SurfaceAlt)
 rescanBtn.Size=UDim2.new(1,-10,0,29)
-rescanBtn.Position=UDim2.new(0,5,0,249)
+rescanBtn.Position=UDim2.new(0,5,0,233)
 
 local panicBtn=button(rail,"STOP",THEME.Danger)
 panicBtn.Size=UDim2.new(1,-10,0,38)
@@ -1868,20 +1951,20 @@ panicBtn.Position=UDim2.new(0,5,1,-44)
 
 local content=Instance.new("Frame")
 content.Parent=main
-content.Size=UDim2.new(1,-62,1,-10)
-content.Position=UDim2.new(0,58,0,5)
+content.Size=UDim2.new(1,-67,1,-10)
+content.Position=UDim2.new(0,62,0,5)
 content.BackgroundColor3=THEME.Bg
-content.BackgroundTransparency=0.18
+content.BackgroundTransparency=0.30
 content.BorderSizePixel=0
 content.ClipsDescendants=true
 corner(content,16)
-gradient(content,THEME.Bg,THEME.Surface,135)
+gradient(content,THEME.Bg,THEME.Surface,125)
 
-local title=label(content,"VALIDATED",16,Enum.Font.GothamBlack,THEME.Text)
+local title=label(content,"ROCK ROUTE",16,Enum.Font.GothamBlack,THEME.Text)
 title.Size=UDim2.new(1,-110,0,22)
 title.Position=UDim2.new(0,11,0,6)
 
-local author=label(content,"The Great Bastra • v20",10,Enum.Font.GothamBold,THEME.Accent2)
+local author=label(content,"SESSION HUB • v21",9,Enum.Font.GothamBold,THEME.Accent2)
 author.Size=UDim2.new(1,-76,0,16)
 author.Position=UDim2.new(0,12,0,25)
 
@@ -1895,7 +1978,7 @@ minimizeBtn.Size=UDim2.new(0,28,0,28)
 minimizeBtn.Position=UDim2.new(1,-66,0,6)
 minimizeBtn.TextSize=18
 
-local net=label(content,"PING 0ms | REMOTE 0/s",9,Enum.Font.GothamBold,THEME.Muted)
+local net=label(content,"PING ? | REMOTE 0/s",9,Enum.Font.GothamBold,THEME.Accent2)
 net.Size=UDim2.new(1,-16,0,14)
 net.Position=UDim2.new(0,8,0,40)
 net.TextXAlignment=Enum.TextXAlignment.Center
@@ -1904,10 +1987,12 @@ local status=label(content,"ready",10,Enum.Font.GothamBold,THEME.Text)
 status.Size=UDim2.new(1,-16,0,25)
 status.Position=UDim2.new(0,8,0,56)
 status.BackgroundColor3=THEME.Surface
-status.BackgroundTransparency=0.18
+status.BackgroundTransparency=0.34
 status.BorderSizePixel=0
 status.TextXAlignment=Enum.TextXAlignment.Center
 corner(status,11)
+local statusStroke=stroke(status,THEME.Accent2,1,0.74)
+gradient(status,THEME.Surface,THEME.Bg,0)
 
 Runtime.ui={status=status,net=net}
 
@@ -1979,10 +2064,11 @@ local function card(parent,height)
 	f.Parent=parent
 	f.Size=UDim2.new(1,0,0,height)
 	f.BackgroundColor3=THEME.Surface
-	f.BackgroundTransparency=0.16
+	f.BackgroundTransparency=0.28
 	f.BorderSizePixel=0
-	corner(f,14)
-	stroke(f,THEME.Border,1,0.62)
+	corner(f,16)
+	stroke(f,THEME.Border,1,0.72)
+	gradient(f,THEME.Surface,THEME.Bg,115)
 	return f
 end
 
@@ -1993,10 +2079,11 @@ local function makeSlider(parent,name,desc,initial,callback)
 	row.Text=""
 	row.AutoButtonColor=false
 	row.BackgroundColor3=THEME.Surface
-	row.BackgroundTransparency=0.14
+	row.BackgroundTransparency=0.26
 	row.BorderSizePixel=0
-	corner(row,13)
-	stroke(row,THEME.Border,1,0.62)
+	corner(row,15)
+	stroke(row,THEME.Border,1,0.72)
+	gradient(row,THEME.Surface,THEME.Bg,110)
 
 	local n=label(row,name,11,Enum.Font.GothamBlack,THEME.Text)
 	n.Size=UDim2.new(1,-78,0,17)
@@ -2058,10 +2145,11 @@ local function makeNumberInput(parent,name,desc,initial,callback)
 	row.Parent=parent
 	row.Size=UDim2.new(1,0,0,50)
 	row.BackgroundColor3=THEME.Surface
-	row.BackgroundTransparency=0.14
+	row.BackgroundTransparency=0.26
 	row.BorderSizePixel=0
-	corner(row,13)
-	stroke(row,THEME.Border,1,0.62)
+	corner(row,15)
+	stroke(row,THEME.Border,1,0.72)
+	gradient(row,THEME.Surface,THEME.Bg,110)
 
 	local n=label(row,name,11,Enum.Font.GothamBlack,THEME.Text)
 	n.Size=UDim2.new(1,-84,0,18)
@@ -2285,6 +2373,8 @@ end)
 local netGuardSlider=makeSlider(trainPage,"NET GUARD","автопауза при обрыве и мягкое восстановление",true,function(on)
 	Runtime.netGuardEnabled=on
 	if not on then
+		Runtime.manualNetworkHold=false
+		if Runtime.leverRefs.wifiHold then Runtime.leverRefs.wifiHold.Set(false,true) end
 		leaveNetworkHold(os.clock(),"OFF")
 		setStatus("NET GUARD: OFF")
 	else
@@ -2295,6 +2385,22 @@ local netGuardSlider=makeSlider(trainPage,"NET GUARD","автопауза при
 end)
 
 Runtime.leverRefs.netGuard=netGuardSlider
+
+local wifiHoldSlider=makeSlider(trainPage,"WIFI HOLD","нажми до выключения Wi-Fi и ещё раз после возврата",false,function(on)
+	Runtime.manualNetworkHold=on
+	if on then
+		Runtime.netGuardEnabled=true
+		if Runtime.leverRefs.netGuard then Runtime.leverRefs.netGuard.Set(true,true) end
+		enterNetworkHold("manual WiFi hold",os.clock())
+		Runtime.networkState="MANUAL HOLD"
+		setStatus("WIFI HOLD: ON | персонаж и действия заморожены")
+	else
+		leaveNetworkHold(os.clock(),"MANUAL RELEASE")
+		setStatus("WIFI HOLD: OFF | проверяю соединение")
+	end
+end)
+
+Runtime.leverRefs.wifiHold=wifiHoldSlider
 
 local trainHeader=card(trainPage,42)
 local th=label(trainHeader,"ОТДЕЛЬНЫЕ ВИДЫ КАЧА",12,Enum.Font.GothamBlack,THEME.Text)
@@ -2418,9 +2524,9 @@ end
 
 local function setMinimized(on)
 	minimized=on and true or false
-	main.Size=minimized and UDim2.new(0,292,0,48) or UDim2.new(0,292,0,392)
+	main.Size=minimized and UDim2.new(0,310,0,48) or UDim2.new(0,310,0,420)
 	minimizeBtn.Text=minimized and "+" or "−"
-	title.Text=minimized and "ROCKBUGHUB" or "VALIDATED"
+	title.Text=minimized and "ROCK ROUTE" or "ROCK ROUTE"
 
 	brand.Visible=not minimized
 	bugTab.Visible=not minimized
@@ -2491,6 +2597,8 @@ function Runtime:Stop(reason)
 	if not self.alive then return end
 
 	self.alive=false
+	self.manualNetworkHold=false
+	leaveNetworkHold(os.clock(),"STOP")
 	panicStop()
 	disconnectRockButtonConnections()
 	disconnectAll()
