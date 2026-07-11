@@ -466,8 +466,8 @@ local function chooseSafeRockByRebirths()
 		end
 
 		if best then
-			local reason=("%d реб • %s • %s XP • L%d / %d уд."):format(
-				rebs,grade.name,compactXp(best.hitXp40),best.level,best.hits
+			local reason=("%d реб • %s XP • L%d / %d уд."):format(
+				rebs,compactXp(best.hitXp40),best.level,best.hits
 			)
 			return best.row,reason,rebs,true
 		end
@@ -478,7 +478,7 @@ local function chooseSafeRockByRebirths()
 			local row=ROCKS[i]
 			if rockCache[row.req] then
 				local hitXp40=(rebs+20)*math.floor(row.mult*40+0.5)
-				return row,("%d реб • %s • exact нет • %s XP"):format(rebs,grade.name,compactXp(hitXp40)),rebs,false
+				return row,("%d реб • exact нет • %s XP"):format(rebs,compactXp(hitXp40)),rebs,false
 			end
 		end
 	end
@@ -506,7 +506,7 @@ local function applyAutoRockSelection(force)
 
 	if Runtime.ui then
 		if Runtime.ui.autoRockTitle and Runtime.ui.autoRockTitle.Parent then
-			Runtime.ui.autoRockTitle.Text=exact and "ТОЧНЫЙ КАЛЬКУЛЯТОР ПО РЕБАМ" or "КАЛЬКУЛЯТОР: НЕТ EXACT"
+			Runtime.ui.autoRockTitle.Text=exact and "АВТО-КАМЕНЬ ПО РЕБАМ" or "АВТО-КАМЕНЬ: НЕТ EXACT"
 		end
 		if Runtime.ui.autoRockName and Runtime.ui.autoRockName.Parent then
 			Runtime.ui.autoRockName.Text=row.label.." • "..tostring(reason)
@@ -2452,14 +2452,9 @@ end
 -- BUG PAGE
 
 local selectCard=card(bugPage,62)
-local selectTitle=label(selectCard,"ТОЧНЫЙ КАЛЬКУЛЯТОР ПО РЕБАМ",8,Enum.Font.GothamBlack,THEME.Accent2)
-selectTitle.Size=UDim2.new(1,-108,0,18)
+local selectTitle=label(selectCard,"АВТО-КАМЕНЬ ПО РЕБАМ",9,Enum.Font.GothamBlack,THEME.Accent2)
+selectTitle.Size=UDim2.new(1,-20,0,18)
 selectTitle.Position=UDim2.new(0,12,0,8)
-
-local gradeButton=button(selectCard,currentPetGrade().name,THEME.SurfaceAlt)
-gradeButton.Size=UDim2.new(0,88,0,22)
-gradeButton.Position=UDim2.new(1,-96,0,6)
-gradeButton.TextSize=9
 
 local selectName=label(selectCard,"-",10,Enum.Font.GothamBlack,THEME.Warm)
 selectName.Size=UDim2.new(1,-20,0,28)
@@ -2467,15 +2462,6 @@ selectName.Position=UDim2.new(0,12,0,30)
 
 Runtime.ui.autoRockTitle=selectTitle
 Runtime.ui.autoRockName=selectName
-
-addConn(gradeButton.Activated:Connect(function()
-	Runtime.petGradeIndex=Runtime.petGradeIndex%#PET_GRADES+1
-	gradeButton.Text=currentPetGrade().name
-	Runtime.autoRockSelection=true
-	Runtime.lastAutoRockRebs=nil
-	applyAutoRockSelection(true)
-	setStatus("PET GRADE: "..currentPetGrade().name.." | авто-камень пересчитан")
-end))
 
 local rockCard=card(bugPage,142)
 local rockTitle=label(rockCard,"КАМНИ",12,Enum.Font.GothamBlack,THEME.Text)
