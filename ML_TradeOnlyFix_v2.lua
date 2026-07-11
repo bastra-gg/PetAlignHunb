@@ -71,6 +71,11 @@ local Runtime={
 	connections={},
 	selectedTrain=nil,
 	selectedRock=nil,
+	autoRockSelection=true,
+	petGradeIndex=5,
+	lastAutoRockRebs=nil,
+	autoRockReason=nil,
+	nextAutoRockCheck=0,
 	autoRebirth=false,
 	rebirthInFlight=false,
 	autoSize=false,
@@ -407,45 +412,112 @@ local function readRebirths()
 	return nil,"not found"
 end
 
+local PET_GRADES={
+	{name="BASIC",base=250},
+	{name="UNCOMMON",base=500},
+	{name="RARE",base=750},
+	{name="EPIC",base=1000},
+	{name="UNIQUE",base=1250},
+}
+
+local function currentPetGrade()
+	return PET_GRADES[math.clamp(tonumber(Runtime.petGradeIndex) or 5,1,#PET_GRADES)]
+end
+
+local function compactXp(value40)
+	local value=value40/40
+	if value==math.floor(value) then return tostring(math.floor(value)) end
+	local text=("%.3f"):format(value):gsub("0+$","")
+	return (text:gsub("%.$",""))
+end
+
 local function chooseSafeRockByRebirths()
 	local rebs,source=readRebirths()
-
-	-- Conservative per-hit target. This avoids blindly choosing Jungle.
-	-- It is not a full pet-XP calculator because pet level/current XP is unavailable here.
-	local safeHitCap=30000
+	local grade=currentPetGrade()
 
 	if rebs then
+		rebs=math.max(0,math.floor(rebs+0.5))
 		local best=nil
-		local bestXp=-1
 
 		for _,row in ipairs(ROCKS) do
 			if rockCache[row.req] then
-				local xp=(rebs+20)*row.mult
+				-- All rock multipliers are exact fortieths. Integer arithmetic avoids
+				-- float rounding falsely marking a rebirth as compatible/incompatible.
+				local multiplier40=math.floor(row.mult*40+0.5)
+				local hitXp40=(rebs+20)*multiplier40
 
-				if xp<=safeHitCap and xp>bestXp then
-					best=row
-					bestXp=xp
+				for level=1,19 do
+					local cumulativeXp=grade.base*level*(level+1)/2
+					local cumulativeXp40=cumulativeXp*40
+
+					if hitXp40>0 and cumulativeXp40%hitXp40==0 then
+						local hits=cumulativeXp40/hitXp40
+						local candidate={row=row,level=level,hits=hits,hitXp40=hitXp40}
+						if not best
+							or candidate.hits<best.hits
+							or (candidate.hits==best.hits and candidate.hitXp40>best.hitXp40)
+							or (candidate.hits==best.hits and candidate.hitXp40==best.hitXp40 and candidate.level<best.level) then
+							best=candidate
+						end
+						break
+					end
 				end
 			end
 		end
 
 		if best then
-			return best,("ребы %d (%s) | ~%.1f XP/hit"):format(rebs,source,bestXp)
+			local reason=("%d реб • %s • %s XP • L%d / %d уд."):format(
+				rebs,grade.name,compactXp(best.hitXp40),best.level,best.hits
+			)
+			return best.row,reason,rebs,true
 		end
-	end
 
-	-- Safe fallback order. Never default to Jungle.
-	local fallback={"Legends","Inferno","Mystic","Frozen","Golden","Large","Punching","Tiny"}
-
-	for _,id in ipairs(fallback) do
-		for _,row in ipairs(ROCKS) do
-			if row.id==id and rockCache[row.req] then
-				return row,rebs and ("ребы "..tostring(rebs).." | safe fallback") or "ребы не найдены | safe fallback"
+		-- There is no mathematically exact pet-XP cycle at every rebirth count.
+		-- Pick the weakest available rock instead of pretending a random match is safe.
+		for i=#ROCKS,1,-1 do
+			local row=ROCKS[i]
+			if rockCache[row.req] then
+				local hitXp40=(rebs+20)*math.floor(row.mult*40+0.5)
+				return row,("%d реб • %s • exact нет • %s XP"):format(rebs,grade.name,compactXp(hitXp40)),rebs,false
 			end
 		end
 	end
 
-	return ROCKS[#ROCKS],"камни не найдены"
+	for i=#ROCKS,1,-1 do
+		local row=ROCKS[i]
+		if rockCache[row.req] then
+			return row,"ребы не найдены ("..tostring(source)..")",nil,false
+		end
+	end
+
+	return ROCKS[#ROCKS],"камни не найдены",nil,false
+end
+
+local function applyAutoRockSelection(force)
+	if not Runtime.autoRockSelection and not force then return false end
+	local row,reason,rebs,exact=chooseSafeRockByRebirths()
+	if not force and rebs~=nil and Runtime.lastAutoRockRebs==rebs then return false end
+
+	local previous=Runtime.selectedRock
+	Runtime.selectedRock=row
+	Runtime.lastAutoRockRebs=rebs
+	Runtime.autoRockReason=reason
+	Runtime.autoRockExact=exact
+
+	if Runtime.ui then
+		if Runtime.ui.autoRockTitle and Runtime.ui.autoRockTitle.Parent then
+			Runtime.ui.autoRockTitle.Text=exact and "ТОЧНЫЙ КАЛЬКУЛЯТОР ПО РЕБАМ" or "КАЛЬКУЛЯТОР: НЕТ EXACT"
+		end
+		if Runtime.ui.autoRockName and Runtime.ui.autoRockName.Parent then
+			Runtime.ui.autoRockName.Text=row.label.." • "..tostring(reason)
+		end
+	end
+
+	if type(Runtime.refreshRockList)=="function" then Runtime.refreshRockList() end
+	if previous and previous.id~=row.id and Runtime.mode=="bug" and type(Runtime.teleportInsideSelected)=="function" then
+		Runtime.teleportInsideSelected()
+	end
+	return true
 end
 
 -- ---------- TOOL HELPERS ----------
@@ -1574,6 +1646,8 @@ local function teleportInsideSelected()
 	return true
 end
 
+Runtime.teleportInsideSelected=teleportInsideSelected
+
 local function nearSelectedRock()
 	local r=root()
 	local target=targetPart()
@@ -1806,6 +1880,11 @@ local function scheduler()
 			updateNetworkGuard(now)
 			updateRemotePps()
 			setNetText()
+		end
+
+		if not Runtime.networkPaused and Runtime.autoRockSelection and now>=Runtime.nextAutoRockCheck then
+			Runtime.nextAutoRockCheck=now+5
+			applyAutoRockSelection(false)
 		end
 
 		if Runtime.networkPaused and now>=Runtime.nextNetworkHoldTick then
@@ -2373,13 +2452,30 @@ end
 -- BUG PAGE
 
 local selectCard=card(bugPage,62)
-local selectTitle=label(selectCard,"АВТО-КАМЕНЬ ПО РЕБАМ",9,Enum.Font.GothamBlack,THEME.Accent2)
-selectTitle.Size=UDim2.new(1,-20,0,18)
+local selectTitle=label(selectCard,"ТОЧНЫЙ КАЛЬКУЛЯТОР ПО РЕБАМ",8,Enum.Font.GothamBlack,THEME.Accent2)
+selectTitle.Size=UDim2.new(1,-108,0,18)
 selectTitle.Position=UDim2.new(0,12,0,8)
 
-local selectName=label(selectCard,"-",15,Enum.Font.GothamBlack,THEME.Warm)
+local gradeButton=button(selectCard,currentPetGrade().name,THEME.SurfaceAlt)
+gradeButton.Size=UDim2.new(0,88,0,22)
+gradeButton.Position=UDim2.new(1,-96,0,6)
+gradeButton.TextSize=9
+
+local selectName=label(selectCard,"-",10,Enum.Font.GothamBlack,THEME.Warm)
 selectName.Size=UDim2.new(1,-20,0,28)
 selectName.Position=UDim2.new(0,12,0,30)
+
+Runtime.ui.autoRockTitle=selectTitle
+Runtime.ui.autoRockName=selectName
+
+addConn(gradeButton.Activated:Connect(function()
+	Runtime.petGradeIndex=Runtime.petGradeIndex%#PET_GRADES+1
+	gradeButton.Text=currentPetGrade().name
+	Runtime.autoRockSelection=true
+	Runtime.lastAutoRockRebs=nil
+	applyAutoRockSelection(true)
+	setStatus("PET GRADE: "..currentPetGrade().name.." | авто-камень пересчитан")
+end))
 
 local rockCard=card(bugPage,142)
 local rockTitle=label(rockCard,"КАМНИ",12,Enum.Font.GothamBlack,THEME.Text)
@@ -2434,6 +2530,7 @@ local function refreshRockList()
 		p.PaddingLeft=UDim.new(0,10)
 
 		local connection=b.Activated:Connect(function()
+			Runtime.autoRockSelection=false
 			Runtime.selectedRock=row
 			selectTitle.Text="ВЫБРАНО ВРУЧНУЮ"
 			selectName.Text=row.label.." | req "..tostring(row.req)
@@ -2447,6 +2544,8 @@ local function refreshRockList()
 
 	rockList.CanvasSize=UDim2.new(0,0,0,#ROCKS*37+4)
 end
+
+Runtime.refreshRockList=refreshRockList
 
 local lockRockSlider
 local bugSlider
@@ -2717,13 +2816,10 @@ addConn(minimizeBtn.Activated:Connect(function() setMinimized(not minimized) end
 addConn(rescanBtn.Activated:Connect(function()
 	setStatus("SCAN...")
 	scanRocks()
-
-	local auto,why=chooseSafeRockByRebirths()
-	Runtime.selectedRock=auto
-	selectTitle.Text="АВТО-КАМЕНЬ ПО РЕБАМ"
-	selectName.Text=auto.label.." | "..tostring(why)
-	refreshRockList()
-	setStatus("SCAN DONE | "..tostring(why))
+	Runtime.autoRockSelection=true
+	Runtime.lastAutoRockRebs=nil
+	applyAutoRockSelection(true)
+	setStatus("SCAN DONE | "..tostring(Runtime.autoRockReason))
 end))
 
 addConn(panicBtn.Activated:Connect(function()
@@ -2841,15 +2937,12 @@ addConn(lp.CharacterAdded:Connect(function(newCharacter)
 	end)
 end))
 
--- Initial scan / safe auto-select.
+-- Initial scan / exact rebirth calculator.
 scanRocks()
-local autoRock,autoWhy=chooseSafeRockByRebirths()
-Runtime.selectedRock=autoRock
-selectName.Text=autoRock.label.." | "..tostring(autoWhy)
-refreshRockList()
+applyAutoRockSelection(true)
 showTab("bug")
 updateCanvas()
-setStatus("v20 ready | "..tostring(autoWhy))
+setStatus("v20 ready | "..tostring(Runtime.autoRockReason))
 
 task.spawn(function()
 	local recentFailures={}
