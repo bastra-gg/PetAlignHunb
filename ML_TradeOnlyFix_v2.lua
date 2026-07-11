@@ -9,6 +9,8 @@ local Stats=game:GetService("Stats")
 local VirtualUser=game:GetService("VirtualUser")
 local UserInputService=game:GetService("UserInputService")
 local StarterGui=game:GetService("StarterGui")
+local NetworkClient=nil
+pcall(function() NetworkClient=game:GetService("NetworkClient") end)
 
 -- Delta/auto-execute can run before the client has finished creating LocalPlayer.
 if not game:IsLoaded() then
@@ -97,6 +99,7 @@ local Runtime={
 	pingMs=0,
 	pingAvailable=false,
 	netGuardEnabled=true,
+	autoWifiHold=true,
 	networkPaused=false,
 	manualNetworkHold=false,
 	networkState="HEALTHY",
@@ -112,6 +115,18 @@ local Runtime={
 	networkHoldCF=nil,
 	networkHoldSavedAnchored=nil,
 	nextNetworkHoldTick=0,
+	networkReplicatorSeen=false,
+	networkReplicatorMissingSince=nil,
+	networkHttpSupported=false,
+	networkHttpProbeInFlight=false,
+	networkHttpProbeStartedAt=0,
+	networkHttpProbeGeneration=0,
+	networkHttpLastSuccess=os.clock(),
+	networkHttpLastFinish=0,
+	networkTrafficLastSeen=os.clock(),
+	networkHttpBadSamples=0,
+	networkHttpRequiredRecovery=false,
+	nextNetworkHttpProbe=0,
 	transientFailures={},
 	respawnGeneration=0,
 	autoResumeAfterRespawn=true,
@@ -711,6 +726,97 @@ local NET_RECOVER_PING_MS=650
 local NET_RECOVER_SAMPLES=3
 local NET_MIN_HOLD_SECONDS=1.5
 local NET_OFFLINE_AFTER_SECONDS=6
+local NET_HTTP_INTERVAL=1.25
+local NET_HTTP_TIMEOUT=2.75
+local NET_REPLICATOR_GRACE=1.0
+local NET_HTTP_URL="https://clients3.google.com/generate_204"
+
+local function resolveHttpRequest()
+	local candidates={}
+	local function addCandidate(candidate)
+		if type(candidate)=="function" then table.insert(candidates,candidate) end
+	end
+	addCandidate(ENV.request)
+	addCandidate(ENV.http_request)
+	addCandidate(type(ENV.syn)=="table" and ENV.syn.request or nil)
+	addCandidate(type(ENV.http)=="table" and ENV.http.request or nil)
+
+	for _,candidate in ipairs(candidates) do
+		if type(candidate)=="function" then
+			return function(url)
+				return candidate({
+					Url=url,
+					Method="GET",
+					Headers={["Cache-Control"]="no-cache"},
+				})
+			end
+		end
+	end
+
+	-- Delta's loader already exposes HttpGet even when no request alias exists.
+	return function(url)
+		return game:HttpGet(url,true)
+	end
+end
+
+local networkHttpRequest=resolveHttpRequest()
+
+local function getReceiveKbps()
+	local ok,value=safe(function() return Stats.DataReceiveKbps end)
+	if ok and type(value)=="number" and value==value and value>=0 then
+		return value
+	end
+	return nil
+end
+
+local function hasClientReplicator()
+	if not NetworkClient then return nil end
+	local ok,present=safe(function()
+		for _,child in ipairs(NetworkClient:GetChildren()) do
+			if child:IsA("ClientReplicator") then return true end
+		end
+		return false
+	end)
+	if not ok then return nil end
+	return present
+end
+
+local function beginNetworkHttpProbe(now)
+	if not Runtime.autoWifiHold or Runtime.networkHttpProbeInFlight or now<Runtime.nextNetworkHttpProbe then return end
+	Runtime.nextNetworkHttpProbe=now+NET_HTTP_INTERVAL
+	Runtime.networkHttpProbeInFlight=true
+	Runtime.networkHttpProbeStartedAt=now
+	Runtime.networkHttpProbeGeneration=Runtime.networkHttpProbeGeneration+1
+	local generation=Runtime.networkHttpProbeGeneration
+
+	task.spawn(function()
+		local nonce=tostring(math.floor(os.clock()*1000))
+		local ok,response=safe(function()
+			return networkHttpRequest(NET_HTTP_URL.."?rh="..nonce)
+		end)
+		local finished=os.clock()
+		if not Runtime.alive or generation~=Runtime.networkHttpProbeGeneration then return end
+
+		Runtime.networkHttpProbeInFlight=false
+		Runtime.networkHttpLastFinish=finished
+
+		-- Any real HTTP response proves that DNS/routing works. Some request APIs
+		-- represent the expected 204 response as an empty string, others as a table.
+		local gotResponse=ok
+		if type(response)=="table" then
+			local code=tonumber(response.StatusCode or response.Status or response.status_code)
+			if code then gotResponse=code>=100 and code<600 end
+		end
+
+		if gotResponse then
+			Runtime.networkHttpSupported=true
+			Runtime.networkHttpLastSuccess=finished
+			Runtime.networkHttpBadSamples=0
+		else
+			Runtime.networkHttpBadSamples=Runtime.networkHttpBadSamples+1
+		end
+	end)
+end
 
 local function validPing(value)
 	return type(value)=="number" and value==value and value>0 and value<math.huge
@@ -817,6 +923,7 @@ local function leaveNetworkHold(now,reason)
 	Runtime.networkHoldSince=0
 	Runtime.networkReason=nil
 	Runtime.networkLastGoodAt=now
+	Runtime.networkHttpRequiredRecovery=false
 	Runtime.transientFailures={}
 	Runtime.remoteTokens=0
 	Runtime.remoteLastRefill=now
@@ -840,11 +947,30 @@ end
 
 local function updateNetworkGuard(now)
 	local sample=getPingMs()
+	local receiveKbps=getReceiveKbps()
+	local replicatorPresent=hasClientReplicator()
 
 	if sample then
 		Runtime.pingMs=sample
 		Runtime.pingAvailable=true
 		Runtime.networkProbeUnsupported=false
+	end
+	if receiveKbps and receiveKbps>0.01 then
+		Runtime.networkTrafficLastSeen=now
+	end
+
+	-- ClientReplicator represents the actual Roblox server connection. Only a
+	-- transition from seen -> missing is authoritative, so restricted executors
+	-- cannot create a false offline state merely by hiding NetworkClient children.
+	if replicatorPresent==true then
+		Runtime.networkReplicatorSeen=true
+		Runtime.networkReplicatorMissingSince=nil
+	elseif replicatorPresent==false and Runtime.networkReplicatorSeen then
+		Runtime.networkReplicatorMissingSince=Runtime.networkReplicatorMissingSince or now
+	end
+
+	if Runtime.netGuardEnabled then
+		beginNetworkHttpProbe(now)
 	end
 
 	if not Runtime.netGuardEnabled then
@@ -862,7 +988,8 @@ local function updateNetworkGuard(now)
 	-- Give Stats/GetNetworkPing five seconds to appear. If this executor never
 	-- exposes either probe, fall back to a permanently conservative rate instead
 	-- of freezing every existing feature forever.
-	if sample==nil and not Runtime.pingAvailable and now>=Runtime.networkProbeDeadline then
+	if sample==nil and not Runtime.pingAvailable and not Runtime.networkHttpSupported
+		and not Runtime.networkReplicatorSeen and now>=Runtime.networkProbeDeadline then
 		if Runtime.networkPaused then leaveNetworkHold(now,"LIMITED / NO PING PROBE") end
 		Runtime.networkProbeUnsupported=true
 		Runtime.networkState="LIMITED"
@@ -872,13 +999,44 @@ local function updateNetworkGuard(now)
 	end
 
 	local invalid=(sample==nil)
-	local bad=invalid or (sample~=nil and sample>=NET_HOLD_PING_MS)
-	local good=(sample~=nil and sample<=NET_RECOVER_PING_MS)
+	local replicatorMissing=Runtime.networkReplicatorSeen
+		and Runtime.networkReplicatorMissingSince~=nil
+		and now-Runtime.networkReplicatorMissingSince>=NET_REPLICATOR_GRACE
+	local httpTimedOut=Runtime.autoWifiHold
+		and Runtime.networkHttpSupported
+		and Runtime.networkHttpProbeInFlight
+		and now-Runtime.networkHttpProbeStartedAt>=NET_HTTP_TIMEOUT
+	local httpFailed=Runtime.autoWifiHold
+		and Runtime.networkHttpSupported
+		and Runtime.networkHttpBadSamples>=2
+
+	if httpTimedOut or httpFailed or replicatorMissing then
+		Runtime.networkHttpRequiredRecovery=true
+	end
+
+	local recentHttpSuccess=Runtime.networkHttpSupported
+		and now-Runtime.networkHttpLastSuccess<=math.max(3,NET_HTTP_INTERVAL*2.5)
+	local replicatorReady=not Runtime.networkReplicatorSeen or replicatorPresent==true
+	local confirmedOnline=recentHttpSuccess and replicatorReady
+	local bad=replicatorMissing or httpTimedOut or httpFailed
+		or (invalid and not confirmedOnline)
+		or (sample~=nil and sample>=NET_HOLD_PING_MS)
+	local good=((sample~=nil and sample<=NET_RECOVER_PING_MS) or (invalid and confirmedOnline))
+		and not replicatorMissing and not httpTimedOut and not httpFailed
 
 	if bad then
 		Runtime.networkBadSamples=Runtime.networkBadSamples+1
 		Runtime.networkGoodSamples=0
-		local reason=invalid and "ping unavailable" or ("ping "..math.floor(sample).."ms")
+		local reason
+		if replicatorMissing then
+			reason="Roblox connection missing"
+		elseif httpTimedOut then
+			reason="WiFi probe timeout"
+		elseif httpFailed then
+			reason="WiFi probe failed"
+		else
+			reason=invalid and "ping unavailable" or ("ping "..math.floor(sample).."ms")
+		end
 		enterNetworkHold(reason,now)
 
 		if Runtime.networkBadSamples>=2 then
@@ -901,7 +1059,11 @@ local function updateNetworkGuard(now)
 			Runtime.networkState="OFFLINE WAIT"
 		end
 
-		if good and Runtime.networkGoodSamples>=NET_RECOVER_SAMPLES and held>=NET_MIN_HOLD_SECONDS then
+		local recoveredAfterHold=Runtime.networkHttpLastSuccess>=Runtime.networkHoldSince
+			or Runtime.networkTrafficLastSeen>=Runtime.networkHoldSince
+		local recoveryProof=not Runtime.networkHttpRequiredRecovery
+			or (recoveredAfterHold and replicatorReady)
+		if good and recoveryProof and Runtime.networkGoodSamples>=NET_RECOVER_SAMPLES and held>=NET_MIN_HOLD_SECONDS then
 			leaveNetworkHold(now,"RECOVERED")
 		end
 	end
@@ -2386,7 +2548,7 @@ end)
 
 Runtime.leverRefs.netGuard=netGuardSlider
 
-local wifiHoldSlider=makeSlider(trainPage,"WIFI HOLD","нажми до выключения Wi-Fi и ещё раз после возврата",false,function(on)
+local wifiHoldSlider=makeSlider(trainPage,"WIFI HOLD","автомат уже включён; рычаг оставлен для ручной заморозки",false,function(on)
 	Runtime.manualNetworkHold=on
 	if on then
 		Runtime.netGuardEnabled=true
