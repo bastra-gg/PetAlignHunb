@@ -75,7 +75,6 @@ local Runtime={
 	petGradeIndex=5,
 	lastAutoRockRebs=nil,
 	autoRockReason=nil,
-	nextAutoRockCheck=0,
 	autoRebirth=false,
 	rebirthInFlight=false,
 	autoSize=false,
@@ -1880,11 +1879,6 @@ local function scheduler()
 			updateNetworkGuard(now)
 			updateRemotePps()
 			setNetText()
-		end
-
-		if not Runtime.networkPaused and Runtime.autoRockSelection and now>=Runtime.nextAutoRockCheck then
-			Runtime.nextAutoRockCheck=now+5
-			applyAutoRockSelection(false)
 		end
 
 		if Runtime.networkPaused and now>=Runtime.nextNetworkHoldTick then
