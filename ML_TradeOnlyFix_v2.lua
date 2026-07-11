@@ -21,7 +21,7 @@ while not lp do
 	lp=Players.LocalPlayer
 end
 
-local playerGui=lp:WaitForChild("PlayerGui",30)
+local playerGui=lp:WaitForChild("PlayerGui",60)
 if not playerGui then
 	warn("[RockBugHub] PlayerGui was not created")
 	pcall(function()
@@ -95,6 +95,22 @@ local Runtime={
 	nextCooldownSweep=0,
 	punchCycle=0,
 	pingMs=0,
+	pingAvailable=false,
+	netGuardEnabled=true,
+	networkPaused=false,
+	networkState="HEALTHY",
+	networkBadSamples=0,
+	networkGoodSamples=0,
+	networkHoldSince=0,
+	networkLastGoodAt=os.clock(),
+	networkProbeDeadline=os.clock()+5,
+	networkProbeUnsupported=false,
+	networkReason=nil,
+	networkRecoveries=0,
+	transientFailures={},
+	respawnGeneration=0,
+	autoResumeAfterRespawn=true,
+	schedulerRestarts=0,
 	remoteTokens=0,
 	remoteLastRefill=os.clock(),
 	remoteSentWindow=0,
@@ -157,10 +173,15 @@ end
 
 local function setNetText()
 	if Runtime.ui and Runtime.ui.net and Runtime.ui.net.Parent then
-		Runtime.ui.net.Text=("PING %sms  |  REMOTE %.1f/s"):format(
-			tostring(math.floor((Runtime.pingMs or 0)+0.5)),
-			Runtime.remotePps or 0
-		)
+		local pingText=Runtime.pingAvailable and tostring(math.floor((Runtime.pingMs or 0)+0.5)).."ms" or "?"
+		if Runtime.networkPaused then
+			local held=math.max(0,os.clock()-(Runtime.networkHoldSince or os.clock()))
+			Runtime.ui.net.Text=("NET %s %.1fs  |  PING %s"):format(Runtime.networkState or "HOLD",held,pingText)
+		elseif Runtime.networkProbeUnsupported then
+			Runtime.ui.net.Text=("NET LIMITED  |  REMOTE %.1f/s"):format(Runtime.remotePps or 0)
+		else
+			Runtime.ui.net.Text=("PING %s  |  REMOTE %.1f/s"):format(pingText,Runtime.remotePps or 0)
+		end
 	end
 end
 
@@ -680,7 +701,25 @@ end
 
 -- ---------- NETWORK CONTROL ----------
 
+local NET_HOLD_PING_MS=900
+local NET_RECOVER_PING_MS=650
+local NET_RECOVER_SAMPLES=3
+local NET_MIN_HOLD_SECONDS=1.5
+local NET_OFFLINE_AFTER_SECONDS=6
+
+local function validPing(value)
+	return type(value)=="number" and value==value and value>0 and value<math.huge
+end
+
 local function getPingMs()
+	-- Player:GetNetworkPing() is the lightest probe when the client exposes it.
+	local directOk,direct=safe(function()
+		return lp:GetNetworkPing()*1000
+	end)
+	if not directOk or not validPing(direct) then direct=nil end
+
+	-- Data Ping also sees replication queues/retransmissions, so use the worse of
+	-- both probes instead of hiding a replication stall behind a healthy raw ping.
 	local ok,res=safe(function()
 		local network=Stats:FindFirstChild("Network")
 		local server=network and network:FindFirstChild("ServerStatsItem")
@@ -692,14 +731,153 @@ local function getPingMs()
 		end
 	end)
 
-	if ok and res then
-		return tonumber(res) or 0
+	if not ok or not validPing(res) then res=nil end
+	if direct and res then return math.max(direct,res) end
+	if direct then return direct end
+	if res then return res end
+
+	-- Unknown is deliberately nil. Treating it as 0 would enable full remote rate
+	-- exactly while replication statistics are unavailable.
+	return nil
+end
+
+local function enterNetworkHold(reason,now)
+	if not Runtime.netGuardEnabled then return end
+	now=now or os.clock()
+
+	if not Runtime.networkPaused then
+		Runtime.networkPaused=true
+		Runtime.networkHoldSince=now
+		Runtime.networkState="SUSPECT"
+		Runtime.transientFailures={}
+		Runtime.remoteTokens=0
+		Runtime.nextAction=now+0.25
+		Runtime.nextRebirth=now+0.5
+		Runtime.nextSize=now+0.5
 	end
 
-	return 0
+	Runtime.networkReason=tostring(reason or "connection unstable")
+	setStatus("NET GUARD: HOLD | "..Runtime.networkReason)
+end
+
+local function leaveNetworkHold(now,reason)
+	now=now or os.clock()
+	local wasPaused=Runtime.networkPaused
+	Runtime.networkPaused=false
+	Runtime.networkState="HEALTHY"
+	Runtime.networkBadSamples=0
+	Runtime.networkGoodSamples=0
+	Runtime.networkHoldSince=0
+	Runtime.networkReason=nil
+	Runtime.networkLastGoodAt=now
+	Runtime.transientFailures={}
+	Runtime.remoteTokens=0
+	Runtime.remoteLastRefill=now
+	Runtime.nextAction=now+0.25
+	Runtime.nextRebirth=now+0.5
+	Runtime.nextSize=now+0.5
+
+	if wasPaused then
+		Runtime.networkRecoveries=Runtime.networkRecoveries+1
+		setStatus("NET GUARD: "..tostring(reason or "RECOVERED").." | режим продолжен")
+	end
+end
+
+local function noteNetworkFailure(reason)
+	if not Runtime.netGuardEnabled then return end
+	Runtime.networkBadSamples=math.max(1,Runtime.networkBadSamples or 0)
+	Runtime.networkGoodSamples=0
+	enterNetworkHold(reason or "remote error",os.clock())
+end
+
+local function updateNetworkGuard(now)
+	local sample=getPingMs()
+
+	if sample then
+		Runtime.pingMs=sample
+		Runtime.pingAvailable=true
+		Runtime.networkProbeUnsupported=false
+	end
+
+	if not Runtime.netGuardEnabled then
+		Runtime.networkBadSamples=0
+		Runtime.networkGoodSamples=0
+		return sample
+	end
+
+	-- Give Stats/GetNetworkPing five seconds to appear. If this executor never
+	-- exposes either probe, fall back to a permanently conservative rate instead
+	-- of freezing every existing feature forever.
+	if sample==nil and not Runtime.pingAvailable and now>=Runtime.networkProbeDeadline then
+		if Runtime.networkPaused then leaveNetworkHold(now,"LIMITED / NO PING PROBE") end
+		Runtime.networkProbeUnsupported=true
+		Runtime.networkState="LIMITED"
+		Runtime.networkBadSamples=0
+		Runtime.networkGoodSamples=0
+		return nil
+	end
+
+	local invalid=(sample==nil)
+	local bad=invalid or (sample~=nil and sample>=NET_HOLD_PING_MS)
+	local good=(sample~=nil and sample<=NET_RECOVER_PING_MS)
+
+	if bad then
+		Runtime.networkBadSamples=Runtime.networkBadSamples+1
+		Runtime.networkGoodSamples=0
+		local reason=invalid and "ping unavailable" or ("ping "..math.floor(sample).."ms")
+		enterNetworkHold(reason,now)
+
+		if Runtime.networkBadSamples>=2 then
+			Runtime.networkState="GRACE"
+		end
+	elseif good then
+		Runtime.networkBadSamples=0
+		Runtime.networkGoodSamples=math.min(NET_RECOVER_SAMPLES,Runtime.networkGoodSamples+1)
+		Runtime.networkLastGoodAt=now
+		if not Runtime.networkPaused then Runtime.networkState="HEALTHY" end
+	else
+		-- Middle band is intentional hysteresis: do not oscillate between hold/resume.
+		Runtime.networkBadSamples=math.max(0,Runtime.networkBadSamples-1)
+		Runtime.networkGoodSamples=0
+	end
+
+	if Runtime.networkPaused then
+		local held=now-Runtime.networkHoldSince
+		if held>=NET_OFFLINE_AFTER_SECONDS and Runtime.networkState~="HEALTHY" then
+			Runtime.networkState="OFFLINE WAIT"
+		end
+
+		if good and Runtime.networkGoodSamples>=NET_RECOVER_SAMPLES and held>=NET_MIN_HOLD_SECONDS then
+			leaveNetworkHold(now,"RECOVERED")
+		end
+	end
+
+	return sample
+end
+
+local function clearTransientFailure(key)
+	Runtime.transientFailures[key]=nil
+end
+
+local function transientFailureExpired(key,now,grace)
+	local started=Runtime.transientFailures[key]
+	if not started then
+		Runtime.transientFailures[key]=now
+		return false,0
+	end
+
+	local elapsed=now-started
+	return elapsed>=grace,elapsed
 end
 
 local function effectiveRates()
+	if Runtime.networkPaused then
+		return 1,0
+	end
+	if Runtime.netGuardEnabled and not Runtime.pingAvailable then
+		return 3,1
+	end
+
 	local ping=Runtime.pingMs or 0
 
 	if ping>=700 then
@@ -716,6 +894,12 @@ local function effectiveRates()
 end
 
 local function refillRemoteTokens()
+	if Runtime.networkPaused then
+		Runtime.remoteTokens=0
+		Runtime.remoteLastRefill=os.clock()
+		return
+	end
+
 	local now=os.clock()
 	local _,limit=effectiveRates()
 	local elapsed=now-Runtime.remoteLastRefill
@@ -756,6 +940,7 @@ end
 
 local function tryPunchRemote()
 	if not Runtime.directRemoteEnabled then return false end
+	if Runtime.networkPaused then return false,"network hold" end
 
 	refillRemoteTokens()
 
@@ -779,11 +964,16 @@ local function tryPunchRemote()
 		return true
 	end
 
+	local _,limit=effectiveRates()
+	Runtime.remoteTokens=math.min(limit,Runtime.remoteTokens+1)
+	noteNetworkFailure("punch remote error")
+
 	return false
 end
 
 local function tryTrainRemote()
 	if not Runtime.directRemoteEnabled then return false end
+	if Runtime.networkPaused then return false,"network hold" end
 
 	refillRemoteTokens()
 
@@ -804,6 +994,10 @@ local function tryTrainRemote()
 		countRemoteSent()
 		return true
 	end
+
+	local _,limit=effectiveRates()
+	Runtime.remoteTokens=math.min(limit,Runtime.remoteTokens+1)
+	noteNetworkFailure("train remote error")
 
 	return false
 end
@@ -829,6 +1023,7 @@ local function findRebirthRemote()
 end
 
 local function tryRebirth()
+	if Runtime.networkPaused then return false,"network hold" end
 	local remote=findRebirthRemote()
 	if not remote then return false,"rebirthRemote не найден" end
 
@@ -855,6 +1050,7 @@ local function findSizeRemote()
 end
 
 local function trySetSize(value)
+	if Runtime.networkPaused then return false,"network hold" end
 	local remote=findSizeRemote()
 	if not remote then return false,"changeSpeedSizeRemote не найден" end
 
@@ -1245,6 +1441,7 @@ local function clearModeState(reason,updateLevers)
 	Runtime.punchCycle=0
 	Runtime.lockRock=false
 	Runtime.lockCF=nil
+	Runtime.transientFailures={}
 
 	restoreCharacterLock()
 	unequip()
@@ -1374,19 +1571,13 @@ local function scheduler()
 		Runtime.lastSchedulerTick=now
 
 		if now>=Runtime.nextNetUpdate then
-			Runtime.nextNetUpdate=now+1
-			Runtime.pingMs=getPingMs()
+			Runtime.nextNetUpdate=now+0.5
+			updateNetworkGuard(now)
 			updateRemotePps()
 			setNetText()
-
-			if Runtime.pingMs>=700 and Runtime.mode=="bug" then
-				setStatus("NETWORK THROTTLE: remote paused, ping "..math.floor(Runtime.pingMs))
-			elseif Runtime.pingMs>=450 and Runtime.mode then
-				setStatus("NETWORK THROTTLE: ping "..math.floor(Runtime.pingMs))
-			end
 		end
 
-		if Runtime.autoRebirth and not Runtime.rebirthInFlight and now>=Runtime.nextRebirth then
+		if not Runtime.networkPaused and Runtime.autoRebirth and not Runtime.rebirthInFlight and now>=Runtime.nextRebirth then
 			Runtime.nextRebirth=now+1.2
 			Runtime.rebirthInFlight=true
 			task.spawn(function()
@@ -1398,7 +1589,7 @@ local function scheduler()
 			end)
 		end
 
-		if Runtime.autoSize and not Runtime.sizeInFlight and now>=Runtime.nextSize then
+		if not Runtime.networkPaused and Runtime.autoSize and not Runtime.sizeInFlight and now>=Runtime.nextSize then
 			Runtime.nextSize=now+0.25
 			Runtime.sizeInFlight=true
 			local requestedSize=Runtime.sizeTarget
@@ -1411,7 +1602,7 @@ local function scheduler()
 			end)
 		end
 
-		if Runtime.kingLock and Runtime.kingCF and now>=Runtime.nextKingTick then
+		if not Runtime.networkPaused and Runtime.kingLock and Runtime.kingCF and now>=Runtime.nextKingTick then
 			Runtime.nextKingTick=now+0.25
 			local r=root()
 
@@ -1446,24 +1637,33 @@ local function scheduler()
 			if Runtime.lockRock and Runtime.lockCF then
 				local r=root()
 				if not r then
-					stopMode("AUTO STOP: нет root")
+					if not Runtime.networkPaused then
+						local expired=transientFailureExpired("bugRoot",now,2.5)
+						if expired then stopMode("AUTO STOP: нет root после grace") end
+					end
 				elseif (r.Position-Runtime.lockCF.Position).Magnitude>1.25 then
+					clearTransientFailure("bugRoot")
 					r.CFrame=Runtime.lockCF
 					r.AssemblyLinearVelocity=Vector3.new(0,0,0)
 					r.AssemblyAngularVelocity=Vector3.new(0,0,0)
+				else
+					clearTransientFailure("bugRoot")
 				end
 			end
 
-			if now>=Runtime.nextNearCheck then
+			if not Runtime.networkPaused and now>=Runtime.nextNearCheck then
 				Runtime.nextNearCheck=now+0.35
 				local near,why=nearSelectedRock()
 
 				if not near then
-					stopMode("AUTO STOP: "..tostring(why))
+					local expired=transientFailureExpired("rockNear",now,2.5)
+					if expired then stopMode("AUTO STOP: "..tostring(why).." после grace") end
+				else
+					clearTransientFailure("rockNear")
 				end
 			end
 
-			if Runtime.mode=="bug" and now>=Runtime.nextAction then
+			if not Runtime.networkPaused and Runtime.mode=="bug" and now>=Runtime.nextAction then
 				local actionRate=effectiveRates()
 				Runtime.nextAction=now+(1/actionRate)
 				Runtime.punchCycle=Runtime.punchCycle+1
@@ -1485,12 +1685,12 @@ local function scheduler()
 				oneTouch()
 			end
 
-			if now>=Runtime.nextCooldownSweep then
+			if not Runtime.networkPaused and now>=Runtime.nextCooldownSweep then
 				Runtime.nextCooldownSweep=now+2
 				clearCooldownsOnce(Runtime.activeTool)
 			end
 
-			if now>=Runtime.nextEquip then
+			if not Runtime.networkPaused and now>=Runtime.nextEquip then
 				Runtime.nextEquip=now+1.5
 
 				if not Runtime.activeTool or Runtime.activeTool.Parent~=char() then
@@ -1498,7 +1698,7 @@ local function scheduler()
 				end
 			end
 		elseif Runtime.mode=="train" then
-			if now>=Runtime.nextAction then
+			if not Runtime.networkPaused and now>=Runtime.nextAction then
 				-- Match the validated punch cadence and its adaptive network throttle.
 				local rate=effectiveRates()
 				Runtime.nextAction=now+(1/rate)
@@ -1515,12 +1715,12 @@ local function scheduler()
 				end
 			end
 
-			if now>=Runtime.nextCooldownSweep then
+			if not Runtime.networkPaused and now>=Runtime.nextCooldownSweep then
 				Runtime.nextCooldownSweep=now+2
 				clearCooldownsOnce(Runtime.activeTool)
 			end
 
-			if now>=Runtime.nextEquip then
+			if not Runtime.networkPaused and now>=Runtime.nextEquip then
 				Runtime.nextEquip=now+1.5
 
 				if Runtime.selectedTrain then
@@ -2082,6 +2282,20 @@ local afkSlider=makeSlider(trainPage,"ANTI AFK","автоматически вк
 	setStatus("ANTI AFK: "..(on and "ON" or "OFF"))
 end)
 
+local netGuardSlider=makeSlider(trainPage,"NET GUARD","автопауза при обрыве и мягкое восстановление",true,function(on)
+	Runtime.netGuardEnabled=on
+	if not on then
+		leaveNetworkHold(os.clock(),"OFF")
+		setStatus("NET GUARD: OFF")
+	else
+		Runtime.networkBadSamples=0
+		Runtime.networkGoodSamples=0
+		setStatus("NET GUARD: ON")
+	end
+end)
+
+Runtime.leverRefs.netGuard=netGuardSlider
+
 local trainHeader=card(trainPage,42)
 local th=label(trainHeader,"ОТДЕЛЬНЫЕ ВИДЫ КАЧА",12,Enum.Font.GothamBlack,THEME.Text)
 th.Size=UDim2.new(1,-20,1,0)
@@ -2294,15 +2508,67 @@ addConn(closeBtn.Activated:Connect(function()
 	Runtime:Stop("closed")
 end))
 
-addConn(lp.CharacterAdded:Connect(function()
+addConn(lp.CharacterAdded:Connect(function(newCharacter)
+	local resumeMode=Runtime.mode
+	local resumeTrain=Runtime.selectedTrain
+	local resumePositionLock=Runtime.lockPosition
+	local resumePositionCF=Runtime.positionCF
+
+	Runtime.respawnGeneration=Runtime.respawnGeneration+1
+	local generation=Runtime.respawnGeneration
 	Runtime.activeTool=nil
 	Runtime.lockCF=nil
 	Runtime.positionCF=nil
 	Runtime.lockRock=false
 	Runtime.lockPosition=false
-	stopMode("RESPAWN: режимы остановлены")
+	stopMode(resumeMode and "RESPAWN: жду персонажа для восстановления" or "RESPAWN: режимы остановлены")
+	local resumeToken=Runtime.modeToken
 
 	if Runtime.leverRefs.lockPosition then Runtime.leverRefs.lockPosition.Set(false,true) end
+	if not Runtime.autoResumeAfterRespawn or not resumeMode then return end
+
+	task.spawn(function()
+		local deadline=os.clock()+15
+		local readyRoot=nil
+		local readyHum=nil
+
+		repeat
+			if not Runtime.alive or Runtime.respawnGeneration~=generation or Runtime.modeToken~=resumeToken then return end
+			readyRoot=newCharacter and newCharacter:FindFirstChild("HumanoidRootPart")
+			readyHum=newCharacter and newCharacter:FindFirstChildWhichIsA("Humanoid")
+			if readyRoot and readyHum then break end
+			task.wait(0.2)
+		until os.clock()>=deadline
+
+		if not readyRoot or not readyHum then
+			setStatus("RESPAWN RECOVERY: персонаж не загрузился за 15с")
+			return
+		end
+
+		-- Allow Backpack/tools to replicate before one bounded restart attempt.
+		task.wait(0.8)
+		if not Runtime.alive or Runtime.respawnGeneration~=generation or Runtime.modeToken~=resumeToken then return end
+
+		local resumed=false
+		if resumeMode=="bug" then
+			resumed=startBug()
+		elseif resumeMode=="train" and resumeTrain then
+			resumed=startTrain(resumeTrain)
+		end
+
+		if resumed and resumePositionLock and resumePositionCF then
+			Runtime.lockPosition=true
+			Runtime.positionCF=resumePositionCF
+			Runtime.nextPosTick=0
+			if Runtime.leverRefs.lockPosition then Runtime.leverRefs.lockPosition.Set(true,true) end
+		end
+
+		if resumed then
+			setStatus("RESPAWN RECOVERY: режим восстановлен")
+		else
+			setStatus("RESPAWN RECOVERY: не удалось восстановить предмет")
+		end
+	end)
 end))
 
 -- Initial scan / safe auto-select.
@@ -2316,7 +2582,8 @@ updateCanvas()
 setStatus("v20 ready | "..tostring(autoWhy))
 
 task.spawn(function()
-	for attempt=1,3 do
+	local recentFailures={}
+	while Runtime.alive do
 		local ok,err=xpcall(scheduler,function(e)
 			local trace=""
 			if debug and type(debug.traceback)=="function" then
@@ -2328,14 +2595,25 @@ task.spawn(function()
 		if ok or not Runtime.alive then return end
 
 		Runtime.lastError=err
-		panicStop()
-
-		if attempt<3 then
-			setStatus(("SCHEDULER ERROR: restart %d/2 | %s"):format(attempt,tostring(err):sub(1,80)))
-			task.wait(0.5)
-		else
-			warn("RockBugHub scheduler stopped: "..tostring(err))
-			Runtime:Stop("scheduler failed")
+		Runtime.schedulerRestarts=Runtime.schedulerRestarts+1
+		local now=os.clock()
+		local kept={}
+		for _,stamp in ipairs(recentFailures) do
+			if now-stamp<=30 then table.insert(kept,stamp) end
 		end
+		table.insert(kept,now)
+		recentFailures=kept
+
+		-- Preserve every mode/lever on isolated failures. A hard stop remains for
+		-- a genuine crash loop so the client cannot spin forever at full CPU.
+		if #recentFailures>=4 then
+			warn("RockBugHub scheduler stopped: "..tostring(err))
+			Runtime:Stop("scheduler repeatedly failed")
+			return
+		end
+
+		enterNetworkHold("scheduler recovery",now)
+		setStatus(("SCHEDULER RECOVERY %d/3 | state preserved | %s"):format(#recentFailures,tostring(err):sub(1,70)))
+		task.wait(math.min(0.5*#recentFailures,1.5))
 	end
 end)
