@@ -200,11 +200,11 @@ local function setNetText()
 		local pingText=Runtime.pingAvailable and tostring(math.floor((Runtime.pingMs or 0)+0.5)).."ms" or "?"
 		if Runtime.networkPaused then
 			local held=math.max(0,os.clock()-(Runtime.networkHoldSince or os.clock()))
-			Runtime.ui.net.Text=("NET %s %.1fs  |  PING %s"):format(Runtime.networkState or "HOLD",held,pingText)
+			Runtime.ui.net.Text=("СЕТЬ: ПАУЗА %.1fs | %s"):format(held,pingText)
 		elseif Runtime.networkProbeUnsupported then
-			Runtime.ui.net.Text=("NET LIMITED  |  REMOTE %.1f/s"):format(Runtime.remotePps or 0)
+			Runtime.ui.net.Text=("СЕТЬ: ОГРАНИЧЕНО | УДАР %.1f/s"):format(Runtime.remotePps or 0)
 		else
-			Runtime.ui.net.Text=("PING %s  |  REMOTE %.1f/s"):format(pingText,Runtime.remotePps or 0)
+			Runtime.ui.net.Text=("PING %s | УДАР %.1f/s"):format(pingText,Runtime.remotePps or 0)
 		end
 	end
 end
@@ -981,7 +981,7 @@ local function enterNetworkHold(reason,now)
 
 	Runtime.networkReason=tostring(reason or "connection unstable")
 	keepNetworkCharacterHold()
-	setStatus("NET GUARD: HOLD | "..Runtime.networkReason)
+	setStatus("СЕТЬ: ПАУЗА • "..Runtime.networkReason)
 end
 
 local function leaveNetworkHold(now,reason)
@@ -1005,7 +1005,7 @@ local function leaveNetworkHold(now,reason)
 
 	if wasPaused then
 		Runtime.networkRecoveries=Runtime.networkRecoveries+1
-		setStatus("NET GUARD: "..tostring(reason or "RECOVERED").." | режим продолжен")
+		setStatus("СЕТЬ ВОССТАНОВЛЕНА • режим продолжен")
 	end
 end
 
@@ -1704,7 +1704,7 @@ local function setVisualLow(on)
 			if scanned%500==0 then task.wait() end
 		end
 
-		setStatus("VISUAL LOW: ON")
+		setStatus("МЕНЬШЕ ЭФФЕКТОВ: включено")
 	else
 		for obj,saved in pairs(Runtime.visualSaved) do
 			if obj and obj.Parent then
@@ -1714,7 +1714,7 @@ local function setVisualLow(on)
 		end
 
 		Runtime.visualSaved={}
-		setStatus("VISUAL LOW: OFF")
+		setStatus("МЕНЬШЕ ЭФФЕКТОВ: выключено")
 	end
 end
 
@@ -1762,7 +1762,7 @@ local function stopMode(reason)
 end
 
 local function panicStop()
-	clearModeState("PANIC STOP",true)
+	clearModeState("ВСЁ ОСТАНОВЛЕНО",true)
 	Runtime.lockPosition=false
 	Runtime.positionCF=nil
 	Runtime.autoRebirth=false
@@ -1830,9 +1830,7 @@ local function startBug()
 	safe(function() tool:Activate() end)
 	oneTouch()
 
-	local remoteState=findMuscleRemote() and "remote OK" or "remote missing"
-	local touchState=type(firetouchinterest)=="function" and "touch OK" or "touch missing"
-	setStatus("BUG ON | "..tostring(msg).." | "..remoteState.." | "..touchState)
+	setStatus("АВТОУДАР: включён • "..tostring(Runtime.selectedRock.label))
 	return true
 end
 
@@ -1863,7 +1861,7 @@ local function startTrain(t)
 	safe(function() tool:Activate() end)
 	tryTrainRemote()
 
-	setStatus("TRAIN FAST ON | "..tostring(msg))
+	setStatus("КАЧ: "..tostring(t.label).." включён")
 	return true
 end
 
@@ -2076,13 +2074,13 @@ local THEME={
 	Panel=Color3.fromRGB(18,27,40),
 	Surface=Color3.fromRGB(24,34,49),
 	SurfaceAlt=Color3.fromRGB(31,43,60),
-	Accent=Color3.fromRGB(78,218,202),
-	Accent2=Color3.fromRGB(61,194,184),
-	Success=Color3.fromRGB(92,224,177),
+	Accent=Color3.fromRGB(158,112,255),
+	Accent2=Color3.fromRGB(198,128,255),
+	Success=Color3.fromRGB(177,126,255),
 	Danger=Color3.fromRGB(255,102,119),
 	Text=Color3.fromRGB(232,239,247),
-	Muted=Color3.fromRGB(145,158,176),
-	Border=Color3.fromRGB(91,113,137),
+	Muted=Color3.fromRGB(184,190,208),
+	Border=Color3.fromRGB(116,102,150),
 	Warm=Color3.fromRGB(255,180,84),
 }
 
@@ -2129,12 +2127,12 @@ local function button(parent,text,color)
 	b.Text=text
 	b.TextColor3=THEME.Text
 	b.BackgroundColor3=color
-	b.BackgroundTransparency=0.16
+	b.BackgroundTransparency=0.10
 	b.BorderSizePixel=0
 	b.AutoButtonColor=true
 	b.Font=Enum.Font.GothamBlack
-	b.TextSize=12
-	corner(b,12)
+	b.TextSize=13
+	corner(b,8)
 	return b
 end
 
@@ -2157,7 +2155,7 @@ main.Position=UDim2.fromOffset(
 	math.max(18,math.floor((initialViewport.Y-defaultHeight)/2))
 )
 main.BackgroundColor3=THEME.Bg
-main.BackgroundTransparency=0.16
+main.BackgroundTransparency=0.08
 main.BorderSizePixel=0
 main.Active=true
 main.ClipsDescendants=true
@@ -2189,11 +2187,11 @@ brand.Position=UDim2.fromOffset(12,12)
 brand.TextColor3=THEME.Accent
 brand.TextSize=15
 
-local title=label(topBar,"ПАНЕЛЬ УПРАВЛЕНИЯ СКРИПТОМ",16,Enum.Font.GothamBold,THEME.Text)
+local title=label(topBar,"ROCK BUG HUB",16,Enum.Font.GothamBold,THEME.Text)
 title.Size=UDim2.new(1,-170,0,24)
 title.Position=UDim2.fromOffset(68,9)
 
-local author=label(topBar,"ROCK ROUTE  •  SESSION HUB v22",9,Enum.Font.GothamBold,THEME.Muted)
+local author=label(topBar,"УПРАВЛЕНИЕ СКРИПТОМ",9,Enum.Font.GothamBold,THEME.Muted)
 author.Size=UDim2.new(1,-170,0,16)
 author.Position=UDim2.fromOffset(69,34)
 
@@ -2211,7 +2209,7 @@ minimizeBtn.TextSize=18
 
 local rail=Instance.new("Frame")
 rail.Parent=main
-rail.Size=UDim2.new(0,132,1,-62)
+rail.Size=UDim2.new(0,108,1,-62)
 rail.Position=UDim2.fromOffset(0,62)
 rail.BackgroundColor3=THEME.Panel
 rail.BackgroundTransparency=0.20
@@ -2245,29 +2243,29 @@ local function styleTab(tab,y)
 	corner(mark,2)
 end
 
-local bugTab=button(rail,"▦\nКАМЕНЬ",THEME.Accent)
+local bugTab=button(rail,"◈\nКАМЕНЬ",THEME.Accent)
 styleTab(bugTab,10)
 
-local trainTab=button(rail,"≋\nКАЧ",THEME.Surface)
+local trainTab=button(rail,"▤\nКАЧ",THEME.Surface)
 styleTab(trainTab,100)
 
-local rebTab=button(rail,"↻\nРЕБЫ",THEME.Surface)
+local rebTab=button(rail,"↻\nРЕБИРТ",THEME.Surface)
 styleTab(rebTab,190)
 
-local rescanBtn=button(rail,"SCAN",THEME.SurfaceAlt)
+local rescanBtn=button(rail,"ОБНОВИТЬ",THEME.SurfaceAlt)
 rescanBtn.Size=UDim2.new(1,-14,0,34)
 rescanBtn.Position=UDim2.fromOffset(7,280)
 rescanBtn.TextSize=10
 
-local panicBtn=button(rail,"STOP",THEME.Danger)
+local panicBtn=button(rail,"СТОП",THEME.Danger)
 panicBtn.Size=UDim2.new(1,-14,0,38)
 panicBtn.Position=UDim2.new(0,7,1,-47)
 panicBtn.TextSize=11
 
 local content=Instance.new("Frame")
 content.Parent=main
-content.Size=UDim2.new(1,-132,1,-62)
-content.Position=UDim2.fromOffset(132,62)
+content.Size=UDim2.new(1,-108,1,-62)
+content.Position=UDim2.fromOffset(108,62)
 content.BackgroundColor3=THEME.Bg
 content.BackgroundTransparency=0.38
 content.BorderSizePixel=0
@@ -2275,22 +2273,22 @@ content.ClipsDescendants=true
 
 local quickBar=Instance.new("Frame")
 quickBar.Parent=content
-quickBar.Size=UDim2.new(1,-18,0,108)
+quickBar.Size=UDim2.new(1,-18,0,98)
 quickBar.Position=UDim2.fromOffset(9,8)
 quickBar.BackgroundColor3=THEME.Surface
-quickBar.BackgroundTransparency=0.28
+quickBar.BackgroundTransparency=0.14
 quickBar.BorderSizePixel=0
 corner(quickBar,10)
 stroke(quickBar,THEME.Accent,1,0.66)
 gradient(quickBar,THEME.Surface,THEME.Panel,0)
 
-local quickTitle=label(quickBar,"⚡  ВАЖНЫЕ ФУНКЦИИ",12,Enum.Font.GothamBold,THEME.Text)
+local quickTitle=label(quickBar,"⚡  ВАЖНОЕ",13,Enum.Font.GothamBold,THEME.Text)
 quickTitle.Size=UDim2.new(1,-22,0,24)
 quickTitle.Position=UDim2.fromOffset(11,7)
 
 local quickBody=Instance.new("Frame")
 quickBody.Parent=quickBar
-quickBody.Size=UDim2.new(1,-16,0,66)
+quickBody.Size=UDim2.new(1,-16,0,56)
 quickBody.Position=UDim2.fromOffset(8,35)
 quickBody.BackgroundTransparency=1
 
@@ -2308,23 +2306,27 @@ local statusTitle=label(statusPanel,"⌁  СТАТУС",10,Enum.Font.GothamBold,
 statusTitle.Size=UDim2.new(1,-16,0,18)
 statusTitle.Position=UDim2.fromOffset(8,2)
 
-local status=label(statusPanel,"●  ready",9,Enum.Font.GothamBold,THEME.Text)
+local status=label(statusPanel,"●  готово",10,Enum.Font.GothamBold,THEME.Text)
 status.Size=UDim2.new(0.62,-10,0,28)
 status.Position=UDim2.fromOffset(6,24)
 status.BackgroundColor3=THEME.SurfaceAlt
 status.BackgroundTransparency=0.34
 status.BorderSizePixel=0
 status.TextXAlignment=Enum.TextXAlignment.Center
+status.TextWrapped=false
+status.TextTruncate=Enum.TextTruncate.AtEnd
 corner(status,7)
 stroke(status,THEME.Border,1,0.72)
 
-local net=label(statusPanel,"PING ? | REMOTE 0/s",8,Enum.Font.GothamBold,THEME.Accent)
+local net=label(statusPanel,"PING ? | УДАР 0/s",9,Enum.Font.GothamBold,THEME.Accent)
 net.Size=UDim2.new(0.38,-8,0,28)
 net.Position=UDim2.new(0.62,2,0,24)
 net.BackgroundColor3=THEME.SurfaceAlt
 net.BackgroundTransparency=0.34
 net.BorderSizePixel=0
 net.TextXAlignment=Enum.TextXAlignment.Center
+net.TextWrapped=false
+net.TextTruncate=Enum.TextTruncate.AtEnd
 corner(net,7)
 stroke(net,THEME.Border,1,0.72)
 
@@ -2333,8 +2335,8 @@ Runtime.ui={status=status,net=net}
 local function makePage(color)
 	local page=Instance.new("ScrollingFrame")
 	page.Parent=content
-	page.Size=UDim2.new(1,-18,1,-198)
-	page.Position=UDim2.fromOffset(9,124)
+	page.Size=UDim2.new(1,-18,1,-188)
+	page.Position=UDim2.fromOffset(9,114)
 	page.BackgroundTransparency=1
 	page.BorderSizePixel=0
 	page.ScrollBarThickness=3
@@ -2404,10 +2406,10 @@ local function card(parent,height)
 	f.Parent=parent
 	f.Size=UDim2.new(1,0,0,height)
 	f.BackgroundColor3=THEME.Surface
-	f.BackgroundTransparency=0.38
+	f.BackgroundTransparency=0.16
 	f.BorderSizePixel=0
 	corner(f,10)
-	stroke(f,THEME.Border,1,0.66)
+	stroke(f,THEME.Border,1,0.52)
 	gradient(f,THEME.Surface,THEME.Bg,115)
 	return f
 end
@@ -2421,7 +2423,7 @@ local function makeFeaturePanel(parent,titleText,height,columns)
 	icon.Position=UDim2.fromOffset(12,7)
 	icon.TextXAlignment=Enum.TextXAlignment.Center
 
-	local heading=label(panel,titleText,12,Enum.Font.GothamBold,THEME.Text)
+	local heading=label(panel,titleText,14,Enum.Font.GothamBold,THEME.Text)
 	heading.Size=UDim2.new(1,-50,0,24)
 	heading.Position=UDim2.fromOffset(42,7)
 
@@ -2434,8 +2436,8 @@ local function makeFeaturePanel(parent,titleText,height,columns)
 	local grid=Instance.new("UIGridLayout")
 	grid.Parent=body
 	grid.SortOrder=Enum.SortOrder.LayoutOrder
-	grid.CellPadding=UDim2.fromOffset(8,8)
-	grid.CellSize=UDim2.new(1/(columns or 3),-6,0,76)
+	grid.CellPadding=UDim2.fromOffset(10,10)
+	grid.CellSize=UDim2.new(1/(columns or 2),-5,0,92)
 	return panel,body,grid
 end
 
@@ -2447,7 +2449,7 @@ local function makeSettingsPanel(parent,titleText,height)
 	icon.Position=UDim2.fromOffset(12,7)
 	icon.TextXAlignment=Enum.TextXAlignment.Center
 
-	local heading=label(panel,titleText,12,Enum.Font.GothamBold,THEME.Text)
+	local heading=label(panel,titleText,14,Enum.Font.GothamBold,THEME.Text)
 	heading.Size=UDim2.new(1,-50,0,24)
 	heading.Position=UDim2.fromOffset(42,7)
 
@@ -2460,34 +2462,34 @@ local function makeSettingsPanel(parent,titleText,height)
 	local list=Instance.new("UIListLayout")
 	list.Parent=body
 	list.SortOrder=Enum.SortOrder.LayoutOrder
-	list.Padding=UDim.new(0,3)
+	list.Padding=UDim.new(0,4)
 	return panel,body,list
 end
 
 local function makeSlider(parent,name,desc,initial,callback)
 	local row=Instance.new("TextButton")
 	row.Parent=parent
-	row.Size=UDim2.new(1,0,0,45)
+	row.Size=UDim2.new(1,0,0,56)
 	row.Text=""
 	row.AutoButtonColor=false
 	row.BackgroundColor3=THEME.Surface
-	row.BackgroundTransparency=0.48
+	row.BackgroundTransparency=0.22
 	row.BorderSizePixel=0
 	corner(row,6)
 	stroke(row,THEME.Border,1,0.82)
 
-	local n=label(row,name,11,Enum.Font.GothamBlack,THEME.Text)
-	n.Size=UDim2.new(1,-78,0,17)
-	n.Position=UDim2.new(0,10,0,4)
+	local n=label(row,name,13,Enum.Font.GothamBold,THEME.Text)
+	n.Size=UDim2.new(1,-80,0,20)
+	n.Position=UDim2.new(0,11,0,5)
 
-	local d=label(row,desc,8,Enum.Font.GothamBold,THEME.Muted)
-	d.Size=UDim2.new(1,-78,0,15)
-	d.Position=UDim2.new(0,10,0,23)
+	local d=label(row,desc,9,Enum.Font.Gotham,THEME.Muted)
+	d.Size=UDim2.new(1,-80,0,18)
+	d.Position=UDim2.new(0,11,0,30)
 
 	local track=Instance.new("Frame")
 	track.Parent=row
 	track.Size=UDim2.new(0,54,0,25)
-	track.Position=UDim2.new(1,-62,0,9)
+	track.Position=UDim2.new(1,-62,0,15)
 	track.BorderSizePixel=0
 	track.BackgroundTransparency=0.04
 	corner(track,13)
@@ -2537,46 +2539,37 @@ local function makePinnedToggle(parent,name,initial,callback)
 	row.Text=""
 	row.AutoButtonColor=false
 	row.BackgroundColor3=THEME.SurfaceAlt
-	row.BackgroundTransparency=0.42
+	row.BackgroundTransparency=0.18
 	row.BorderSizePixel=0
 	corner(row,8)
-	local rowStroke=stroke(row,THEME.Border,1,0.66)
+	local rowStroke=stroke(row,THEME.Border,1.2,0.52)
 
-	local glyph=label(row,name=="ANTI AFK" and "♢" or "◌",20,Enum.Font.GothamBold,THEME.Accent)
-	glyph.Size=UDim2.fromOffset(34,34)
-	glyph.Position=UDim2.fromOffset(10,7)
+	local glyph=label(row,name=="АНТИ-AFK" and "♢" or "◌",17,Enum.Font.GothamBold,THEME.Accent)
+	glyph.Size=UDim2.fromOffset(20,24)
+	glyph.Position=UDim2.fromOffset(5,16)
 	glyph.TextXAlignment=Enum.TextXAlignment.Center
 
-	local n=label(row,name,11,Enum.Font.GothamBlack,THEME.Text)
-	n.Size=UDim2.new(1,-98,0,20)
-	n.Position=UDim2.fromOffset(50,8)
+	local n=label(row,name,11,Enum.Font.GothamBold,THEME.Text)
+	n.Size=UDim2.new(1,-48,1,0)
+	n.Position=UDim2.fromOffset(28,0)
 
-	local d=label(row,name=="ANTI AFK" and "всегда в фоне" or "защита соединения",8,Enum.Font.GothamBold,THEME.Muted)
-	d.Size=UDim2.new(1,-98,0,17)
-	d.Position=UDim2.fromOffset(50,29)
-
-	local track=Instance.new("Frame")
-	track.Parent=row
-	track.Size=UDim2.fromOffset(42,22)
-	track.Position=UDim2.new(1,-50,0.5,-11)
-	track.BorderSizePixel=0
-	corner(track,10)
-
-	local knob=Instance.new("Frame")
-	knob.Parent=track
-	knob.Size=UDim2.fromOffset(14,14)
-	knob.BackgroundColor3=THEME.Text
-	knob.BorderSizePixel=0
-	corner(knob,7)
+	local stateDot=Instance.new("Frame")
+	stateDot.Parent=row
+	stateDot.Size=UDim2.fromOffset(10,10)
+	stateDot.Position=UDim2.new(1,-17,0,8)
+	stateDot.BorderSizePixel=0
+	corner(stateDot,5)
 
 	local state=initial and true or false
 	local api={}
 	local function paint()
-		track.BackgroundColor3=state and THEME.Accent or THEME.Panel
-		knob.Position=state and UDim2.new(1,-17,0,3) or UDim2.fromOffset(3,3)
+		row.BackgroundColor3=state and THEME.SurfaceAlt or THEME.Surface
+		row.BackgroundTransparency=state and 0.08 or 0.30
 		n.TextColor3=state and THEME.Text or THEME.Muted
 		rowStroke.Color=state and THEME.Accent or THEME.Border
-		rowStroke.Transparency=state and 0.38 or 0.72
+		rowStroke.Transparency=state and 0.18 or 0.62
+		glyph.TextColor3=state and THEME.Accent2 or THEME.Muted
+		stateDot.BackgroundColor3=state and THEME.Accent or THEME.Muted
 	end
 
 	function api.Set(v,silent)
@@ -2603,14 +2596,14 @@ local function makeFeatureToggle(parent,iconText,name,desc,initial,callback)
 	tile.Text=""
 	tile.AutoButtonColor=false
 	tile.BackgroundColor3=THEME.SurfaceAlt
-	tile.BackgroundTransparency=0.42
+	tile.BackgroundTransparency=0.16
 	tile.BorderSizePixel=0
 	corner(tile,8)
-	local tileStroke=stroke(tile,THEME.Border,1,0.66)
+	local tileStroke=stroke(tile,THEME.Border,1.2,0.50)
 
-	local glyph=label(tile,iconText,20,Enum.Font.GothamBold,THEME.Text)
-	glyph.Size=UDim2.fromOffset(28,26)
-	glyph.Position=UDim2.new(0.5,-14,0,5)
+	local glyph=label(tile,iconText,22,Enum.Font.GothamBold,THEME.Text)
+	glyph.Size=UDim2.fromOffset(32,30)
+	glyph.Position=UDim2.new(0.5,-16,0,5)
 	glyph.TextXAlignment=Enum.TextXAlignment.Center
 
 	local stateDot=Instance.new("Frame")
@@ -2620,22 +2613,23 @@ local function makeFeatureToggle(parent,iconText,name,desc,initial,callback)
 	stateDot.BorderSizePixel=0
 	corner(stateDot,4)
 
-	local n=label(tile,name,9,Enum.Font.GothamBlack,THEME.Text)
-	n.Size=UDim2.new(1,-10,0,18)
-	n.Position=UDim2.fromOffset(5,32)
+	local n=label(tile,name,13,Enum.Font.GothamBold,THEME.Text)
+	n.Size=UDim2.new(1,-12,0,22)
+	n.Position=UDim2.fromOffset(6,37)
 	n.TextXAlignment=Enum.TextXAlignment.Center
 
-	local d=label(tile,desc,7,Enum.Font.GothamBold,THEME.Muted)
-	d.Size=UDim2.new(1,-10,0,18)
-	d.Position=UDim2.fromOffset(5,51)
+	local d=label(tile,desc,9,Enum.Font.Gotham,THEME.Muted)
+	d.Size=UDim2.new(1,-12,0,24)
+	d.Position=UDim2.fromOffset(6,62)
 	d.TextXAlignment=Enum.TextXAlignment.Center
 
 	local state=initial and true or false
 	local api={}
 	local function paint()
 		tile.BackgroundColor3=state and THEME.SurfaceAlt or THEME.Surface
+		tile.BackgroundTransparency=state and 0.06 or 0.22
 		tileStroke.Color=state and THEME.Accent or THEME.Border
-		tileStroke.Transparency=state and 0.25 or 0.70
+		tileStroke.Transparency=state and 0.12 or 0.54
 		glyph.TextColor3=state and THEME.Accent or THEME.Text
 		stateDot.BackgroundColor3=state and THEME.Success or THEME.Muted
 		n.TextColor3=state and THEME.Text or THEME.Muted
@@ -2662,25 +2656,25 @@ end
 local function makeNumberInput(parent,name,desc,initial,callback)
 	local row=Instance.new("Frame")
 	row.Parent=parent
-	row.Size=UDim2.new(1,0,0,48)
+	row.Size=UDim2.new(1,0,0,56)
 	row.BackgroundColor3=THEME.Surface
-	row.BackgroundTransparency=0.48
+	row.BackgroundTransparency=0.22
 	row.BorderSizePixel=0
 	corner(row,6)
 	stroke(row,THEME.Border,1,0.82)
 
-	local n=label(row,name,11,Enum.Font.GothamBlack,THEME.Text)
-	n.Size=UDim2.new(1,-84,0,18)
-	n.Position=UDim2.new(0,9,0,5)
+	local n=label(row,name,13,Enum.Font.GothamBold,THEME.Text)
+	n.Size=UDim2.new(1,-88,0,20)
+	n.Position=UDim2.new(0,11,0,5)
 
-	local d=label(row,desc,8,Enum.Font.GothamBold,THEME.Muted)
-	d.Size=UDim2.new(1,-84,0,16)
-	d.Position=UDim2.new(0,9,0,27)
+	local d=label(row,desc,9,Enum.Font.Gotham,THEME.Muted)
+	d.Size=UDim2.new(1,-88,0,18)
+	d.Position=UDim2.new(0,11,0,30)
 
 	local box=Instance.new("TextBox")
 	box.Parent=row
 	box.Size=UDim2.new(0,68,0,30)
-	box.Position=UDim2.new(1,-76,0,9)
+	box.Position=UDim2.new(1,-76,0,13)
 	box.BackgroundColor3=THEME.SurfaceAlt
 	box.BackgroundTransparency=0.05
 	box.BorderSizePixel=0
@@ -2728,7 +2722,7 @@ end
 
 -- BUG PAGE
 
-local bugFeaturePanel,bugFeatureBody=makeFeaturePanel(bugPage,"ФУНКЦИИ КАМНЯ",120,3)
+local bugFeaturePanel,bugFeatureBody=makeFeaturePanel(bugPage,"ГЛАВНЫЕ ФУНКЦИИ",240,2)
 local bugSettingsPanel,bugSettingsBody=makeSettingsPanel(bugPage,"НАСТРОЙКИ КАМНЯ",254)
 bugSettingsPanel.LayoutOrder=2
 
@@ -2819,7 +2813,7 @@ Runtime.refreshRockList=refreshRockList
 local lockRockSlider
 local bugSlider
 
-lockRockSlider=makeFeatureToggle(bugFeatureBody,"◇","TP LOCK","фиксация на камне",false,function(on,api)
+lockRockSlider=makeFeatureToggle(bugFeatureBody,"◇","ФИКСАЦИЯ","держит у камня",false,function(on,api)
 	if on then
 		local ok,err=teleportInsideSelected()
 
@@ -2831,45 +2825,45 @@ lockRockSlider=makeFeatureToggle(bugFeatureBody,"◇","TP LOCK","фиксаци�
 
 		Runtime.lockRock=true
 		Runtime.nextLockTick=0
-		setStatus("TP LOCK: ON")
+		setStatus("ФИКСАЦИЯ: включена")
 	else
 		if Runtime.mode=="bug" then
-			stopMode("TP LOCK OFF / BUG STOP")
+			stopMode("ФИКСАЦИЯ И АВТОУДАР: выключены")
 		else
 			Runtime.lockRock=false
 			Runtime.lockCF=nil
 			restoreCharacterLock()
-			setStatus("TP LOCK: OFF")
+			setStatus("ФИКСАЦИЯ: выключена")
 		end
 	end
 end)
 
-bugSlider=makeFeatureToggle(bugFeatureBody,"▷","STABLE PUNCH","стабильные удары",false,function(on,api)
+bugSlider=makeFeatureToggle(bugFeatureBody,"▷","АВТОУДАР","сам бьёт камень",false,function(on,api)
 	if on then
 		if not startBug() then
 			api.Set(false,true)
 		end
 	else
-		stopMode("BUG OFF / HARD STOP")
+		stopMode("АВТОУДАР: выключен")
 	end
 end)
 
 Runtime.leverRefs.lockRock=lockRockSlider
 Runtime.leverRefs.bug=bugSlider
 
-local remoteSlider=makeFeatureToggle(bugFeatureBody,"◎","DIRECT REMOTE","remote до 5/с",true,function(on)
+local remoteSlider=makeFeatureToggle(bugFeatureBody,"◎","УСКОРЕНИЕ","ускоряет отправку",true,function(on)
 	Runtime.directRemoteEnabled=on
-	setStatus("DIRECT REMOTE: "..(on and "ON" or "OFF"))
+	setStatus("УСКОРЕНИЕ: "..(on and "включено" or "выключено"))
 end)
 
 -- TRAIN PAGE
 
-local trainFeaturePanel,trainFeatureBody=makeFeaturePanel(trainPage,"ВИДЫ КАЧА",205,3)
+local trainFeaturePanel,trainFeatureBody=makeFeaturePanel(trainPage,"ВЫБЕРИ ВИД КАЧА",342,2)
 trainFeaturePanel.LayoutOrder=1
-local trainSettingsPanel,trainSettingsBody=makeSettingsPanel(trainPage,"НАСТРОЙКИ",184)
+local trainSettingsPanel,trainSettingsBody=makeSettingsPanel(trainPage,"ДОПОЛНИТЕЛЬНО",220)
 trainSettingsPanel.LayoutOrder=2
 
-local lockPosSlider=makeSlider(trainSettingsBody,"LOCK POSITION","удерживать текущую позицию во время кача",false,function(on,api)
+local lockPosSlider=makeSlider(trainSettingsBody,"ФИКСАЦИЯ ПОЗИЦИИ","не даёт персонажу сдвигаться",false,function(on,api)
 	if on then
 		local r=root()
 
@@ -2884,40 +2878,40 @@ local lockPosSlider=makeSlider(trainSettingsBody,"LOCK POSITION","удержив
 		Runtime.nextPosTick=0
 		disableKingLock()
 		if Runtime.leverRefs.kingLock then Runtime.leverRefs.kingLock.Set(false,true) end
-		setStatus("LOCK POSITION: ON")
+		setStatus("ПОЗИЦИЯ: зафиксирована")
 	else
 		Runtime.lockPosition=false
 		Runtime.positionCF=nil
-		setStatus("LOCK POSITION: OFF")
+		setStatus("ПОЗИЦИЯ: свободна")
 	end
 end)
 
 Runtime.leverRefs.lockPosition=lockPosSlider
 
-local visualSlider=makeSlider(trainSettingsBody,"VISUAL LOW","только эффекты/тени, не трогает GUI и карту",false,function(on)
+local visualSlider=makeSlider(trainSettingsBody,"МЕНЬШЕ ЭФФЕКТОВ","повышает плавность игры",false,function(on)
 	setVisualLow(on)
 end)
 
 Runtime.leverRefs.visualLow=visualSlider
 
-local afkSlider,afkQuickRow=makePinnedToggle(quickBody,"ANTI AFK",true,function(on)
+local afkSlider,afkQuickRow=makePinnedToggle(quickBody,"АНТИ-AFK",true,function(on)
 	Runtime.antiAfkEnabled=on
-	setStatus("ANTI AFK: "..(on and "ON" or "OFF"))
+	setStatus("АНТИ-AFK: "..(on and "включён" or "выключен"))
 end)
 afkQuickRow.Size=UDim2.new(0.5,-3,1,0)
 afkQuickRow.Position=UDim2.fromOffset(0,0)
 
-local netGuardSlider,netQuickRow=makePinnedToggle(quickBody,"NET GUARD",true,function(on)
+local netGuardSlider,netQuickRow=makePinnedToggle(quickBody,"ЗАЩИТА СЕТИ",true,function(on)
 	Runtime.netGuardEnabled=on
 	if not on then
 		Runtime.manualNetworkHold=false
 		if Runtime.leverRefs.wifiHold then Runtime.leverRefs.wifiHold.Set(false,true) end
 		leaveNetworkHold(os.clock(),"OFF")
-		setStatus("NET GUARD: OFF")
+		setStatus("ЗАЩИТА СЕТИ: выключена")
 	else
 		Runtime.networkBadSamples=0
 		Runtime.networkGoodSamples=0
-		setStatus("NET GUARD: ON")
+		setStatus("ЗАЩИТА СЕТИ: включена")
 	end
 end)
 netQuickRow.Size=UDim2.new(0.5,-3,1,0)
@@ -2925,17 +2919,17 @@ netQuickRow.Position=UDim2.new(0.5,3,0,0)
 
 Runtime.leverRefs.netGuard=netGuardSlider
 
-local wifiHoldSlider=makeSlider(trainSettingsBody,"WIFI HOLD","автомат включён; рычаг для ручной заморозки",false,function(on)
+local wifiHoldSlider=makeSlider(trainSettingsBody,"ПАУЗА СЕТИ","ручная заморозка при плохом Wi-Fi",false,function(on)
 	Runtime.manualNetworkHold=on
 	if on then
 		Runtime.netGuardEnabled=true
 		if Runtime.leverRefs.netGuard then Runtime.leverRefs.netGuard.Set(true,true) end
 		enterNetworkHold("manual WiFi hold",os.clock())
 		Runtime.networkState="MANUAL HOLD"
-		setStatus("WIFI HOLD: ON | персонаж и действия заморожены")
+		setStatus("ПАУЗА СЕТИ: включена")
 	else
 		leaveNetworkHold(os.clock(),"MANUAL RELEASE")
-		setStatus("WIFI HOLD: OFF | проверяю соединение")
+		setStatus("ПАУЗА СЕТИ: выключена")
 	end
 end)
 
@@ -2952,6 +2946,24 @@ local trainIcons={
 	Tread="↗",
 }
 
+local trainNames={
+	Punch="УДАРЫ",
+	Weight="ГАНТЕЛИ",
+	Push="ОТЖИМАНИЯ",
+	Sit="ПРЕСС",
+	Hand="СТОЙКА",
+	Tread="БЕГ",
+}
+
+local trainDescs={
+	Punch="сила",
+	Weight="гантели и штанга",
+	Push="обычные отжимания",
+	Sit="упражнение на пресс",
+	Hand="стойка на руках",
+	Tread="скорость и ловкость",
+}
+
 local function turnOffOtherTrain(id)
 	for otherId,lever in pairs(Runtime.leverRefs.train) do
 		if otherId~=id and lever.Get() then
@@ -2962,7 +2974,7 @@ end
 
 for _,t in ipairs(TRAIN_TYPES) do
 	local slider
-	slider=makeFeatureToggle(trainFeatureBody,trainIcons[t.id] or "◈",t.label,t.desc,false,function(on,api)
+	slider=makeFeatureToggle(trainFeatureBody,trainIcons[t.id] or "◈",trainNames[t.id] or t.label,trainDescs[t.id] or t.desc,false,function(on,api)
 		if on then
 			turnOffOtherTrain(t.id)
 			if not startTrain(t) then
@@ -2980,9 +2992,9 @@ end
 
 -- REBIRTH PAGE
 
-local rebFeaturePanel,rebFeatureBody=makeFeaturePanel(rebPage,"ФУНКЦИИ РЕБИРТА",120,3)
+local rebFeaturePanel,rebFeatureBody=makeFeaturePanel(rebPage,"РЕБИРТ И РАЗМЕР",240,2)
 rebFeaturePanel.LayoutOrder=1
-local rebSettingsPanel,rebSettingsBody=makeSettingsPanel(rebPage,"НАСТРОЙКИ",96)
+local rebSettingsPanel,rebSettingsBody=makeSettingsPanel(rebPage,"РАЗМЕР ПЕРСОНАЖА",106)
 rebSettingsPanel.LayoutOrder=2
 
 local rebInfo=card(rebPage,66)
@@ -2995,42 +3007,42 @@ local rebInfoText=label(rebInfo,"Rebirth каждые 1.2с • King Gym: -8626 
 rebInfoText.Size=UDim2.new(1,-20,0,28)
 rebInfoText.Position=UDim2.new(0,10,0,31)
 
-local autoRebSlider=makeFeatureToggle(rebFeatureBody,"↻","AUTO REBIRTH","реб при готовности",false,function(on,api)
+local autoRebSlider=makeFeatureToggle(rebFeatureBody,"↻","АВТО РЕБИРТ","реб при готовности",false,function(on,api)
 	if on and not findRebirthRemote() then
 		api.Set(false,true)
-		setStatus("AUTO REB: rebirthRemote не найден")
+		setStatus("РЕБИРТ: функция игры не найдена")
 		return
 	end
 
 	Runtime.autoRebirth=on
 	Runtime.nextRebirth=0
-	setStatus("AUTO REBIRTH: "..(on and "ON" or "OFF"))
+	setStatus("АВТО РЕБИРТ: "..(on and "включён" or "выключен"))
 end)
 
 Runtime.leverRefs.autoRebirth=autoRebSlider
 
-local sizeInput=makeNumberInput(rebSettingsBody,"TARGET SIZE","число от 0.1 до 1000",1,function(value)
+local sizeInput=makeNumberInput(rebSettingsBody,"НУЖНЫЙ РАЗМЕР","введи число от 0.1 до 1000",1,function(value)
 	Runtime.sizeTarget=value
 	if Runtime.autoSize then Runtime.nextSize=0 end
-	setStatus("TARGET SIZE: "..tostring(value))
+	setStatus("РАЗМЕР: "..tostring(value))
 end)
 
-local autoSizeSlider=makeFeatureToggle(rebFeatureBody,"◫","AUTO SET SIZE","держать размер",false,function(on,api)
+local autoSizeSlider=makeFeatureToggle(rebFeatureBody,"◫","АВТО РАЗМЕР","держит введённое число",false,function(on,api)
 	if on and not findSizeRemote() then
 		api.Set(false,true)
-		setStatus("AUTO SIZE: changeSpeedSizeRemote не найден")
+		setStatus("РАЗМЕР: функция игры не найдена")
 		return
 	end
 
 	Runtime.sizeTarget=sizeInput.Get()
 	Runtime.autoSize=on
 	Runtime.nextSize=0
-	setStatus(("AUTO SET SIZE: %s | target %s"):format(on and "ON" or "OFF",tostring(Runtime.sizeTarget)))
+	setStatus(("АВТО РАЗМЕР: %s | %s"):format(on and "включён" or "выключен",tostring(Runtime.sizeTarget)))
 end)
 
 Runtime.leverRefs.autoSize=autoSizeSlider
 
-local kingLockSlider=makeFeatureToggle(rebFeatureBody,"♛","KING LOCK","фиксация в King Gym",false,function(on,api)
+local kingLockSlider=makeFeatureToggle(rebFeatureBody,"♛","KING ЗОНА","держит в King Gym",false,function(on,api)
 	if on then
 		if Runtime.mode=="bug" then stopMode("BUG STOP / KING LOCK") end
 
@@ -3041,14 +3053,14 @@ local kingLockSlider=makeFeatureToggle(rebFeatureBody,"♛","KING LOCK","фик�
 		local ok,err=enableKingLock()
 		if not ok then
 			api.Set(false,true)
-			setStatus("KING LOCK: "..tostring(err))
+			setStatus("KING ЗОНА: "..tostring(err))
 			return
 		end
 
-		setStatus("KING LOCK: ON")
+		setStatus("KING ЗОНА: включена")
 	else
 		disableKingLock()
-		setStatus("KING LOCK: OFF")
+		setStatus("KING ЗОНА: выключена")
 	end
 end)
 
@@ -3121,12 +3133,12 @@ addConn(rebTab.Activated:Connect(function() showTab("reb") end))
 addConn(minimizeBtn.Activated:Connect(function() setMinimized(true) end))
 
 addConn(rescanBtn.Activated:Connect(function()
-	setStatus("SCAN...")
+	setStatus("ОБНОВЛЯЮ КАМНИ...")
 	scanRocks()
 	Runtime.autoRockSelection=true
 	Runtime.lastAutoRockRebs=nil
 	applyAutoRockSelection(true)
-	setStatus("SCAN DONE | "..tostring(Runtime.autoRockReason))
+	setStatus("КАМЕНЬ: "..tostring(Runtime.selectedRock and Runtime.selectedRock.label or "не найден"))
 end))
 
 addConn(panicBtn.Activated:Connect(function()
@@ -3304,7 +3316,7 @@ scanRocks()
 applyAutoRockSelection(true)
 showTab("bug")
 updateCanvas()
-setStatus("v20 ready | "..tostring(Runtime.autoRockReason))
+setStatus("ГОТОВО • "..tostring(Runtime.selectedRock and Runtime.selectedRock.label or "камень не найден"))
 
 end
 
