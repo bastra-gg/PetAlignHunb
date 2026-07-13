@@ -468,7 +468,15 @@ local function chooseSafeRockByRebirths()
 			local reason=("%d реб • %s XP • L%d / %d уд."):format(
 				rebs,compactXp(best.hitXp40),best.level,best.hits
 			)
-			return best.row,reason,rebs,true
+			local calc={
+				rebirths=rebs,
+				xp40=best.hitXp40,
+				level=best.level,
+				hits=best.hits,
+				grade=grade.name,
+				exact=true,
+			}
+			return best.row,reason,rebs,true,calc
 		end
 
 		-- There is no mathematically exact pet-XP cycle at every rebirth count.
@@ -477,7 +485,8 @@ local function chooseSafeRockByRebirths()
 			local row=ROCKS[i]
 			if rockCache[row.req] then
 				local hitXp40=(rebs+20)*math.floor(row.mult*40+0.5)
-				return row,("%d реб • exact нет • %s XP"):format(rebs,compactXp(hitXp40)),rebs,false
+				local calc={rebirths=rebs,xp40=hitXp40,grade=grade.name,exact=false}
+				return row,("%d реб • exact нет • %s XP"):format(rebs,compactXp(hitXp40)),rebs,false,calc
 			end
 		end
 	end
@@ -485,16 +494,16 @@ local function chooseSafeRockByRebirths()
 	for i=#ROCKS,1,-1 do
 		local row=ROCKS[i]
 		if rockCache[row.req] then
-			return row,"ребы не найдены ("..tostring(source)..")",nil,false
+			return row,"ребы не найдены ("..tostring(source)..")",nil,false,{grade=grade.name,exact=false}
 		end
 	end
 
-	return ROCKS[#ROCKS],"камни не найдены",nil,false
+	return ROCKS[#ROCKS],"камни не найдены",nil,false,{grade=grade.name,exact=false}
 end
 
 local function applyAutoRockSelection(force)
 	if not Runtime.autoRockSelection and not force then return false end
-	local row,reason,rebs,exact=chooseSafeRockByRebirths()
+	local row,reason,rebs,exact,calc=chooseSafeRockByRebirths()
 	if not force and rebs~=nil and Runtime.lastAutoRockRebs==rebs then return false end
 
 	local previous=Runtime.selectedRock
@@ -502,13 +511,25 @@ local function applyAutoRockSelection(force)
 	Runtime.lastAutoRockRebs=rebs
 	Runtime.autoRockReason=reason
 	Runtime.autoRockExact=exact
+	Runtime.autoRockCalc=calc
 
 	if Runtime.ui then
 		if Runtime.ui.autoRockTitle and Runtime.ui.autoRockTitle.Parent then
-			Runtime.ui.autoRockTitle.Text=exact and "АВТО-КАМЕНЬ ПО РЕБАМ" or "АВТО-КАМЕНЬ: НЕТ EXACT"
+			Runtime.ui.autoRockTitle.Text="АВТО-КАЛЬКУЛЯТОР КАМНЯ"
 		end
 		if Runtime.ui.autoRockName and Runtime.ui.autoRockName.Parent then
-			Runtime.ui.autoRockName.Text=row.label.." • "..tostring(reason)
+			Runtime.ui.autoRockName.Text=row.label.." • "..tostring(calc and calc.grade or "-")
+		end
+		if Runtime.ui.autoRockStats and Runtime.ui.autoRockStats.Parent then
+			local rebText=calc and calc.rebirths~=nil and tostring(calc.rebirths) or "не найдены"
+			local xpText=calc and calc.xp40 and compactXp(calc.xp40) or "?"
+			if calc and calc.exact then
+				Runtime.ui.autoRockStats.Text=("Ребы: %s  •  XP/удар: %s  •  цель: L%d  •  ударов: %d"):format(
+					rebText,xpText,calc.level,calc.hits
+				)
+			else
+				Runtime.ui.autoRockStats.Text=("Ребы: %s  •  XP/удар: %s  •  точного деления нет"):format(rebText,xpText)
+			end
 		end
 	end
 
@@ -2143,7 +2164,7 @@ end
 
 local initialViewport=viewportSize()
 local minWindowWidth=math.max(280,math.min(320,initialViewport.X-12))
-local minWindowHeight=math.max(260,math.min(300,initialViewport.Y-12))
+local minWindowHeight=math.max(360,math.min(410,initialViewport.Y-12))
 local defaultWidth=math.min(560,math.max(minWindowWidth,math.floor(initialViewport.X*0.62)))
 local defaultHeight=math.min(410,math.max(minWindowHeight,math.floor(initialViewport.Y*0.60)))
 
@@ -2273,7 +2294,7 @@ content.ClipsDescendants=true
 
 local quickBar=Instance.new("Frame")
 quickBar.Parent=content
-quickBar.Size=UDim2.new(1,-12,0,72)
+quickBar.Size=UDim2.new(1,-12,0,64)
 quickBar.Position=UDim2.fromOffset(6,5)
 quickBar.BackgroundColor3=THEME.Surface
 quickBar.BackgroundTransparency=0.14
@@ -2288,14 +2309,14 @@ quickTitle.Position=UDim2.fromOffset(8,3)
 
 local quickBody=Instance.new("Frame")
 quickBody.Parent=quickBar
-quickBody.Size=UDim2.new(1,-12,0,42)
+quickBody.Size=UDim2.new(1,-12,0,34)
 quickBody.Position=UDim2.fromOffset(6,24)
 quickBody.BackgroundTransparency=1
 
 local statusPanel=Instance.new("Frame")
 statusPanel.Parent=content
-statusPanel.Size=UDim2.new(1,-12,0,46)
-statusPanel.Position=UDim2.new(0,6,1,-52)
+statusPanel.Size=UDim2.new(1,-12,0,40)
+statusPanel.Position=UDim2.new(0,6,1,-46)
 statusPanel.BackgroundColor3=THEME.Surface
 statusPanel.BackgroundTransparency=0.30
 statusPanel.BorderSizePixel=0
@@ -2303,12 +2324,12 @@ corner(statusPanel,10)
 stroke(statusPanel,THEME.Border,1,0.68)
 
 local statusTitle=label(statusPanel,"⌁  СТАТУС",8,Enum.Font.GothamBold,THEME.Accent)
-statusTitle.Size=UDim2.new(1,-12,0,13)
+statusTitle.Size=UDim2.new(1,-12,0,12)
 statusTitle.Position=UDim2.fromOffset(6,1)
 
 local status=label(statusPanel,"●  готово",9,Enum.Font.GothamBold,THEME.Text)
-status.Size=UDim2.new(0.62,-7,0,24)
-status.Position=UDim2.fromOffset(4,17)
+status.Size=UDim2.new(0.62,-7,0,21)
+status.Position=UDim2.fromOffset(4,14)
 status.BackgroundColor3=THEME.SurfaceAlt
 status.BackgroundTransparency=0.34
 status.BorderSizePixel=0
@@ -2319,8 +2340,8 @@ corner(status,7)
 stroke(status,THEME.Border,1,0.72)
 
 local net=label(statusPanel,"PING ? | УДАР 0/s",8,Enum.Font.GothamBold,THEME.Accent)
-net.Size=UDim2.new(0.38,-5,0,24)
-net.Position=UDim2.new(0.62,1,0,17)
+net.Size=UDim2.new(0.38,-5,0,21)
+net.Position=UDim2.new(0.62,1,0,14)
 net.BackgroundColor3=THEME.SurfaceAlt
 net.BackgroundTransparency=0.34
 net.BorderSizePixel=0
@@ -2335,14 +2356,15 @@ Runtime.ui={status=status,net=net}
 local function makePage(color)
 	local page=Instance.new("ScrollingFrame")
 	page.Parent=content
-	page.Size=UDim2.new(1,-12,1,-142)
-	page.Position=UDim2.fromOffset(6,83)
+	page.Size=UDim2.new(1,-12,1,-126)
+	page.Position=UDim2.fromOffset(6,75)
 	page.BackgroundTransparency=1
 	page.BorderSizePixel=0
-	page.ScrollBarThickness=3
+	page.ScrollBarThickness=0
 	page.ScrollBarImageColor3=color
 	page.CanvasSize=UDim2.new(0,0,0,0)
 	page.ScrollingDirection=Enum.ScrollingDirection.Y
+	page.ScrollingEnabled=false
 	return page
 end
 
@@ -2373,15 +2395,15 @@ gradient(miniButton,THEME.Surface,THEME.Bg,135)
 local function listLayout(frame)
 	local pad=Instance.new("UIPadding")
 	pad.Parent=frame
-	pad.PaddingTop=UDim.new(0,4)
-	pad.PaddingBottom=UDim.new(0,12)
-	pad.PaddingLeft=UDim.new(0,2)
-	pad.PaddingRight=UDim.new(0,5)
+	pad.PaddingTop=UDim.new(0,2)
+	pad.PaddingBottom=UDim.new(0,2)
+	pad.PaddingLeft=UDim.new(0,1)
+	pad.PaddingRight=UDim.new(0,1)
 
 	local list=Instance.new("UIListLayout")
 	list.Parent=frame
 	list.SortOrder=Enum.SortOrder.LayoutOrder
-	list.Padding=UDim.new(0,8)
+	list.Padding=UDim.new(0,5)
 	return list
 end
 
@@ -2436,8 +2458,8 @@ local function makeFeaturePanel(parent,titleText,height,columns)
 	local grid=Instance.new("UIGridLayout")
 	grid.Parent=body
 	grid.SortOrder=Enum.SortOrder.LayoutOrder
-	grid.CellPadding=UDim2.fromOffset(6,6)
-	grid.CellSize=UDim2.new(1/(columns or 2),-3,0,64)
+	grid.CellPadding=UDim2.fromOffset(5,5)
+	grid.CellSize=UDim2.new(1/(columns or 2),-4,0,50)
 	return panel,body,grid
 end
 
@@ -2601,9 +2623,9 @@ local function makeFeatureToggle(parent,iconText,name,desc,initial,callback)
 	corner(tile,8)
 	local tileStroke=stroke(tile,THEME.Border,1.2,0.50)
 
-	local glyph=label(tile,iconText,18,Enum.Font.GothamBold,THEME.Text)
-	glyph.Size=UDim2.fromOffset(24,20)
-	glyph.Position=UDim2.new(0.5,-12,0,3)
+	local glyph=label(tile,iconText,16,Enum.Font.GothamBold,THEME.Text)
+	glyph.Size=UDim2.fromOffset(20,16)
+	glyph.Position=UDim2.new(0.5,-10,0,2)
 	glyph.TextXAlignment=Enum.TextXAlignment.Center
 
 	local stateDot=Instance.new("Frame")
@@ -2613,14 +2635,14 @@ local function makeFeatureToggle(parent,iconText,name,desc,initial,callback)
 	stateDot.BorderSizePixel=0
 	corner(stateDot,3)
 
-	local n=label(tile,name,11,Enum.Font.GothamBold,THEME.Text)
-	n.Size=UDim2.new(1,-10,0,17)
-	n.Position=UDim2.fromOffset(5,24)
+	local n=label(tile,name,10,Enum.Font.GothamBold,THEME.Text)
+	n.Size=UDim2.new(1,-10,0,15)
+	n.Position=UDim2.fromOffset(5,18)
 	n.TextXAlignment=Enum.TextXAlignment.Center
 
 	local d=label(tile,desc,8,Enum.Font.Gotham,THEME.Muted)
-	d.Size=UDim2.new(1,-10,0,17)
-	d.Position=UDim2.fromOffset(5,43)
+	d.Size=UDim2.new(1,-10,0,12)
+	d.Position=UDim2.fromOffset(5,33)
 	d.TextXAlignment=Enum.TextXAlignment.Center
 
 	local state=initial and true or false
@@ -2722,44 +2744,48 @@ end
 
 -- BUG PAGE
 
-local bugFeaturePanel,bugFeatureBody=makeFeaturePanel(bugPage,"ГЛАВНЫЕ ФУНКЦИИ",175,2)
-local bugSettingsPanel,bugSettingsBody=makeSettingsPanel(bugPage,"НАСТРОЙКИ КАМНЯ",200)
+local bugFeaturePanel,bugFeatureBody=makeFeaturePanel(bugPage,"ФУНКЦИИ КАМНЯ",86,3)
+bugFeaturePanel.LayoutOrder=1
+local bugSettingsPanel,bugSettingsBody=makeSettingsPanel(bugPage,"АВТО-КАМЕНЬ И КАЛЬКУЛЯТОР",141)
 bugSettingsPanel.LayoutOrder=2
 
-local selectCard=card(bugSettingsBody,48)
+local selectCard=card(bugSettingsBody,66)
 selectCard.LayoutOrder=1
-local selectTitle=label(selectCard,"АВТО-КАМЕНЬ ПО РЕБАМ",8,Enum.Font.GothamBold,THEME.Accent2)
-selectTitle.Size=UDim2.new(1,-16,0,14)
-selectTitle.Position=UDim2.new(0,8,0,4)
+local selectTitle=label(selectCard,"АВТО-КАЛЬКУЛЯТОР КАМНЯ",8,Enum.Font.GothamBold,THEME.Accent2)
+selectTitle.Size=UDim2.new(1,-16,0,13)
+selectTitle.Position=UDim2.new(0,8,0,3)
 
-local selectName=label(selectCard,"-",9,Enum.Font.GothamBold,THEME.Warm)
-selectName.Size=UDim2.new(1,-16,0,22)
-selectName.Position=UDim2.new(0,8,0,20)
+local selectName=label(selectCard,"-",10,Enum.Font.GothamBold,THEME.Warm)
+selectName.Size=UDim2.new(1,-16,0,17)
+selectName.Position=UDim2.new(0,8,0,16)
+
+local calcStats=label(selectCard,"Ребы: -  •  XP/удар: -  •  цель: -  •  ударов: -",8,Enum.Font.Gotham,THEME.Text)
+calcStats.Size=UDim2.new(1,-16,0,27)
+calcStats.Position=UDim2.new(0,8,0,34)
+calcStats.TextYAlignment=Enum.TextYAlignment.Top
 
 Runtime.ui.autoRockTitle=selectTitle
 Runtime.ui.autoRockName=selectName
+Runtime.ui.autoRockStats=calcStats
 
-local rockCard=card(bugSettingsBody,112)
+local rockCard=card(bugSettingsBody,38)
 rockCard.LayoutOrder=2
-local rockTitle=label(rockCard,"КАМНИ",10,Enum.Font.GothamBold,THEME.Text)
-rockTitle.Size=UDim2.new(1,-16,0,16)
-rockTitle.Position=UDim2.new(0,8,0,4)
+local prevRockBtn=button(rockCard,"‹",THEME.SurfaceAlt)
+prevRockBtn.Size=UDim2.fromOffset(30,28)
+prevRockBtn.Position=UDim2.fromOffset(5,5)
+prevRockBtn.TextSize=18
 
-local rockList=Instance.new("ScrollingFrame")
-rockList.Parent=rockCard
-rockList.Size=UDim2.new(1,-10,0,82)
-rockList.Position=UDim2.new(0,5,0,25)
-rockList.BackgroundTransparency=1
-rockList.BorderSizePixel=0
-rockList.ScrollBarThickness=2
-rockList.CanvasSize=UDim2.new(0,0,0,0)
+local nextRockBtn=button(rockCard,"›",THEME.SurfaceAlt)
+nextRockBtn.Size=UDim2.fromOffset(30,28)
+nextRockBtn.Position=UDim2.new(1,-35,0,5)
+nextRockBtn.TextSize=18
 
-local rockLayout=Instance.new("UIListLayout")
-rockLayout.Parent=rockList
-rockLayout.SortOrder=Enum.SortOrder.LayoutOrder
-rockLayout.Padding=UDim.new(0,4)
+local currentRockLabel=label(rockCard,"камень не выбран",10,Enum.Font.GothamBold,THEME.Text)
+currentRockLabel.Size=UDim2.new(1,-76,0,28)
+currentRockLabel.Position=UDim2.fromOffset(38,5)
+currentRockLabel.TextXAlignment=Enum.TextXAlignment.Center
 
-local rockButtons={}
+local rockButtons={prevRockBtn,nextRockBtn}
 local rockButtonConnections={}
 
 local function disconnectRockButtonConnections()
@@ -2770,43 +2796,51 @@ local function disconnectRockButtonConnections()
 	rockButtonConnections={}
 end
 
-local function refreshRockList()
-	disconnectRockButtonConnections()
-
-	for _,b in ipairs(rockButtons) do
-		if b and b.Parent then b:Destroy() end
-	end
-	rockButtons={}
-
+local function currentRockIndex()
 	for i,row in ipairs(ROCKS) do
-		local info=rockCache[row.req]
-		local active=Runtime.selectedRock and Runtime.selectedRock.id==row.id
+		if Runtime.selectedRock and Runtime.selectedRock.id==row.id then return i end
+	end
+	return #ROCKS
+end
 
-		local b=button(rockList,(active and "● " or "○ ")..row.label.."  |  "..(info and "found" or "missing"),
-			active and THEME.Accent or THEME.SurfaceAlt)
-		b.Size=UDim2.new(1,-3,0,27)
-		b.LayoutOrder=i
-		b.TextXAlignment=Enum.TextXAlignment.Left
+local refreshRockList
 
-		local p=Instance.new("UIPadding")
-		p.Parent=b
-		p.PaddingLeft=UDim.new(0,10)
+local function chooseManualRock(delta)
+	local index=currentRockIndex()+delta
+	if index<1 then index=#ROCKS end
+	if index>#ROCKS then index=1 end
 
-		local connection=b.Activated:Connect(function()
-			Runtime.autoRockSelection=false
-			Runtime.selectedRock=row
-			selectTitle.Text="ВЫБРАНО ВРУЧНУЮ"
-			selectName.Text=row.label.." | req "..tostring(row.req)
-			refreshRockList()
-			setStatus("Камень: "..row.label)
-		end)
-		table.insert(rockButtonConnections,connection)
+	local row=ROCKS[index]
+	Runtime.autoRockSelection=false
+	Runtime.selectedRock=row
+	selectTitle.Text="РУЧНОЙ ВЫБОР КАМНЯ"
+	selectName.Text=row.label.."  •  множитель "..tostring(row.mult)
 
-		table.insert(rockButtons,b)
+	local rebs=Runtime.autoRockCalc and Runtime.autoRockCalc.rebirths
+	if rebs then
+		local xp40=(rebs+20)*math.floor(row.mult*40+0.5)
+		calcStats.Text=("Ребы: %d  •  XP/удар: %s  •  выбран вручную"):format(rebs,compactXp(xp40))
+	else
+		calcStats.Text="Ребы не найдены  •  выбран вручную"
 	end
 
-	rockList.CanvasSize=UDim2.new(0,0,0,#ROCKS*31+4)
+	refreshRockList()
+	setStatus("Камень: "..row.label)
 end
+
+refreshRockList=function()
+	local row=Runtime.selectedRock
+	if not row then
+		currentRockLabel.Text="камень не выбран"
+		return
+	end
+
+	local info=rockCache[row.req]
+	currentRockLabel.Text=(info and "● " or "○ ")..row.label
+end
+
+table.insert(rockButtonConnections,prevRockBtn.Activated:Connect(function() chooseManualRock(-1) end))
+table.insert(rockButtonConnections,nextRockBtn.Activated:Connect(function() chooseManualRock(1) end))
 
 Runtime.refreshRockList=refreshRockList
 
@@ -2858,12 +2892,12 @@ end)
 
 -- TRAIN PAGE
 
-local trainFeaturePanel,trainFeatureBody=makeFeaturePanel(trainPage,"ВЫБЕРИ ВИД КАЧА",242,2)
+local trainFeaturePanel,trainFeatureBody=makeFeaturePanel(trainPage,"ВЫБЕРИ ВИД КАЧА",139,3)
 trainFeaturePanel.LayoutOrder=1
-local trainSettingsPanel,trainSettingsBody=makeSettingsPanel(trainPage,"ДОПОЛНИТЕЛЬНО",174)
+local trainSettingsPanel,trainSettingsBody=makeFeaturePanel(trainPage,"ДОПОЛНИТЕЛЬНО",86,3)
 trainSettingsPanel.LayoutOrder=2
 
-local lockPosSlider=makeSlider(trainSettingsBody,"ФИКСАЦИЯ ПОЗИЦИИ","не даёт персонажу сдвигаться",false,function(on,api)
+local lockPosSlider=makeFeatureToggle(trainSettingsBody,"◇","ПОЗИЦИЯ","держать на месте",false,function(on,api)
 	if on then
 		local r=root()
 
@@ -2888,7 +2922,7 @@ end)
 
 Runtime.leverRefs.lockPosition=lockPosSlider
 
-local visualSlider=makeSlider(trainSettingsBody,"МЕНЬШЕ ЭФФЕКТОВ","повышает плавность игры",false,function(on)
+local visualSlider=makeFeatureToggle(trainSettingsBody,"◫","ЭФФЕКТЫ","уменьшить",false,function(on)
 	setVisualLow(on)
 end)
 
@@ -2919,7 +2953,7 @@ netQuickRow.Position=UDim2.new(0.5,3,0,0)
 
 Runtime.leverRefs.netGuard=netGuardSlider
 
-local wifiHoldSlider=makeSlider(trainSettingsBody,"ПАУЗА СЕТИ","ручная заморозка при плохом Wi-Fi",false,function(on)
+local wifiHoldSlider=makeFeatureToggle(trainSettingsBody,"◌","ПАУЗА СЕТИ","вручную",false,function(on)
 	Runtime.manualNetworkHold=on
 	if on then
 		Runtime.netGuardEnabled=true
@@ -2992,9 +3026,9 @@ end
 
 -- REBIRTH PAGE
 
-local rebFeaturePanel,rebFeatureBody=makeFeaturePanel(rebPage,"РЕБИРТ И РАЗМЕР",175,2)
+local rebFeaturePanel,rebFeatureBody=makeFeaturePanel(rebPage,"РЕБИРТ И РАЗМЕР",86,3)
 rebFeaturePanel.LayoutOrder=1
-local rebSettingsPanel,rebSettingsBody=makeSettingsPanel(rebPage,"РАЗМЕР ПЕРСОНАЖА",82)
+local rebSettingsPanel,rebSettingsBody=makeSettingsPanel(rebPage,"РАЗМЕР ПЕРСОНАЖА",78)
 rebSettingsPanel.LayoutOrder=2
 
 local rebInfo=card(rebPage,52)
@@ -3206,7 +3240,7 @@ addConn(UserInputService.InputChanged:Connect(function(input)
 		elseif resizing and resizeStartSize then
 			local viewport=viewportSize()
 			local dynamicMinWidth=math.max(280,math.min(320,viewport.X-12))
-			local dynamicMinHeight=math.max(260,math.min(300,viewport.Y-12))
+			local dynamicMinHeight=math.max(360,math.min(410,viewport.Y-12))
 			local maxWidth=math.max(dynamicMinWidth,viewport.X-main.Position.X.Offset-4)
 			local maxHeight=math.max(dynamicMinHeight,viewport.Y-main.Position.Y.Offset-4)
 			local width=math.clamp(resizeStartSize.X.Offset+delta.X,dynamicMinWidth,maxWidth)
