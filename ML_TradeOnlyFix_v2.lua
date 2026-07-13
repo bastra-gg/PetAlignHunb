@@ -2060,6 +2060,7 @@ local antiAfkConn=addConn(lp.Idled:Connect(function()
 	end)
 end))
 
+local function buildUI()
 -- ---------- UI ----------
 
 local gui=Instance.new("ScreenGui")
@@ -2068,6 +2069,7 @@ gui.ResetOnSpawn=false
 gui.IgnoreGuiInset=true
 gui.DisplayOrder=999999
 gui.Parent=playerGui
+Runtime.uiRoot=gui
 
 local THEME={
 	Bg=Color3.fromRGB(11,17,27),
@@ -3127,6 +3129,28 @@ applyAutoRockSelection(true)
 showTab("bug")
 updateCanvas()
 setStatus("v20 ready | "..tostring(Runtime.autoRockReason))
+
+end
+
+local uiOk,uiErr=xpcall(buildUI,function(err)
+	local trace=""
+	if debug and type(debug.traceback)=="function" then trace="\n"..tostring(debug.traceback()) end
+	return tostring(err)..trace
+end)
+
+if not uiOk then
+	Runtime.alive=false
+	if Runtime.uiRoot and Runtime.uiRoot.Parent then safe(function() Runtime.uiRoot:Destroy() end) end
+	warn("[RockBugHub] UI startup failed: "..tostring(uiErr))
+	pcall(function()
+		StarterGui:SetCore("SendNotification",{
+			Title="RockBugHub",
+			Text="UI error: "..tostring(uiErr):sub(1,120),
+			Duration=10,
+		})
+	end)
+	return
+end
 
 task.spawn(function()
 	local recentFailures={}
