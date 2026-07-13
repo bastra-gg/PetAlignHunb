@@ -2070,17 +2070,17 @@ gui.DisplayOrder=999999
 gui.Parent=playerGui
 
 local THEME={
-	Bg=Color3.fromRGB(7,10,18),
-	Panel=Color3.fromRGB(12,17,31),
-	Surface=Color3.fromRGB(16,22,39),
-	SurfaceAlt=Color3.fromRGB(24,31,52),
-	Accent=Color3.fromRGB(139,92,246),
-	Accent2=Color3.fromRGB(32,216,210),
-	Success=Color3.fromRGB(77,226,168),
+	Bg=Color3.fromRGB(11,17,27),
+	Panel=Color3.fromRGB(18,27,40),
+	Surface=Color3.fromRGB(24,34,49),
+	SurfaceAlt=Color3.fromRGB(31,43,60),
+	Accent=Color3.fromRGB(78,218,202),
+	Accent2=Color3.fromRGB(61,194,184),
+	Success=Color3.fromRGB(92,224,177),
 	Danger=Color3.fromRGB(255,102,119),
-	Text=Color3.fromRGB(238,242,255),
-	Muted=Color3.fromRGB(153,163,187),
-	Border=Color3.fromRGB(173,139,255),
+	Text=Color3.fromRGB(232,239,247),
+	Muted=Color3.fromRGB(145,158,176),
+	Border=Color3.fromRGB(91,113,137),
 	Warm=Color3.fromRGB(255,180,84),
 }
 
@@ -2136,132 +2136,210 @@ local function button(parent,text,color)
 	return b
 end
 
+local function viewportSize()
+	local camera=workspace.CurrentCamera
+	return camera and camera.ViewportSize or Vector2.new(800,600)
+end
+
+local initialViewport=viewportSize()
+local minWindowWidth=math.max(240,math.min(360,initialViewport.X-12))
+local minWindowHeight=math.max(280,math.min(340,initialViewport.Y-12))
+local defaultWidth=math.min(620,math.max(minWindowWidth,math.floor(initialViewport.X*0.72)))
+local defaultHeight=math.min(470,math.max(minWindowHeight,math.floor(initialViewport.Y*0.68)))
+
 local main=Instance.new("Frame")
 main.Parent=gui
-main.Size=UDim2.new(0,310,0,420)
-main.Position=UDim2.new(0,8,0,42)
+main.Size=UDim2.fromOffset(defaultWidth,defaultHeight)
+main.Position=UDim2.fromOffset(
+	math.max(6,math.floor((initialViewport.X-defaultWidth)/2)),
+	math.max(18,math.floor((initialViewport.Y-defaultHeight)/2))
+)
 main.BackgroundColor3=THEME.Bg
-main.BackgroundTransparency=0.20
+main.BackgroundTransparency=0.10
 main.BorderSizePixel=0
 main.Active=true
-corner(main,24)
-local mainStroke=stroke(main,THEME.Border,1.5,0.20)
-gradient(mainStroke,THEME.Accent,THEME.Accent2,45)
-gradient(main,THEME.Bg,THEME.Panel,135)
+main.ClipsDescendants=true
+corner(main,14)
+local mainStroke=stroke(main,THEME.Border,1.2,0.38)
+gradient(mainStroke,THEME.Accent,THEME.Border,35)
+gradient(main,THEME.Panel,THEME.Bg,125)
+
+local topBar=Instance.new("Frame")
+topBar.Parent=main
+topBar.Size=UDim2.new(1,0,0,52)
+topBar.BackgroundColor3=THEME.Panel
+topBar.BackgroundTransparency=0.18
+topBar.BorderSizePixel=0
+topBar.Active=true
+gradient(topBar,THEME.Panel,THEME.Surface,0)
+
+local headerLine=Instance.new("Frame")
+headerLine.Parent=topBar
+headerLine.Size=UDim2.new(1,0,0,1)
+headerLine.Position=UDim2.new(0,0,1,-1)
+headerLine.BackgroundColor3=THEME.Border
+headerLine.BackgroundTransparency=0.58
+headerLine.BorderSizePixel=0
+
+local brand=button(topBar,">_",THEME.SurfaceAlt)
+brand.Size=UDim2.fromOffset(36,32)
+brand.Position=UDim2.fromOffset(10,10)
+brand.TextColor3=THEME.Accent
+brand.TextSize=13
+
+local title=label(topBar,"ПАНЕЛЬ УПРАВЛЕНИЯ СКРИПТОМ",14,Enum.Font.GothamBold,THEME.Text)
+title.Size=UDim2.new(1,-150,0,22)
+title.Position=UDim2.fromOffset(58,7)
+
+local author=label(topBar,"ROCK ROUTE  •  SESSION HUB v22",8,Enum.Font.GothamBold,THEME.Muted)
+author.Size=UDim2.new(1,-150,0,15)
+author.Position=UDim2.fromOffset(59,28)
+
+local closeBtn=button(topBar,"×",THEME.SurfaceAlt)
+closeBtn.Size=UDim2.fromOffset(30,30)
+closeBtn.Position=UDim2.new(1,-40,0,11)
+closeBtn.TextColor3=THEME.Danger
+closeBtn.TextSize=19
+
+local minimizeBtn=button(topBar,"−",THEME.SurfaceAlt)
+minimizeBtn.Size=UDim2.fromOffset(30,30)
+minimizeBtn.Position=UDim2.new(1,-74,0,11)
+minimizeBtn.TextColor3=THEME.Muted
+minimizeBtn.TextSize=18
 
 local rail=Instance.new("Frame")
 rail.Parent=main
-rail.Size=UDim2.new(0,58,1,0)
+rail.Size=UDim2.new(0,112,1,-52)
+rail.Position=UDim2.fromOffset(0,52)
 rail.BackgroundColor3=THEME.Panel
-rail.BackgroundTransparency=0.24
+rail.BackgroundTransparency=0.20
 rail.BorderSizePixel=0
-rail.ClipsDescendants=true
-corner(rail,24)
-gradient(rail,THEME.Panel,THEME.Bg,90)
 
-local brand=label(rail,"R\nO\nC\nK",14,Enum.Font.GothamBlack,THEME.Accent2)
-brand.Size=UDim2.new(1,0,0,104)
-brand.Position=UDim2.new(0,0,0,8)
-brand.TextXAlignment=Enum.TextXAlignment.Center
+local railLine=Instance.new("Frame")
+railLine.Parent=rail
+railLine.Size=UDim2.new(0,1,1,0)
+railLine.Position=UDim2.new(1,-1,0,0)
+railLine.BackgroundColor3=THEME.Border
+railLine.BackgroundTransparency=0.62
+railLine.BorderSizePixel=0
 
-local bugTab=button(rail,"БАГ",THEME.Accent)
-bugTab.Size=UDim2.new(1,-10,0,32)
-bugTab.Position=UDim2.new(0,5,0,116)
+local function styleTab(tab,y)
+	tab.Size=UDim2.new(1,-14,0,58)
+	tab.Position=UDim2.fromOffset(7,y)
+	tab.TextSize=10
+	tab.TextWrapped=true
+	tab.BackgroundTransparency=0.28
+	stroke(tab,THEME.Border,1,0.70)
+end
 
-local trainTab=button(rail,"КАЧ",THEME.Surface)
-trainTab.Size=UDim2.new(1,-10,0,32)
-trainTab.Position=UDim2.new(0,5,0,155)
+local bugTab=button(rail,"▦\nКАМЕНЬ",THEME.Accent)
+styleTab(bugTab,10)
 
-local rebTab=button(rail,"РЕБ",THEME.Surface)
-rebTab.Size=UDim2.new(1,-10,0,32)
-rebTab.Position=UDim2.new(0,5,0,194)
+local trainTab=button(rail,"≋\nКАЧ",THEME.Surface)
+styleTab(trainTab,74)
+
+local rebTab=button(rail,"↻\nРЕБЫ",THEME.Surface)
+styleTab(rebTab,138)
 
 local rescanBtn=button(rail,"SCAN",THEME.SurfaceAlt)
-rescanBtn.Size=UDim2.new(1,-10,0,29)
-rescanBtn.Position=UDim2.new(0,5,0,233)
+rescanBtn.Size=UDim2.new(1,-14,0,34)
+rescanBtn.Position=UDim2.fromOffset(7,204)
+rescanBtn.TextSize=10
 
 local panicBtn=button(rail,"STOP",THEME.Danger)
-panicBtn.Size=UDim2.new(1,-10,0,38)
-panicBtn.Position=UDim2.new(0,5,1,-44)
+panicBtn.Size=UDim2.new(1,-14,0,38)
+panicBtn.Position=UDim2.new(0,7,1,-47)
+panicBtn.TextSize=11
 
 local content=Instance.new("Frame")
 content.Parent=main
-content.Size=UDim2.new(1,-67,1,-10)
-content.Position=UDim2.new(0,62,0,5)
+content.Size=UDim2.new(1,-112,1,-52)
+content.Position=UDim2.fromOffset(112,52)
 content.BackgroundColor3=THEME.Bg
-content.BackgroundTransparency=0.30
+content.BackgroundTransparency=0.38
 content.BorderSizePixel=0
 content.ClipsDescendants=true
-corner(content,16)
-gradient(content,THEME.Bg,THEME.Surface,125)
 
-local title=label(content,"ROCK ROUTE",16,Enum.Font.GothamBlack,THEME.Text)
-title.Size=UDim2.new(1,-110,0,22)
-title.Position=UDim2.new(0,11,0,6)
+local quickBar=Instance.new("Frame")
+quickBar.Parent=content
+quickBar.Size=UDim2.new(1,-18,0,72)
+quickBar.Position=UDim2.fromOffset(9,8)
+quickBar.BackgroundColor3=THEME.Surface
+quickBar.BackgroundTransparency=0.28
+quickBar.BorderSizePixel=0
+corner(quickBar,12)
+stroke(quickBar,THEME.Accent,1,0.66)
+gradient(quickBar,THEME.Surface,THEME.Panel,0)
 
-local author=label(content,"SESSION HUB • v21",9,Enum.Font.GothamBold,THEME.Accent2)
-author.Size=UDim2.new(1,-76,0,16)
-author.Position=UDim2.new(0,12,0,25)
+local quickTitle=label(quickBar,"⚡  ЗАКРЕПЛЁННЫЕ ФУНКЦИИ",9,Enum.Font.GothamBold,THEME.Accent)
+quickTitle.Size=UDim2.new(1,-18,0,18)
+quickTitle.Position=UDim2.fromOffset(9,3)
 
-local closeBtn=button(content,"×",THEME.Danger)
-closeBtn.Size=UDim2.new(0,28,0,28)
-closeBtn.Position=UDim2.new(1,-34,0,6)
-closeBtn.TextSize=18
+local quickBody=Instance.new("Frame")
+quickBody.Parent=quickBar
+quickBody.Size=UDim2.new(1,-12,0,44)
+quickBody.Position=UDim2.fromOffset(6,23)
+quickBody.BackgroundTransparency=1
 
-local minimizeBtn=button(content,"−",THEME.Accent)
-minimizeBtn.Size=UDim2.new(0,28,0,28)
-minimizeBtn.Position=UDim2.new(1,-66,0,6)
-minimizeBtn.TextSize=18
-
-local net=label(content,"PING ? | REMOTE 0/s",9,Enum.Font.GothamBold,THEME.Accent2)
-net.Size=UDim2.new(1,-16,0,14)
-net.Position=UDim2.new(0,8,0,40)
-net.TextXAlignment=Enum.TextXAlignment.Center
-
-local status=label(content,"ready",10,Enum.Font.GothamBold,THEME.Text)
-status.Size=UDim2.new(1,-16,0,25)
-status.Position=UDim2.new(0,8,0,56)
+local status=label(content,"ready",9,Enum.Font.GothamBold,THEME.Text)
+status.Size=UDim2.new(0.62,-12,0,30)
+status.Position=UDim2.new(0,9,1,-38)
 status.BackgroundColor3=THEME.Surface
-status.BackgroundTransparency=0.34
+status.BackgroundTransparency=0.25
 status.BorderSizePixel=0
 status.TextXAlignment=Enum.TextXAlignment.Center
-corner(status,11)
-local statusStroke=stroke(status,THEME.Accent2,1,0.74)
-gradient(status,THEME.Surface,THEME.Bg,0)
+corner(status,9)
+stroke(status,THEME.Border,1,0.72)
+
+local net=label(content,"PING ? | REMOTE 0/s",8,Enum.Font.GothamBold,THEME.Accent)
+net.Size=UDim2.new(0.38,-6,0,30)
+net.Position=UDim2.new(0.62,3,1,-38)
+net.BackgroundColor3=THEME.Surface
+net.BackgroundTransparency=0.25
+net.BorderSizePixel=0
+net.TextXAlignment=Enum.TextXAlignment.Center
+corner(net,9)
+stroke(net,THEME.Border,1,0.72)
 
 Runtime.ui={status=status,net=net}
 
-local bugPage=Instance.new("ScrollingFrame")
-bugPage.Parent=content
-bugPage.Size=UDim2.new(1,-12,1,-92)
-bugPage.Position=UDim2.new(0,6,0,87)
-bugPage.BackgroundTransparency=1
-bugPage.BorderSizePixel=0
-bugPage.ScrollBarThickness=3
-bugPage.ScrollBarImageColor3=THEME.Accent
-bugPage.CanvasSize=UDim2.new(0,0,0,0)
+local function makePage(color)
+	local page=Instance.new("ScrollingFrame")
+	page.Parent=content
+	page.Size=UDim2.new(1,-18,1,-132)
+	page.Position=UDim2.fromOffset(9,86)
+	page.BackgroundTransparency=1
+	page.BorderSizePixel=0
+	page.ScrollBarThickness=3
+	page.ScrollBarImageColor3=color
+	page.CanvasSize=UDim2.new(0,0,0,0)
+	page.ScrollingDirection=Enum.ScrollingDirection.Y
+	return page
+end
 
-local trainPage=Instance.new("ScrollingFrame")
-trainPage.Parent=content
-trainPage.Size=bugPage.Size
-trainPage.Position=bugPage.Position
-trainPage.BackgroundTransparency=1
-trainPage.BorderSizePixel=0
-trainPage.ScrollBarThickness=3
-trainPage.ScrollBarImageColor3=THEME.Success
-trainPage.CanvasSize=UDim2.new(0,0,0,0)
+local bugPage=makePage(THEME.Accent)
+local trainPage=makePage(THEME.Success)
 trainPage.Visible=false
-
-local rebPage=Instance.new("ScrollingFrame")
-rebPage.Parent=content
-rebPage.Size=bugPage.Size
-rebPage.Position=bugPage.Position
-rebPage.BackgroundTransparency=1
-rebPage.BorderSizePixel=0
-rebPage.ScrollBarThickness=3
-rebPage.ScrollBarImageColor3=THEME.Accent2
-rebPage.CanvasSize=UDim2.new(0,0,0,0)
+local rebPage=makePage(THEME.Accent2)
 rebPage.Visible=false
+
+local resizeHandle=button(main,"◢",THEME.SurfaceAlt)
+resizeHandle.Size=UDim2.fromOffset(24,24)
+resizeHandle.Position=UDim2.new(1,-24,1,-24)
+resizeHandle.TextColor3=THEME.Accent
+resizeHandle.TextSize=13
+resizeHandle.BackgroundTransparency=0.42
+
+local miniButton=button(gui,"RH\n+",THEME.Panel)
+miniButton.Size=UDim2.fromOffset(52,52)
+miniButton.Position=main.Position
+miniButton.TextColor3=THEME.Accent
+miniButton.TextSize=12
+miniButton.Visible=false
+miniButton.Active=true
+miniButton.ZIndex=30
+stroke(miniButton,THEME.Accent,1.2,0.30)
+gradient(miniButton,THEME.Surface,THEME.Bg,135)
 
 local function listLayout(frame)
 	local pad=Instance.new("UIPadding")
@@ -2355,6 +2433,61 @@ local function makeSlider(parent,name,desc,initial,callback)
 			track.BackgroundColor3=THEME.SurfaceAlt
 			knob.Position=UDim2.new(0,3,0,3)
 		end
+	end
+
+	function api.Set(v,silent)
+		state=v and true or false
+		paint()
+		if callback and not silent then callback(state,api) end
+	end
+
+	function api.Get()
+		return state
+	end
+
+	addConn(row.Activated:Connect(function()
+		api.Set(not state,false)
+	end))
+
+	paint()
+	return api,row
+end
+
+local function makePinnedToggle(parent,name,initial,callback)
+	local row=Instance.new("TextButton")
+	row.Parent=parent
+	row.Text=""
+	row.AutoButtonColor=false
+	row.BackgroundColor3=THEME.SurfaceAlt
+	row.BackgroundTransparency=0.22
+	row.BorderSizePixel=0
+	corner(row,10)
+	stroke(row,THEME.Border,1,0.70)
+
+	local n=label(row,name,9,Enum.Font.GothamBlack,THEME.Text)
+	n.Size=UDim2.new(1,-52,1,0)
+	n.Position=UDim2.fromOffset(8,0)
+
+	local track=Instance.new("Frame")
+	track.Parent=row
+	track.Size=UDim2.fromOffset(38,20)
+	track.Position=UDim2.new(1,-44,0.5,-10)
+	track.BorderSizePixel=0
+	corner(track,10)
+
+	local knob=Instance.new("Frame")
+	knob.Parent=track
+	knob.Size=UDim2.fromOffset(14,14)
+	knob.BackgroundColor3=THEME.Text
+	knob.BorderSizePixel=0
+	corner(knob,7)
+
+	local state=initial and true or false
+	local api={}
+	local function paint()
+		track.BackgroundColor3=state and THEME.Accent or THEME.Panel
+		knob.Position=state and UDim2.new(1,-17,0,3) or UDim2.fromOffset(3,3)
+		n.TextColor3=state and THEME.Text or THEME.Muted
 	end
 
 	function api.Set(v,silent)
@@ -2606,12 +2739,14 @@ end)
 
 Runtime.leverRefs.visualLow=visualSlider
 
-local afkSlider=makeSlider(trainPage,"ANTI AFK","автоматически включён после запуска",true,function(on)
+local afkSlider,afkQuickRow=makePinnedToggle(quickBody,"ANTI AFK",true,function(on)
 	Runtime.antiAfkEnabled=on
 	setStatus("ANTI AFK: "..(on and "ON" or "OFF"))
 end)
+afkQuickRow.Size=UDim2.new(0.5,-3,1,0)
+afkQuickRow.Position=UDim2.fromOffset(0,0)
 
-local netGuardSlider=makeSlider(trainPage,"NET GUARD","автопауза при обрыве и мягкое восстановление",true,function(on)
+local netGuardSlider,netQuickRow=makePinnedToggle(quickBody,"NET GUARD",true,function(on)
 	Runtime.netGuardEnabled=on
 	if not on then
 		Runtime.manualNetworkHold=false
@@ -2624,6 +2759,8 @@ local netGuardSlider=makeSlider(trainPage,"NET GUARD","автопауза при
 		setStatus("NET GUARD: ON")
 	end
 end)
+netQuickRow.Size=UDim2.new(0.5,-3,1,0)
+netQuickRow.Position=UDim2.new(0.5,3,0,0)
 
 Runtime.leverRefs.netGuard=netGuardSlider
 
@@ -2749,6 +2886,12 @@ Runtime.leverRefs.kingLock=kingLockSlider
 
 local activeTab="bug"
 local minimized=false
+local expandedSize=main.Size
+
+local function paintTab(tab,active)
+	tab.BackgroundColor3=active and THEME.Accent or THEME.Surface
+	tab.TextColor3=active and THEME.Bg or THEME.Muted
+end
 
 local function showTab(name)
 	activeTab=name
@@ -2758,32 +2901,38 @@ local function showTab(name)
 	bugPage.Visible=(not minimized) and bug
 	trainPage.Visible=(not minimized) and train
 	rebPage.Visible=(not minimized) and reb
-	bugTab.BackgroundColor3=bug and THEME.Accent or THEME.Surface
-	trainTab.BackgroundColor3=train and THEME.Success or THEME.Surface
-	rebTab.BackgroundColor3=reb and THEME.Accent2 or THEME.Surface
+	paintTab(bugTab,bug)
+	paintTab(trainTab,train)
+	paintTab(rebTab,reb)
+end
+
+local function clampOffsetPosition(position,size)
+	local viewport=viewportSize()
+	local width=size.X.Offset
+	local height=size.Y.Offset
+	local maxX=math.max(4,viewport.X-width-4)
+	local maxY=math.max(4,viewport.Y-height-4)
+	return UDim2.fromOffset(
+		math.clamp(position.X.Offset,4,maxX),
+		math.clamp(position.Y.Offset,4,maxY)
+	)
 end
 
 local function setMinimized(on)
 	minimized=on and true or false
-	main.Size=minimized and UDim2.new(0,310,0,48) or UDim2.new(0,310,0,420)
-	minimizeBtn.Text=minimized and "+" or "−"
-	title.Text=minimized and "ROCK ROUTE" or "ROCK ROUTE"
-
-	brand.Visible=not minimized
-	bugTab.Visible=not minimized
-	trainTab.Visible=not minimized
-	rebTab.Visible=not minimized
-	rescanBtn.Visible=not minimized
-	panicBtn.Visible=not minimized
-	author.Visible=not minimized
-	net.Visible=not minimized
-	status.Visible=not minimized
-
 	if minimized then
+		expandedSize=main.Size
+		miniButton.Position=clampOffsetPosition(main.Position,miniButton.Size)
+		main.Visible=false
+		miniButton.Visible=true
 		bugPage.Visible=false
 		trainPage.Visible=false
 		rebPage.Visible=false
 	else
+		main.Size=expandedSize
+		main.Position=clampOffsetPosition(miniButton.Position,expandedSize)
+		miniButton.Visible=false
+		main.Visible=true
 		showTab(activeTab)
 	end
 end
@@ -2791,7 +2940,7 @@ end
 addConn(bugTab.Activated:Connect(function() showTab("bug") end))
 addConn(trainTab.Activated:Connect(function() showTab("train") end))
 addConn(rebTab.Activated:Connect(function() showTab("reb") end))
-addConn(minimizeBtn.Activated:Connect(function() setMinimized(not minimized) end))
+addConn(minimizeBtn.Activated:Connect(function() setMinimized(true) end))
 
 addConn(rescanBtn.Activated:Connect(function()
 	setStatus("SCAN...")
@@ -2806,29 +2955,84 @@ addConn(panicBtn.Activated:Connect(function()
 	panicStop()
 end))
 
-local dragging=false
+local draggingMain=false
+local draggingMini=false
+local resizing=false
+local miniMoved=false
 local dragStart=nil
 local startPos=nil
+local resizeStartSize=nil
 
-addConn(rail.InputBegan:Connect(function(input)
-	if input.UserInputType==Enum.UserInputType.MouseButton1 or input.UserInputType==Enum.UserInputType.Touch then
-		dragging=true
+local function pointerInput(input)
+	return input.UserInputType==Enum.UserInputType.MouseButton1 or input.UserInputType==Enum.UserInputType.Touch
+end
+
+addConn(topBar.InputBegan:Connect(function(input)
+	if pointerInput(input) then
+		local localX=input.Position.X-main.AbsolutePosition.X
+		if localX<main.AbsoluteSize.X-82 then
+			draggingMain=true
+			dragStart=input.Position
+			startPos=main.Position
+		end
+	end
+end))
+
+addConn(miniButton.InputBegan:Connect(function(input)
+	if pointerInput(input) then
+		draggingMini=true
+		miniMoved=false
 		dragStart=input.Position
-		startPos=main.Position
+		startPos=miniButton.Position
+	end
+end))
+
+addConn(resizeHandle.InputBegan:Connect(function(input)
+	if pointerInput(input) then
+		resizing=true
+		dragStart=input.Position
+		resizeStartSize=main.Size
 	end
 end))
 
 addConn(UserInputService.InputEnded:Connect(function(input)
-	if input.UserInputType==Enum.UserInputType.MouseButton1 or input.UserInputType==Enum.UserInputType.Touch then
-		dragging=false
+	if pointerInput(input) then
+		draggingMain=false
+		draggingMini=false
+		resizing=false
 	end
 end))
 
 addConn(UserInputService.InputChanged:Connect(function(input)
-	if dragging and dragStart and startPos and (input.UserInputType==Enum.UserInputType.MouseMovement or input.UserInputType==Enum.UserInputType.Touch) then
+	if dragStart and (input.UserInputType==Enum.UserInputType.MouseMovement or input.UserInputType==Enum.UserInputType.Touch) then
 		local delta=input.Position-dragStart
-		main.Position=UDim2.new(startPos.X.Scale,startPos.X.Offset+delta.X,startPos.Y.Scale,startPos.Y.Offset+delta.Y)
+		if draggingMain and startPos then
+			local wanted=UDim2.fromOffset(startPos.X.Offset+delta.X,startPos.Y.Offset+delta.Y)
+			main.Position=clampOffsetPosition(wanted,main.Size)
+		elseif draggingMini and startPos then
+			if delta.Magnitude>5 then miniMoved=true end
+			local wanted=UDim2.fromOffset(startPos.X.Offset+delta.X,startPos.Y.Offset+delta.Y)
+			miniButton.Position=clampOffsetPosition(wanted,miniButton.Size)
+		elseif resizing and resizeStartSize then
+			local viewport=viewportSize()
+			local dynamicMinWidth=math.max(240,math.min(360,viewport.X-12))
+			local dynamicMinHeight=math.max(280,math.min(340,viewport.Y-12))
+			local maxWidth=math.max(dynamicMinWidth,viewport.X-main.Position.X.Offset-4)
+			local maxHeight=math.max(dynamicMinHeight,viewport.Y-main.Position.Y.Offset-4)
+			local width=math.clamp(resizeStartSize.X.Offset+delta.X,dynamicMinWidth,maxWidth)
+			local height=math.clamp(resizeStartSize.Y.Offset+delta.Y,dynamicMinHeight,maxHeight)
+			main.Size=UDim2.fromOffset(width,height)
+			expandedSize=main.Size
+		end
 	end
+end))
+
+addConn(miniButton.Activated:Connect(function()
+	if miniMoved then
+		miniMoved=false
+		return
+	end
+	setMinimized(false)
 end))
 
 function Runtime:Stop(reason)
