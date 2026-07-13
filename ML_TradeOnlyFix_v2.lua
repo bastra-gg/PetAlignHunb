@@ -2142,10 +2142,10 @@ local function viewportSize()
 end
 
 local initialViewport=viewportSize()
-local minWindowWidth=math.max(240,math.min(360,initialViewport.X-12))
-local minWindowHeight=math.max(280,math.min(340,initialViewport.Y-12))
-local defaultWidth=math.min(760,math.max(minWindowWidth,math.floor(initialViewport.X*0.78)))
-local defaultHeight=math.min(540,math.max(minWindowHeight,math.floor(initialViewport.Y*0.75)))
+local minWindowWidth=math.max(280,math.min(320,initialViewport.X-12))
+local minWindowHeight=math.max(260,math.min(300,initialViewport.Y-12))
+local defaultWidth=math.min(560,math.max(minWindowWidth,math.floor(initialViewport.X*0.62)))
+local defaultHeight=math.min(410,math.max(minWindowHeight,math.floor(initialViewport.Y*0.60)))
 
 local main=Instance.new("Frame")
 main.Parent=gui
@@ -2166,7 +2166,7 @@ gradient(main,THEME.Panel,THEME.Bg,125)
 
 local topBar=Instance.new("Frame")
 topBar.Parent=main
-topBar.Size=UDim2.new(1,0,0,62)
+topBar.Size=UDim2.new(1,0,0,48)
 topBar.BackgroundColor3=THEME.Panel
 topBar.BackgroundTransparency=0.18
 topBar.BorderSizePixel=0
@@ -2182,35 +2182,35 @@ headerLine.BackgroundTransparency=0.58
 headerLine.BorderSizePixel=0
 
 local brand=button(topBar,">_",THEME.SurfaceAlt)
-brand.Size=UDim2.fromOffset(40,38)
-brand.Position=UDim2.fromOffset(12,12)
+brand.Size=UDim2.fromOffset(30,30)
+brand.Position=UDim2.fromOffset(9,9)
 brand.TextColor3=THEME.Accent
-brand.TextSize=15
+brand.TextSize=12
 
-local title=label(topBar,"ROCK BUG HUB",16,Enum.Font.GothamBold,THEME.Text)
-title.Size=UDim2.new(1,-170,0,24)
-title.Position=UDim2.fromOffset(68,9)
+local title=label(topBar,"ROCK BUG HUB",14,Enum.Font.GothamBold,THEME.Text)
+title.Size=UDim2.new(1,-130,0,20)
+title.Position=UDim2.fromOffset(49,5)
 
-local author=label(topBar,"УПРАВЛЕНИЕ СКРИПТОМ",9,Enum.Font.GothamBold,THEME.Muted)
-author.Size=UDim2.new(1,-170,0,16)
-author.Position=UDim2.fromOffset(69,34)
+local author=label(topBar,"УПРАВЛЕНИЕ СКРИПТОМ",8,Enum.Font.GothamBold,THEME.Muted)
+author.Size=UDim2.new(1,-130,0,14)
+author.Position=UDim2.fromOffset(50,26)
 
 local closeBtn=button(topBar,"×",THEME.SurfaceAlt)
-closeBtn.Size=UDim2.fromOffset(30,30)
-closeBtn.Position=UDim2.new(1,-42,0,16)
+closeBtn.Size=UDim2.fromOffset(26,26)
+closeBtn.Position=UDim2.new(1,-34,0,11)
 closeBtn.TextColor3=THEME.Danger
 closeBtn.TextSize=19
 
 local minimizeBtn=button(topBar,"−",THEME.SurfaceAlt)
-minimizeBtn.Size=UDim2.fromOffset(30,30)
-minimizeBtn.Position=UDim2.new(1,-78,0,16)
+minimizeBtn.Size=UDim2.fromOffset(26,26)
+minimizeBtn.Position=UDim2.new(1,-64,0,11)
 minimizeBtn.TextColor3=THEME.Muted
 minimizeBtn.TextSize=18
 
 local rail=Instance.new("Frame")
 rail.Parent=main
-rail.Size=UDim2.new(0,108,1,-62)
-rail.Position=UDim2.fromOffset(0,62)
+rail.Size=UDim2.new(0,82,1,-48)
+rail.Position=UDim2.fromOffset(0,48)
 rail.BackgroundColor3=THEME.Panel
 rail.BackgroundTransparency=0.20
 rail.BorderSizePixel=0
@@ -2224,9 +2224,9 @@ railLine.BackgroundTransparency=0.62
 railLine.BorderSizePixel=0
 
 local function styleTab(tab,y)
-	tab.Size=UDim2.new(1,-18,0,82)
-	tab.Position=UDim2.fromOffset(9,y)
-	tab.TextSize=12
+	tab.Size=UDim2.new(1,-12,0,52)
+	tab.Position=UDim2.fromOffset(6,y)
+	tab.TextSize=9
 	tab.TextWrapped=true
 	tab.BackgroundTransparency=0.52
 	local tabStroke=stroke(tab,THEME.Border,1,0.70)
@@ -2244,28 +2244,28 @@ local function styleTab(tab,y)
 end
 
 local bugTab=button(rail,"◈\nКАМЕНЬ",THEME.Accent)
-styleTab(bugTab,10)
+styleTab(bugTab,6)
 
 local trainTab=button(rail,"▤\nКАЧ",THEME.Surface)
-styleTab(trainTab,100)
+styleTab(trainTab,62)
 
 local rebTab=button(rail,"↻\nРЕБИРТ",THEME.Surface)
-styleTab(rebTab,190)
+styleTab(rebTab,118)
 
 local rescanBtn=button(rail,"ОБНОВИТЬ",THEME.SurfaceAlt)
-rescanBtn.Size=UDim2.new(1,-14,0,34)
-rescanBtn.Position=UDim2.fromOffset(7,280)
-rescanBtn.TextSize=10
+rescanBtn.Size=UDim2.new(1,-12,0,28)
+rescanBtn.Position=UDim2.fromOffset(6,176)
+rescanBtn.TextSize=9
 
 local panicBtn=button(rail,"СТОП",THEME.Danger)
-panicBtn.Size=UDim2.new(1,-14,0,38)
-panicBtn.Position=UDim2.new(0,7,1,-47)
-panicBtn.TextSize=11
+panicBtn.Size=UDim2.new(1,-12,0,28)
+panicBtn.Position=UDim2.new(0,6,1,-34)
+panicBtn.TextSize=9
 
 local content=Instance.new("Frame")
 content.Parent=main
-content.Size=UDim2.new(1,-108,1,-62)
-content.Position=UDim2.fromOffset(108,62)
+content.Size=UDim2.new(1,-82,1,-48)
+content.Position=UDim2.fromOffset(82,48)
 content.BackgroundColor3=THEME.Bg
 content.BackgroundTransparency=0.38
 content.BorderSizePixel=0
@@ -2273,8 +2273,8 @@ content.ClipsDescendants=true
 
 local quickBar=Instance.new("Frame")
 quickBar.Parent=content
-quickBar.Size=UDim2.new(1,-18,0,98)
-quickBar.Position=UDim2.fromOffset(9,8)
+quickBar.Size=UDim2.new(1,-12,0,72)
+quickBar.Position=UDim2.fromOffset(6,5)
 quickBar.BackgroundColor3=THEME.Surface
 quickBar.BackgroundTransparency=0.14
 quickBar.BorderSizePixel=0
@@ -2282,33 +2282,33 @@ corner(quickBar,10)
 stroke(quickBar,THEME.Accent,1,0.66)
 gradient(quickBar,THEME.Surface,THEME.Panel,0)
 
-local quickTitle=label(quickBar,"⚡  ВАЖНОЕ",13,Enum.Font.GothamBold,THEME.Text)
-quickTitle.Size=UDim2.new(1,-22,0,24)
-quickTitle.Position=UDim2.fromOffset(11,7)
+local quickTitle=label(quickBar,"⚡  ВАЖНОЕ",11,Enum.Font.GothamBold,THEME.Text)
+quickTitle.Size=UDim2.new(1,-16,0,18)
+quickTitle.Position=UDim2.fromOffset(8,3)
 
 local quickBody=Instance.new("Frame")
 quickBody.Parent=quickBar
-quickBody.Size=UDim2.new(1,-16,0,56)
-quickBody.Position=UDim2.fromOffset(8,35)
+quickBody.Size=UDim2.new(1,-12,0,42)
+quickBody.Position=UDim2.fromOffset(6,24)
 quickBody.BackgroundTransparency=1
 
 local statusPanel=Instance.new("Frame")
 statusPanel.Parent=content
-statusPanel.Size=UDim2.new(1,-18,0,58)
-statusPanel.Position=UDim2.new(0,9,1,-66)
+statusPanel.Size=UDim2.new(1,-12,0,46)
+statusPanel.Position=UDim2.new(0,6,1,-52)
 statusPanel.BackgroundColor3=THEME.Surface
 statusPanel.BackgroundTransparency=0.30
 statusPanel.BorderSizePixel=0
 corner(statusPanel,10)
 stroke(statusPanel,THEME.Border,1,0.68)
 
-local statusTitle=label(statusPanel,"⌁  СТАТУС",10,Enum.Font.GothamBold,THEME.Accent)
-statusTitle.Size=UDim2.new(1,-16,0,18)
-statusTitle.Position=UDim2.fromOffset(8,2)
+local statusTitle=label(statusPanel,"⌁  СТАТУС",8,Enum.Font.GothamBold,THEME.Accent)
+statusTitle.Size=UDim2.new(1,-12,0,13)
+statusTitle.Position=UDim2.fromOffset(6,1)
 
-local status=label(statusPanel,"●  готово",10,Enum.Font.GothamBold,THEME.Text)
-status.Size=UDim2.new(0.62,-10,0,28)
-status.Position=UDim2.fromOffset(6,24)
+local status=label(statusPanel,"●  готово",9,Enum.Font.GothamBold,THEME.Text)
+status.Size=UDim2.new(0.62,-7,0,24)
+status.Position=UDim2.fromOffset(4,17)
 status.BackgroundColor3=THEME.SurfaceAlt
 status.BackgroundTransparency=0.34
 status.BorderSizePixel=0
@@ -2318,9 +2318,9 @@ status.TextTruncate=Enum.TextTruncate.AtEnd
 corner(status,7)
 stroke(status,THEME.Border,1,0.72)
 
-local net=label(statusPanel,"PING ? | УДАР 0/s",9,Enum.Font.GothamBold,THEME.Accent)
-net.Size=UDim2.new(0.38,-8,0,28)
-net.Position=UDim2.new(0.62,2,0,24)
+local net=label(statusPanel,"PING ? | УДАР 0/s",8,Enum.Font.GothamBold,THEME.Accent)
+net.Size=UDim2.new(0.38,-5,0,24)
+net.Position=UDim2.new(0.62,1,0,17)
 net.BackgroundColor3=THEME.SurfaceAlt
 net.BackgroundTransparency=0.34
 net.BorderSizePixel=0
@@ -2335,8 +2335,8 @@ Runtime.ui={status=status,net=net}
 local function makePage(color)
 	local page=Instance.new("ScrollingFrame")
 	page.Parent=content
-	page.Size=UDim2.new(1,-18,1,-188)
-	page.Position=UDim2.fromOffset(9,114)
+	page.Size=UDim2.new(1,-12,1,-142)
+	page.Position=UDim2.fromOffset(6,83)
 	page.BackgroundTransparency=1
 	page.BorderSizePixel=0
 	page.ScrollBarThickness=3
@@ -2353,14 +2353,14 @@ local rebPage=makePage(THEME.Accent2)
 rebPage.Visible=false
 
 local resizeHandle=button(main,"◢",THEME.SurfaceAlt)
-resizeHandle.Size=UDim2.fromOffset(24,24)
-resizeHandle.Position=UDim2.new(1,-24,1,-24)
+resizeHandle.Size=UDim2.fromOffset(18,18)
+resizeHandle.Position=UDim2.new(1,-18,1,-18)
 resizeHandle.TextColor3=THEME.Accent
 resizeHandle.TextSize=13
 resizeHandle.BackgroundTransparency=0.42
 
 local miniButton=button(gui,"RH\n+",THEME.Panel)
-miniButton.Size=UDim2.fromOffset(52,52)
+miniButton.Size=UDim2.fromOffset(42,42)
 miniButton.Position=main.Position
 miniButton.TextColor3=THEME.Accent
 miniButton.TextSize=12
@@ -2418,58 +2418,58 @@ local function makeFeaturePanel(parent,titleText,height,columns)
 	local panel=card(parent,height)
 	panel.LayoutOrder=1
 
-	local icon=label(panel,"ϟ",16,Enum.Font.GothamBold,THEME.Accent)
-	icon.Size=UDim2.fromOffset(24,24)
-	icon.Position=UDim2.fromOffset(12,7)
+	local icon=label(panel,"ϟ",14,Enum.Font.GothamBold,THEME.Accent)
+	icon.Size=UDim2.fromOffset(20,20)
+	icon.Position=UDim2.fromOffset(8,4)
 	icon.TextXAlignment=Enum.TextXAlignment.Center
 
-	local heading=label(panel,titleText,14,Enum.Font.GothamBold,THEME.Text)
-	heading.Size=UDim2.new(1,-50,0,24)
-	heading.Position=UDim2.fromOffset(42,7)
+	local heading=label(panel,titleText,12,Enum.Font.GothamBold,THEME.Text)
+	heading.Size=UDim2.new(1,-40,0,20)
+	heading.Position=UDim2.fromOffset(32,4)
 
 	local body=Instance.new("Frame")
 	body.Parent=panel
-	body.Size=UDim2.new(1,-22,1,-45)
-	body.Position=UDim2.fromOffset(11,37)
+	body.Size=UDim2.new(1,-14,1,-34)
+	body.Position=UDim2.fromOffset(7,28)
 	body.BackgroundTransparency=1
 
 	local grid=Instance.new("UIGridLayout")
 	grid.Parent=body
 	grid.SortOrder=Enum.SortOrder.LayoutOrder
-	grid.CellPadding=UDim2.fromOffset(10,10)
-	grid.CellSize=UDim2.new(1/(columns or 2),-5,0,92)
+	grid.CellPadding=UDim2.fromOffset(6,6)
+	grid.CellSize=UDim2.new(1/(columns or 2),-3,0,64)
 	return panel,body,grid
 end
 
 local function makeSettingsPanel(parent,titleText,height)
 	local panel=card(parent,height)
 
-	local icon=label(panel,"☷",15,Enum.Font.GothamBold,THEME.Accent)
-	icon.Size=UDim2.fromOffset(24,24)
-	icon.Position=UDim2.fromOffset(12,7)
+	local icon=label(panel,"☷",13,Enum.Font.GothamBold,THEME.Accent)
+	icon.Size=UDim2.fromOffset(20,20)
+	icon.Position=UDim2.fromOffset(8,4)
 	icon.TextXAlignment=Enum.TextXAlignment.Center
 
-	local heading=label(panel,titleText,14,Enum.Font.GothamBold,THEME.Text)
-	heading.Size=UDim2.new(1,-50,0,24)
-	heading.Position=UDim2.fromOffset(42,7)
+	local heading=label(panel,titleText,12,Enum.Font.GothamBold,THEME.Text)
+	heading.Size=UDim2.new(1,-40,0,20)
+	heading.Position=UDim2.fromOffset(32,4)
 
 	local body=Instance.new("Frame")
 	body.Parent=panel
-	body.Size=UDim2.new(1,-18,1,-42)
-	body.Position=UDim2.fromOffset(9,36)
+	body.Size=UDim2.new(1,-14,1,-34)
+	body.Position=UDim2.fromOffset(7,28)
 	body.BackgroundTransparency=1
 
 	local list=Instance.new("UIListLayout")
 	list.Parent=body
 	list.SortOrder=Enum.SortOrder.LayoutOrder
-	list.Padding=UDim.new(0,4)
+	list.Padding=UDim.new(0,3)
 	return panel,body,list
 end
 
 local function makeSlider(parent,name,desc,initial,callback)
 	local row=Instance.new("TextButton")
 	row.Parent=parent
-	row.Size=UDim2.new(1,0,0,56)
+	row.Size=UDim2.new(1,0,0,44)
 	row.Text=""
 	row.AutoButtonColor=false
 	row.BackgroundColor3=THEME.Surface
@@ -2478,25 +2478,25 @@ local function makeSlider(parent,name,desc,initial,callback)
 	corner(row,6)
 	stroke(row,THEME.Border,1,0.82)
 
-	local n=label(row,name,13,Enum.Font.GothamBold,THEME.Text)
-	n.Size=UDim2.new(1,-80,0,20)
-	n.Position=UDim2.new(0,11,0,5)
+	local n=label(row,name,11,Enum.Font.GothamBold,THEME.Text)
+	n.Size=UDim2.new(1,-62,0,16)
+	n.Position=UDim2.new(0,8,0,3)
 
-	local d=label(row,desc,9,Enum.Font.Gotham,THEME.Muted)
-	d.Size=UDim2.new(1,-80,0,18)
-	d.Position=UDim2.new(0,11,0,30)
+	local d=label(row,desc,8,Enum.Font.Gotham,THEME.Muted)
+	d.Size=UDim2.new(1,-62,0,15)
+	d.Position=UDim2.new(0,8,0,21)
 
 	local track=Instance.new("Frame")
 	track.Parent=row
-	track.Size=UDim2.new(0,54,0,25)
-	track.Position=UDim2.new(1,-62,0,15)
+	track.Size=UDim2.new(0,44,0,22)
+	track.Position=UDim2.new(1,-50,0,11)
 	track.BorderSizePixel=0
 	track.BackgroundTransparency=0.04
 	corner(track,13)
 
 	local knob=Instance.new("Frame")
 	knob.Parent=track
-	knob.Size=UDim2.new(0,19,0,19)
+	knob.Size=UDim2.new(0,16,0,16)
 	knob.Position=UDim2.new(0,3,0,3)
 	knob.BackgroundColor3=THEME.Text
 	knob.BorderSizePixel=0
@@ -2508,7 +2508,7 @@ local function makeSlider(parent,name,desc,initial,callback)
 	local function paint()
 		if state then
 			track.BackgroundColor3=THEME.Success
-			knob.Position=UDim2.new(1,-22,0,3)
+			knob.Position=UDim2.new(1,-19,0,3)
 		else
 			track.BackgroundColor3=THEME.SurfaceAlt
 			knob.Position=UDim2.new(0,3,0,3)
@@ -2544,21 +2544,21 @@ local function makePinnedToggle(parent,name,initial,callback)
 	corner(row,8)
 	local rowStroke=stroke(row,THEME.Border,1.2,0.52)
 
-	local glyph=label(row,name=="АНТИ-AFK" and "♢" or "◌",17,Enum.Font.GothamBold,THEME.Accent)
-	glyph.Size=UDim2.fromOffset(20,24)
-	glyph.Position=UDim2.fromOffset(5,16)
+	local glyph=label(row,name=="АНТИ-AFK" and "♢" or "◌",15,Enum.Font.GothamBold,THEME.Accent)
+	glyph.Size=UDim2.fromOffset(18,20)
+	glyph.Position=UDim2.fromOffset(4,11)
 	glyph.TextXAlignment=Enum.TextXAlignment.Center
 
-	local n=label(row,name,11,Enum.Font.GothamBold,THEME.Text)
-	n.Size=UDim2.new(1,-48,1,0)
-	n.Position=UDim2.fromOffset(28,0)
+	local n=label(row,name,10,Enum.Font.GothamBold,THEME.Text)
+	n.Size=UDim2.new(1,-43,1,0)
+	n.Position=UDim2.fromOffset(25,0)
 
 	local stateDot=Instance.new("Frame")
 	stateDot.Parent=row
-	stateDot.Size=UDim2.fromOffset(10,10)
-	stateDot.Position=UDim2.new(1,-17,0,8)
+	stateDot.Size=UDim2.fromOffset(8,8)
+	stateDot.Position=UDim2.new(1,-14,0,6)
 	stateDot.BorderSizePixel=0
-	corner(stateDot,5)
+	corner(stateDot,4)
 
 	local state=initial and true or false
 	local api={}
@@ -2601,26 +2601,26 @@ local function makeFeatureToggle(parent,iconText,name,desc,initial,callback)
 	corner(tile,8)
 	local tileStroke=stroke(tile,THEME.Border,1.2,0.50)
 
-	local glyph=label(tile,iconText,22,Enum.Font.GothamBold,THEME.Text)
-	glyph.Size=UDim2.fromOffset(32,30)
-	glyph.Position=UDim2.new(0.5,-16,0,5)
+	local glyph=label(tile,iconText,18,Enum.Font.GothamBold,THEME.Text)
+	glyph.Size=UDim2.fromOffset(24,20)
+	glyph.Position=UDim2.new(0.5,-12,0,3)
 	glyph.TextXAlignment=Enum.TextXAlignment.Center
 
 	local stateDot=Instance.new("Frame")
 	stateDot.Parent=tile
-	stateDot.Size=UDim2.fromOffset(8,8)
-	stateDot.Position=UDim2.new(1,-15,0,8)
+	stateDot.Size=UDim2.fromOffset(7,7)
+	stateDot.Position=UDim2.new(1,-12,0,6)
 	stateDot.BorderSizePixel=0
-	corner(stateDot,4)
+	corner(stateDot,3)
 
-	local n=label(tile,name,13,Enum.Font.GothamBold,THEME.Text)
-	n.Size=UDim2.new(1,-12,0,22)
-	n.Position=UDim2.fromOffset(6,37)
+	local n=label(tile,name,11,Enum.Font.GothamBold,THEME.Text)
+	n.Size=UDim2.new(1,-10,0,17)
+	n.Position=UDim2.fromOffset(5,24)
 	n.TextXAlignment=Enum.TextXAlignment.Center
 
-	local d=label(tile,desc,9,Enum.Font.Gotham,THEME.Muted)
-	d.Size=UDim2.new(1,-12,0,24)
-	d.Position=UDim2.fromOffset(6,62)
+	local d=label(tile,desc,8,Enum.Font.Gotham,THEME.Muted)
+	d.Size=UDim2.new(1,-10,0,17)
+	d.Position=UDim2.fromOffset(5,43)
 	d.TextXAlignment=Enum.TextXAlignment.Center
 
 	local state=initial and true or false
@@ -2656,25 +2656,25 @@ end
 local function makeNumberInput(parent,name,desc,initial,callback)
 	local row=Instance.new("Frame")
 	row.Parent=parent
-	row.Size=UDim2.new(1,0,0,56)
+	row.Size=UDim2.new(1,0,0,44)
 	row.BackgroundColor3=THEME.Surface
 	row.BackgroundTransparency=0.22
 	row.BorderSizePixel=0
 	corner(row,6)
 	stroke(row,THEME.Border,1,0.82)
 
-	local n=label(row,name,13,Enum.Font.GothamBold,THEME.Text)
-	n.Size=UDim2.new(1,-88,0,20)
-	n.Position=UDim2.new(0,11,0,5)
+	local n=label(row,name,11,Enum.Font.GothamBold,THEME.Text)
+	n.Size=UDim2.new(1,-70,0,16)
+	n.Position=UDim2.new(0,8,0,3)
 
-	local d=label(row,desc,9,Enum.Font.Gotham,THEME.Muted)
-	d.Size=UDim2.new(1,-88,0,18)
-	d.Position=UDim2.new(0,11,0,30)
+	local d=label(row,desc,8,Enum.Font.Gotham,THEME.Muted)
+	d.Size=UDim2.new(1,-70,0,15)
+	d.Position=UDim2.new(0,8,0,21)
 
 	local box=Instance.new("TextBox")
 	box.Parent=row
-	box.Size=UDim2.new(0,68,0,30)
-	box.Position=UDim2.new(1,-76,0,13)
+	box.Size=UDim2.new(0,58,0,26)
+	box.Position=UDim2.new(1,-64,0,9)
 	box.BackgroundColor3=THEME.SurfaceAlt
 	box.BackgroundTransparency=0.05
 	box.BorderSizePixel=0
@@ -2722,33 +2722,33 @@ end
 
 -- BUG PAGE
 
-local bugFeaturePanel,bugFeatureBody=makeFeaturePanel(bugPage,"ГЛАВНЫЕ ФУНКЦИИ",240,2)
-local bugSettingsPanel,bugSettingsBody=makeSettingsPanel(bugPage,"НАСТРОЙКИ КАМНЯ",254)
+local bugFeaturePanel,bugFeatureBody=makeFeaturePanel(bugPage,"ГЛАВНЫЕ ФУНКЦИИ",175,2)
+local bugSettingsPanel,bugSettingsBody=makeSettingsPanel(bugPage,"НАСТРОЙКИ КАМНЯ",200)
 bugSettingsPanel.LayoutOrder=2
 
-local selectCard=card(bugSettingsBody,62)
+local selectCard=card(bugSettingsBody,48)
 selectCard.LayoutOrder=1
-local selectTitle=label(selectCard,"АВТО-КАМЕНЬ ПО РЕБАМ",9,Enum.Font.GothamBlack,THEME.Accent2)
-selectTitle.Size=UDim2.new(1,-20,0,18)
-selectTitle.Position=UDim2.new(0,12,0,8)
+local selectTitle=label(selectCard,"АВТО-КАМЕНЬ ПО РЕБАМ",8,Enum.Font.GothamBold,THEME.Accent2)
+selectTitle.Size=UDim2.new(1,-16,0,14)
+selectTitle.Position=UDim2.new(0,8,0,4)
 
-local selectName=label(selectCard,"-",10,Enum.Font.GothamBlack,THEME.Warm)
-selectName.Size=UDim2.new(1,-20,0,28)
-selectName.Position=UDim2.new(0,12,0,30)
+local selectName=label(selectCard,"-",9,Enum.Font.GothamBold,THEME.Warm)
+selectName.Size=UDim2.new(1,-16,0,22)
+selectName.Position=UDim2.new(0,8,0,20)
 
 Runtime.ui.autoRockTitle=selectTitle
 Runtime.ui.autoRockName=selectName
 
-local rockCard=card(bugSettingsBody,142)
+local rockCard=card(bugSettingsBody,112)
 rockCard.LayoutOrder=2
-local rockTitle=label(rockCard,"КАМНИ",12,Enum.Font.GothamBlack,THEME.Text)
-rockTitle.Size=UDim2.new(1,-20,0,20)
-rockTitle.Position=UDim2.new(0,12,0,8)
+local rockTitle=label(rockCard,"КАМНИ",10,Enum.Font.GothamBold,THEME.Text)
+rockTitle.Size=UDim2.new(1,-16,0,16)
+rockTitle.Position=UDim2.new(0,8,0,4)
 
 local rockList=Instance.new("ScrollingFrame")
 rockList.Parent=rockCard
-rockList.Size=UDim2.new(1,-14,0,105)
-rockList.Position=UDim2.new(0,7,0,30)
+rockList.Size=UDim2.new(1,-10,0,82)
+rockList.Position=UDim2.new(0,5,0,25)
 rockList.BackgroundTransparency=1
 rockList.BorderSizePixel=0
 rockList.ScrollBarThickness=2
@@ -2757,7 +2757,7 @@ rockList.CanvasSize=UDim2.new(0,0,0,0)
 local rockLayout=Instance.new("UIListLayout")
 rockLayout.Parent=rockList
 rockLayout.SortOrder=Enum.SortOrder.LayoutOrder
-rockLayout.Padding=UDim.new(0,5)
+rockLayout.Padding=UDim.new(0,4)
 
 local rockButtons={}
 local rockButtonConnections={}
@@ -2784,7 +2784,7 @@ local function refreshRockList()
 
 		local b=button(rockList,(active and "● " or "○ ")..row.label.."  |  "..(info and "found" or "missing"),
 			active and THEME.Accent or THEME.SurfaceAlt)
-		b.Size=UDim2.new(1,-3,0,32)
+		b.Size=UDim2.new(1,-3,0,27)
 		b.LayoutOrder=i
 		b.TextXAlignment=Enum.TextXAlignment.Left
 
@@ -2805,7 +2805,7 @@ local function refreshRockList()
 		table.insert(rockButtons,b)
 	end
 
-	rockList.CanvasSize=UDim2.new(0,0,0,#ROCKS*37+4)
+	rockList.CanvasSize=UDim2.new(0,0,0,#ROCKS*31+4)
 end
 
 Runtime.refreshRockList=refreshRockList
@@ -2858,9 +2858,9 @@ end)
 
 -- TRAIN PAGE
 
-local trainFeaturePanel,trainFeatureBody=makeFeaturePanel(trainPage,"ВЫБЕРИ ВИД КАЧА",342,2)
+local trainFeaturePanel,trainFeatureBody=makeFeaturePanel(trainPage,"ВЫБЕРИ ВИД КАЧА",242,2)
 trainFeaturePanel.LayoutOrder=1
-local trainSettingsPanel,trainSettingsBody=makeSettingsPanel(trainPage,"ДОПОЛНИТЕЛЬНО",220)
+local trainSettingsPanel,trainSettingsBody=makeSettingsPanel(trainPage,"ДОПОЛНИТЕЛЬНО",174)
 trainSettingsPanel.LayoutOrder=2
 
 local lockPosSlider=makeSlider(trainSettingsBody,"ФИКСАЦИЯ ПОЗИЦИИ","не даёт персонажу сдвигаться",false,function(on,api)
@@ -2992,20 +2992,20 @@ end
 
 -- REBIRTH PAGE
 
-local rebFeaturePanel,rebFeatureBody=makeFeaturePanel(rebPage,"РЕБИРТ И РАЗМЕР",240,2)
+local rebFeaturePanel,rebFeatureBody=makeFeaturePanel(rebPage,"РЕБИРТ И РАЗМЕР",175,2)
 rebFeaturePanel.LayoutOrder=1
-local rebSettingsPanel,rebSettingsBody=makeSettingsPanel(rebPage,"РАЗМЕР ПЕРСОНАЖА",106)
+local rebSettingsPanel,rebSettingsBody=makeSettingsPanel(rebPage,"РАЗМЕР ПЕРСОНАЖА",82)
 rebSettingsPanel.LayoutOrder=2
 
-local rebInfo=card(rebPage,66)
+local rebInfo=card(rebPage,52)
 rebInfo.LayoutOrder=3
 local rebInfoTitle=label(rebInfo,"AUTO REBIRTH",12,Enum.Font.GothamBlack,THEME.Accent2)
-rebInfoTitle.Size=UDim2.new(1,-20,0,20)
-rebInfoTitle.Position=UDim2.new(0,10,0,8)
+rebInfoTitle.Size=UDim2.new(1,-16,0,17)
+rebInfoTitle.Position=UDim2.new(0,8,0,4)
 
 local rebInfoText=label(rebInfo,"Rebirth каждые 1.2с • King Gym: -8626 / 17 / -5730",9,Enum.Font.GothamBold,THEME.Muted)
-rebInfoText.Size=UDim2.new(1,-20,0,28)
-rebInfoText.Position=UDim2.new(0,10,0,31)
+rebInfoText.Size=UDim2.new(1,-16,0,22)
+rebInfoText.Position=UDim2.new(0,8,0,23)
 
 local autoRebSlider=makeFeatureToggle(rebFeatureBody,"↻","АВТО РЕБИРТ","реб при готовности",false,function(on,api)
 	if on and not findRebirthRemote() then
@@ -3205,8 +3205,8 @@ addConn(UserInputService.InputChanged:Connect(function(input)
 			miniButton.Position=clampOffsetPosition(wanted,miniButton.Size)
 		elseif resizing and resizeStartSize then
 			local viewport=viewportSize()
-			local dynamicMinWidth=math.max(240,math.min(360,viewport.X-12))
-			local dynamicMinHeight=math.max(280,math.min(340,viewport.Y-12))
+			local dynamicMinWidth=math.max(280,math.min(320,viewport.X-12))
+			local dynamicMinHeight=math.max(260,math.min(300,viewport.Y-12))
 			local maxWidth=math.max(dynamicMinWidth,viewport.X-main.Position.X.Offset-4)
 			local maxHeight=math.max(dynamicMinHeight,viewport.Y-main.Position.Y.Offset-4)
 			local width=math.clamp(resizeStartSize.X.Offset+delta.X,dynamicMinWidth,maxWidth)
