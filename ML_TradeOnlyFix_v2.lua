@@ -436,57 +436,84 @@ local function chooseSafeRockByRebirths()
 
 	if rebs then
 		rebs=math.max(0,math.floor(rebs+0.5))
-		local best=nil
+		local maxPetXp40=grade.base*19*20/2*40
 
-		for _,row in ipairs(ROCKS) do
+		-- Rocks are ordered from strongest to weakest. Pick the strongest available
+		-- multiplier that still fits into the pet's level 19 XP range at these rebirths.
+		-- This avoids the old "no exact division -> Tiny" fallback.
+		for rockIndex,row in ipairs(ROCKS) do
 			if rockCache[row.req] then
-				-- All rock multipliers are exact fortieths. Integer arithmetic avoids
-				-- float rounding falsely marking a rebirth as compatible/incompatible.
 				local multiplier40=math.floor(row.mult*40+0.5)
 				local hitXp40=(rebs+20)*multiplier40
 
-				for level=1,19 do
-					local cumulativeXp=grade.base*level*(level+1)/2
-					local cumulativeXp40=cumulativeXp*40
+				if hitXp40>0 and hitXp40<=maxPetXp40 then
+					local bestForRock=nil
 
-					if hitXp40>0 and cumulativeXp40%hitXp40==0 then
-						local hits=cumulativeXp40/hitXp40
-						local candidate={row=row,level=level,hits=hits,hitXp40=hitXp40}
-						if not best
-							or candidate.hits<best.hits
-							or (candidate.hits==best.hits and candidate.hitXp40>best.hitXp40)
-							or (candidate.hits==best.hits and candidate.hitXp40==best.hitXp40 and candidate.level<best.level) then
-							best=candidate
+					for level=1,19 do
+						local targetXp40=grade.base*level*(level+1)/2*40
+						if targetXp40>=hitXp40 then
+							local hits=math.max(1,math.floor(targetXp40/hitXp40))
+							local remainder=targetXp40-(hits*hitXp40)
+							local accuracy=1-(remainder/targetXp40)
+							local candidate={
+								row=row,
+								rockIndex=rockIndex,
+								level=level,
+								hits=hits,
+								hitXp40=hitXp40,
+								remainder40=remainder,
+								accuracy=accuracy,
+							}
+
+							if not bestForRock
+								or candidate.accuracy>bestForRock.accuracy
+								or (candidate.accuracy==bestForRock.accuracy and candidate.hits<bestForRock.hits)
+								or (candidate.accuracy==bestForRock.accuracy and candidate.hits==bestForRock.hits and candidate.level<bestForRock.level) then
+								bestForRock=candidate
+							end
 						end
-						break
+					end
+
+					if bestForRock then
+						local exact=bestForRock.remainder40==0
+						local percent=math.floor(bestForRock.accuracy*1000+0.5)/10
+						local reason=("%d реб • %s XP • L%d / %d уд. • %.1f%%"):format(
+							rebs,compactXp(bestForRock.hitXp40),bestForRock.level,bestForRock.hits,percent
+						)
+						local calc={
+							rebirths=rebs,
+							xp40=bestForRock.hitXp40,
+							level=bestForRock.level,
+							hits=bestForRock.hits,
+							accuracy=percent,
+							grade=grade.name,
+							exact=exact,
+							source=source,
+						}
+						return row,reason,rebs,exact,calc
 					end
 				end
 			end
 		end
 
-		if best then
-			local reason=("%d реб • %s XP • L%d / %d уд."):format(
-				rebs,compactXp(best.hitXp40),best.level,best.hits
-			)
-			local calc={
-				rebirths=rebs,
-				xp40=best.hitXp40,
-				level=best.level,
-				hits=best.hits,
-				grade=grade.name,
-				exact=true,
-			}
-			return best.row,reason,rebs,true,calc
-		end
-
-		-- There is no mathematically exact pet-XP cycle at every rebirth count.
-		-- Pick the weakest available rock instead of pretending a random match is safe.
+		-- At extreme rebirth counts even Tiny can exceed the pet XP range. In that
+		-- case the weakest available rock is the only safe direction and the UI says why.
 		for i=#ROCKS,1,-1 do
 			local row=ROCKS[i]
 			if rockCache[row.req] then
 				local hitXp40=(rebs+20)*math.floor(row.mult*40+0.5)
-				local calc={rebirths=rebs,xp40=hitXp40,grade=grade.name,exact=false}
-				return row,("%d реб • exact нет • %s XP"):format(rebs,compactXp(hitXp40)),rebs,false,calc
+				local calc={
+					rebirths=rebs,
+					xp40=hitXp40,
+					level=19,
+					hits=1,
+					accuracy=0,
+					grade=grade.name,
+					exact=false,
+					overLimit=true,
+					source=source,
+				}
+				return row,("%d реб • XP выше лимита питомца"):format(rebs),rebs,false,calc
 			end
 		end
 	end
@@ -515,20 +542,22 @@ local function applyAutoRockSelection(force)
 
 	if Runtime.ui then
 		if Runtime.ui.autoRockTitle and Runtime.ui.autoRockTitle.Parent then
-			Runtime.ui.autoRockTitle.Text="АВТО-КАЛЬКУЛЯТОР КАМНЯ"
+			Runtime.ui.autoRockTitle.Text="АВТОПОДБОР ПО РЕБЁРТАМ"
 		end
 		if Runtime.ui.autoRockName and Runtime.ui.autoRockName.Parent then
-			Runtime.ui.autoRockName.Text=row.label.." • "..tostring(calc and calc.grade or "-")
+			Runtime.ui.autoRockName.Text=row.label.."  •  питомец "..tostring(calc and calc.grade or "-")
 		end
 		if Runtime.ui.autoRockStats and Runtime.ui.autoRockStats.Parent then
 			local rebText=calc and calc.rebirths~=nil and tostring(calc.rebirths) or "не найдены"
 			local xpText=calc and calc.xp40 and compactXp(calc.xp40) or "?"
-			if calc and calc.exact then
-				Runtime.ui.autoRockStats.Text=("Ребы: %s  •  XP/удар: %s  •  цель: L%d  •  ударов: %d"):format(
-					rebText,xpText,calc.level,calc.hits
+			if calc and calc.overLimit then
+				Runtime.ui.autoRockStats.Text=("Ребёрты: %s  •  XP/удар: %s  •  превышен лимит питомца"):format(rebText,xpText)
+			elseif calc and calc.level and calc.hits then
+				Runtime.ui.autoRockStats.Text=("Ребёрты: %s  •  XP/удар: %s  •  цель L%d  •  %d уд.  •  %.1f%%"):format(
+					rebText,xpText,calc.level,calc.hits,tonumber(calc.accuracy) or (calc.exact and 100 or 0)
 				)
 			else
-				Runtime.ui.autoRockStats.Text=("Ребы: %s  •  XP/удар: %s  •  точного деления нет"):format(rebText,xpText)
+				Runtime.ui.autoRockStats.Text=("Ребёрты: %s  •  XP/удар: %s  •  данные персонажа не найдены"):format(rebText,xpText)
 			end
 		end
 	end
@@ -2095,13 +2124,14 @@ local THEME={
 	Panel=Color3.fromRGB(18,27,40),
 	Surface=Color3.fromRGB(24,34,49),
 	SurfaceAlt=Color3.fromRGB(31,43,60),
-	Accent=Color3.fromRGB(158,112,255),
-	Accent2=Color3.fromRGB(198,128,255),
-	Success=Color3.fromRGB(177,126,255),
+	Accent=Color3.fromRGB(171,83,255),
+	Accent2=Color3.fromRGB(226,104,255),
+	Neon=Color3.fromRGB(86,190,255),
+	Success=Color3.fromRGB(183,92,255),
 	Danger=Color3.fromRGB(255,102,119),
 	Text=Color3.fromRGB(232,239,247),
 	Muted=Color3.fromRGB(184,190,208),
-	Border=Color3.fromRGB(116,102,150),
+	Border=Color3.fromRGB(118,72,178),
 	Warm=Color3.fromRGB(255,180,84),
 }
 
@@ -2116,6 +2146,8 @@ local function stroke(o,color,thickness,transparency)
 	s.Color=color
 	s.Thickness=thickness
 	s.Transparency=transparency
+	s.ApplyStrokeMode=Enum.ApplyStrokeMode.Border
+	s.LineJoinMode=Enum.LineJoinMode.Round
 	s.Parent=o
 	return s
 end
@@ -2126,6 +2158,12 @@ local function gradient(o,fromColor,toColor,rotation)
 	g.Rotation=rotation or 0
 	g.Parent=o
 	return g
+end
+
+local function neonStroke(o,thickness,transparency)
+	local s=stroke(o,THEME.Accent,thickness or 1.2,transparency or 0.42)
+	gradient(s,THEME.Accent2,THEME.Neon,28)
+	return s
 end
 
 local function label(parent,text,size,font,color)
@@ -2154,6 +2192,8 @@ local function button(parent,text,color)
 	b.Font=Enum.Font.GothamBlack
 	b.TextSize=13
 	corner(b,8)
+	local edge=neonStroke(b,1,0.68)
+	edge.Name="NeonEdge"
 	return b
 end
 
@@ -2181,8 +2221,7 @@ main.BorderSizePixel=0
 main.Active=true
 main.ClipsDescendants=true
 corner(main,14)
-local mainStroke=stroke(main,THEME.Border,1.2,0.38)
-gradient(mainStroke,THEME.Accent,THEME.Border,35)
+local mainStroke=neonStroke(main,1.6,0.24)
 gradient(main,THEME.Panel,THEME.Bg,125)
 
 local topBar=Instance.new("Frame")
@@ -2250,7 +2289,7 @@ local function styleTab(tab,y)
 	tab.TextSize=9
 	tab.TextWrapped=true
 	tab.BackgroundTransparency=0.52
-	local tabStroke=stroke(tab,THEME.Border,1,0.70)
+	local tabStroke=neonStroke(tab,1.1,0.66)
 	tabStroke.Name="TabStroke"
 
 	local mark=Instance.new("Frame")
@@ -2264,16 +2303,16 @@ local function styleTab(tab,y)
 	corner(mark,2)
 end
 
-local bugTab=button(rail,"◈\nКАМЕНЬ",THEME.Accent)
+local bugTab=button(rail,"◈\nКАМНИ",THEME.Accent)
 styleTab(bugTab,6)
 
-local trainTab=button(rail,"▤\nКАЧ",THEME.Surface)
+local trainTab=button(rail,"▤\nТРЕНИРОВКА",THEME.Surface)
 styleTab(trainTab,62)
 
-local rebTab=button(rail,"↻\nРЕБИРТ",THEME.Surface)
+local rebTab=button(rail,"↻\nРЕБИРТЫ",THEME.Surface)
 styleTab(rebTab,118)
 
-local rescanBtn=button(rail,"ОБНОВИТЬ",THEME.SurfaceAlt)
+local rescanBtn=button(rail,"ПЕРЕСЧИТАТЬ",THEME.SurfaceAlt)
 rescanBtn.Size=UDim2.new(1,-12,0,28)
 rescanBtn.Position=UDim2.fromOffset(6,176)
 rescanBtn.TextSize=9
@@ -2300,7 +2339,7 @@ quickBar.BackgroundColor3=THEME.Surface
 quickBar.BackgroundTransparency=0.14
 quickBar.BorderSizePixel=0
 corner(quickBar,10)
-stroke(quickBar,THEME.Accent,1,0.66)
+neonStroke(quickBar,1.2,0.52)
 gradient(quickBar,THEME.Surface,THEME.Panel,0)
 
 local quickTitle=label(quickBar,"⚡  ВАЖНОЕ",11,Enum.Font.GothamBold,THEME.Text)
@@ -2321,13 +2360,13 @@ statusPanel.BackgroundColor3=THEME.Surface
 statusPanel.BackgroundTransparency=0.30
 statusPanel.BorderSizePixel=0
 corner(statusPanel,10)
-stroke(statusPanel,THEME.Border,1,0.68)
+neonStroke(statusPanel,1.1,0.58)
 
 local statusTitle=label(statusPanel,"⌁  СТАТУС",8,Enum.Font.GothamBold,THEME.Accent)
 statusTitle.Size=UDim2.new(1,-12,0,12)
 statusTitle.Position=UDim2.fromOffset(6,1)
 
-local status=label(statusPanel,"●  готово",9,Enum.Font.GothamBold,THEME.Text)
+local status=label(statusPanel,"ГОТОВО",9,Enum.Font.GothamBold,THEME.Text)
 status.Size=UDim2.new(0.62,-7,0,21)
 status.Position=UDim2.fromOffset(4,14)
 status.BackgroundColor3=THEME.SurfaceAlt
@@ -2337,7 +2376,7 @@ status.TextXAlignment=Enum.TextXAlignment.Center
 status.TextWrapped=false
 status.TextTruncate=Enum.TextTruncate.AtEnd
 corner(status,7)
-stroke(status,THEME.Border,1,0.72)
+neonStroke(status,1,0.66)
 
 local net=label(statusPanel,"PING ? | УДАР 0/s",8,Enum.Font.GothamBold,THEME.Accent)
 net.Size=UDim2.new(0.38,-5,0,21)
@@ -2349,7 +2388,7 @@ net.TextXAlignment=Enum.TextXAlignment.Center
 net.TextWrapped=false
 net.TextTruncate=Enum.TextTruncate.AtEnd
 corner(net,7)
-stroke(net,THEME.Border,1,0.72)
+neonStroke(net,1,0.66)
 
 Runtime.ui={status=status,net=net}
 
@@ -2389,7 +2428,7 @@ miniButton.TextSize=12
 miniButton.Visible=false
 miniButton.Active=true
 miniButton.ZIndex=30
-stroke(miniButton,THEME.Accent,1.2,0.30)
+neonStroke(miniButton,1.5,0.18)
 gradient(miniButton,THEME.Surface,THEME.Bg,135)
 
 local function listLayout(frame)
@@ -2431,7 +2470,7 @@ local function card(parent,height)
 	f.BackgroundTransparency=0.16
 	f.BorderSizePixel=0
 	corner(f,10)
-	stroke(f,THEME.Border,1,0.52)
+	neonStroke(f,1.1,0.48)
 	gradient(f,THEME.Surface,THEME.Bg,115)
 	return f
 end
@@ -2498,7 +2537,7 @@ local function makeSlider(parent,name,desc,initial,callback)
 	row.BackgroundTransparency=0.22
 	row.BorderSizePixel=0
 	corner(row,6)
-	stroke(row,THEME.Border,1,0.82)
+	neonStroke(row,1,0.72)
 
 	local n=label(row,name,11,Enum.Font.GothamBold,THEME.Text)
 	n.Size=UDim2.new(1,-62,0,16)
@@ -2564,7 +2603,7 @@ local function makePinnedToggle(parent,name,initial,callback)
 	row.BackgroundTransparency=0.18
 	row.BorderSizePixel=0
 	corner(row,8)
-	local rowStroke=stroke(row,THEME.Border,1.2,0.52)
+	local rowStroke=neonStroke(row,1.2,0.52)
 
 	local glyph=label(row,name=="АНТИ-AFK" and "♢" or "◌",15,Enum.Font.GothamBold,THEME.Accent)
 	glyph.Size=UDim2.fromOffset(18,20)
@@ -2572,15 +2611,8 @@ local function makePinnedToggle(parent,name,initial,callback)
 	glyph.TextXAlignment=Enum.TextXAlignment.Center
 
 	local n=label(row,name,10,Enum.Font.GothamBold,THEME.Text)
-	n.Size=UDim2.new(1,-43,1,0)
+	n.Size=UDim2.new(1,-31,1,0)
 	n.Position=UDim2.fromOffset(25,0)
-
-	local stateDot=Instance.new("Frame")
-	stateDot.Parent=row
-	stateDot.Size=UDim2.fromOffset(8,8)
-	stateDot.Position=UDim2.new(1,-14,0,6)
-	stateDot.BorderSizePixel=0
-	corner(stateDot,4)
 
 	local state=initial and true or false
 	local api={}
@@ -2589,9 +2621,9 @@ local function makePinnedToggle(parent,name,initial,callback)
 		row.BackgroundTransparency=state and 0.08 or 0.30
 		n.TextColor3=state and THEME.Text or THEME.Muted
 		rowStroke.Color=state and THEME.Accent or THEME.Border
-		rowStroke.Transparency=state and 0.18 or 0.62
+		rowStroke.Thickness=state and 2.2 or 1.1
+		rowStroke.Transparency=state and 0.02 or 0.62
 		glyph.TextColor3=state and THEME.Accent2 or THEME.Muted
-		stateDot.BackgroundColor3=state and THEME.Accent or THEME.Muted
 	end
 
 	function api.Set(v,silent)
@@ -2621,19 +2653,12 @@ local function makeFeatureToggle(parent,iconText,name,desc,initial,callback)
 	tile.BackgroundTransparency=0.16
 	tile.BorderSizePixel=0
 	corner(tile,8)
-	local tileStroke=stroke(tile,THEME.Border,1.2,0.50)
+	local tileStroke=neonStroke(tile,1.2,0.50)
 
 	local glyph=label(tile,iconText,16,Enum.Font.GothamBold,THEME.Text)
 	glyph.Size=UDim2.fromOffset(20,16)
 	glyph.Position=UDim2.new(0.5,-10,0,2)
 	glyph.TextXAlignment=Enum.TextXAlignment.Center
-
-	local stateDot=Instance.new("Frame")
-	stateDot.Parent=tile
-	stateDot.Size=UDim2.fromOffset(7,7)
-	stateDot.Position=UDim2.new(1,-12,0,6)
-	stateDot.BorderSizePixel=0
-	corner(stateDot,3)
 
 	local n=label(tile,name,10,Enum.Font.GothamBold,THEME.Text)
 	n.Size=UDim2.new(1,-10,0,15)
@@ -2651,9 +2676,9 @@ local function makeFeatureToggle(parent,iconText,name,desc,initial,callback)
 		tile.BackgroundColor3=state and THEME.SurfaceAlt or THEME.Surface
 		tile.BackgroundTransparency=state and 0.06 or 0.22
 		tileStroke.Color=state and THEME.Accent or THEME.Border
-		tileStroke.Transparency=state and 0.12 or 0.54
+		tileStroke.Thickness=state and 2.2 or 1.1
+		tileStroke.Transparency=state and 0.02 or 0.58
 		glyph.TextColor3=state and THEME.Accent or THEME.Text
-		stateDot.BackgroundColor3=state and THEME.Success or THEME.Muted
 		n.TextColor3=state and THEME.Text or THEME.Muted
 	end
 
@@ -2683,7 +2708,7 @@ local function makeNumberInput(parent,name,desc,initial,callback)
 	row.BackgroundTransparency=0.22
 	row.BorderSizePixel=0
 	corner(row,6)
-	stroke(row,THEME.Border,1,0.82)
+	neonStroke(row,1,0.72)
 
 	local n=label(row,name,11,Enum.Font.GothamBold,THEME.Text)
 	n.Size=UDim2.new(1,-70,0,16)
@@ -2708,7 +2733,7 @@ local function makeNumberInput(parent,name,desc,initial,callback)
 	box.TextSize=12
 	box.Text=tostring(initial or 1)
 	corner(box,10)
-	stroke(box,THEME.Accent2,1,0.45)
+	neonStroke(box,1.2,0.34)
 
 	local value=tonumber(initial) or 1
 	local api={}
@@ -2744,14 +2769,14 @@ end
 
 -- BUG PAGE
 
-local bugFeaturePanel,bugFeatureBody=makeFeaturePanel(bugPage,"ФУНКЦИИ КАМНЯ",86,3)
+local bugFeaturePanel,bugFeatureBody=makeFeaturePanel(bugPage,"КАМЕНЬ И УДАРЫ",86,3)
 bugFeaturePanel.LayoutOrder=1
-local bugSettingsPanel,bugSettingsBody=makeSettingsPanel(bugPage,"АВТО-КАМЕНЬ И КАЛЬКУЛЯТОР",141)
+local bugSettingsPanel,bugSettingsBody=makeSettingsPanel(bugPage,"ПОДБОР КАМНЯ",141)
 bugSettingsPanel.LayoutOrder=2
 
 local selectCard=card(bugSettingsBody,66)
 selectCard.LayoutOrder=1
-local selectTitle=label(selectCard,"АВТО-КАЛЬКУЛЯТОР КАМНЯ",8,Enum.Font.GothamBold,THEME.Accent2)
+local selectTitle=label(selectCard,"АВТОПОДБОР ПО РЕБЁРТАМ",8,Enum.Font.GothamBold,THEME.Accent2)
 selectTitle.Size=UDim2.new(1,-16,0,13)
 selectTitle.Position=UDim2.new(0,8,0,3)
 
@@ -2759,7 +2784,7 @@ local selectName=label(selectCard,"-",10,Enum.Font.GothamBold,THEME.Warm)
 selectName.Size=UDim2.new(1,-16,0,17)
 selectName.Position=UDim2.new(0,8,0,16)
 
-local calcStats=label(selectCard,"Ребы: -  •  XP/удар: -  •  цель: -  •  ударов: -",8,Enum.Font.Gotham,THEME.Text)
+local calcStats=label(selectCard,"Ребёрты: -  •  XP/удар: -  •  цель: -  •  ударов: -",8,Enum.Font.Gotham,THEME.Text)
 calcStats.Size=UDim2.new(1,-16,0,27)
 calcStats.Position=UDim2.new(0,8,0,34)
 calcStats.TextYAlignment=Enum.TextYAlignment.Top
@@ -2770,23 +2795,61 @@ Runtime.ui.autoRockStats=calcStats
 
 local rockCard=card(bugSettingsBody,38)
 rockCard.LayoutOrder=2
-local prevRockBtn=button(rockCard,"‹",THEME.SurfaceAlt)
-prevRockBtn.Size=UDim2.fromOffset(30,28)
-prevRockBtn.Position=UDim2.fromOffset(5,5)
-prevRockBtn.TextSize=18
-
-local nextRockBtn=button(rockCard,"›",THEME.SurfaceAlt)
-nextRockBtn.Size=UDim2.fromOffset(30,28)
-nextRockBtn.Position=UDim2.new(1,-35,0,5)
-nextRockBtn.TextSize=18
-
 local currentRockLabel=label(rockCard,"камень не выбран",10,Enum.Font.GothamBold,THEME.Text)
-currentRockLabel.Size=UDim2.new(1,-76,0,28)
-currentRockLabel.Position=UDim2.fromOffset(38,5)
+currentRockLabel.Size=UDim2.new(1,-16,0,14)
+currentRockLabel.Position=UDim2.fromOffset(8,2)
 currentRockLabel.TextXAlignment=Enum.TextXAlignment.Center
 
-local rockButtons={prevRockBtn,nextRockBtn}
+local rockScale=Instance.new("TextButton")
+rockScale.Parent=rockCard
+rockScale.Size=UDim2.new(1,-16,0,17)
+rockScale.Position=UDim2.fromOffset(8,17)
+rockScale.Text=""
+rockScale.AutoButtonColor=false
+rockScale.BackgroundTransparency=1
+rockScale.BorderSizePixel=0
+rockScale.Active=true
+
+local rockTrack=Instance.new("Frame")
+rockTrack.Parent=rockScale
+rockTrack.Size=UDim2.new(1,0,0,4)
+rockTrack.Position=UDim2.new(0,0,0.5,-2)
+rockTrack.BackgroundColor3=THEME.Border
+rockTrack.BackgroundTransparency=0.34
+rockTrack.BorderSizePixel=0
+corner(rockTrack,3)
+
+local rockFill=Instance.new("Frame")
+rockFill.Parent=rockTrack
+rockFill.Size=UDim2.new(0,0,1,0)
+rockFill.BackgroundColor3=THEME.Accent
+rockFill.BorderSizePixel=0
+corner(rockFill,3)
+gradient(rockFill,THEME.Accent2,THEME.Neon,0)
+
+for i=1,#ROCKS do
+	local tick=Instance.new("Frame")
+	tick.Parent=rockTrack
+	tick.Size=UDim2.fromOffset(1,8)
+	tick.Position=UDim2.new((i-1)/(#ROCKS-1),0,0.5,-4)
+	tick.AnchorPoint=Vector2.new(0.5,0)
+	tick.BackgroundColor3=THEME.Text
+	tick.BackgroundTransparency=0.42
+	tick.BorderSizePixel=0
+end
+
+local rockKnob=Instance.new("Frame")
+rockKnob.Parent=rockTrack
+rockKnob.Size=UDim2.fromOffset(12,12)
+rockKnob.AnchorPoint=Vector2.new(0.5,0.5)
+rockKnob.Position=UDim2.new(0,0,0.5,0)
+rockKnob.BackgroundColor3=THEME.Text
+rockKnob.BorderSizePixel=0
+corner(rockKnob,6)
+neonStroke(rockKnob,2,0.04)
+
 local rockButtonConnections={}
+local rockScaleDragging=false
 
 local function disconnectRockButtonConnections()
 	for _,connection in ipairs(rockButtonConnections) do
@@ -2805,23 +2868,20 @@ end
 
 local refreshRockList
 
-local function chooseManualRock(delta)
-	local index=currentRockIndex()+delta
-	if index<1 then index=#ROCKS end
-	if index>#ROCKS then index=1 end
-
+local function chooseManualRock(index)
+	index=math.clamp(math.floor(tonumber(index) or #ROCKS),1,#ROCKS)
 	local row=ROCKS[index]
 	Runtime.autoRockSelection=false
 	Runtime.selectedRock=row
-	selectTitle.Text="РУЧНОЙ ВЫБОР КАМНЯ"
+	selectTitle.Text="РУЧНАЯ НАСТРОЙКА"
 	selectName.Text=row.label.."  •  множитель "..tostring(row.mult)
 
 	local rebs=Runtime.autoRockCalc and Runtime.autoRockCalc.rebirths
 	if rebs then
 		local xp40=(rebs+20)*math.floor(row.mult*40+0.5)
-		calcStats.Text=("Ребы: %d  •  XP/удар: %s  •  выбран вручную"):format(rebs,compactXp(xp40))
+		calcStats.Text=("Ребёрты: %d  •  XP/удар: %s  •  ручной выбор"):format(rebs,compactXp(xp40))
 	else
-		calcStats.Text="Ребы не найдены  •  выбран вручную"
+		calcStats.Text="Ребёрты не найдены  •  ручной выбор"
 	end
 
 	refreshRockList()
@@ -2832,22 +2892,54 @@ refreshRockList=function()
 	local row=Runtime.selectedRock
 	if not row then
 		currentRockLabel.Text="камень не выбран"
+		rockFill.Size=UDim2.new(0,0,1,0)
+		rockKnob.Position=UDim2.new(0,0,0.5,0)
 		return
 	end
 
 	local info=rockCache[row.req]
-	currentRockLabel.Text=(info and "● " or "○ ")..row.label
+	local index=currentRockIndex()
+	local ratio=(index-1)/(#ROCKS-1)
+	currentRockLabel.Text=row.label..(info and "  —  доступен" or "  —  не найден")
+	rockFill.Size=UDim2.new(ratio,0,1,0)
+	rockKnob.Position=UDim2.new(ratio,0,0.5,0)
 end
 
-table.insert(rockButtonConnections,prevRockBtn.Activated:Connect(function() chooseManualRock(-1) end))
-table.insert(rockButtonConnections,nextRockBtn.Activated:Connect(function() chooseManualRock(1) end))
+local function rockIndexFromX(x)
+	local width=math.max(1,rockTrack.AbsoluteSize.X)
+	local ratio=math.clamp((x-rockTrack.AbsolutePosition.X)/width,0,1)
+	return math.clamp(math.floor(ratio*(#ROCKS-1)+1.5),1,#ROCKS)
+end
+
+local function selectRockFromInput(input)
+	if input and input.Position then chooseManualRock(rockIndexFromX(input.Position.X)) end
+end
+
+table.insert(rockButtonConnections,rockScale.InputBegan:Connect(function(input)
+	if input.UserInputType==Enum.UserInputType.MouseButton1 or input.UserInputType==Enum.UserInputType.Touch then
+		rockScaleDragging=true
+		selectRockFromInput(input)
+	end
+end))
+
+table.insert(rockButtonConnections,UserInputService.InputChanged:Connect(function(input)
+	if rockScaleDragging and (input.UserInputType==Enum.UserInputType.MouseMovement or input.UserInputType==Enum.UserInputType.Touch) then
+		selectRockFromInput(input)
+	end
+end))
+
+table.insert(rockButtonConnections,UserInputService.InputEnded:Connect(function(input)
+	if input.UserInputType==Enum.UserInputType.MouseButton1 or input.UserInputType==Enum.UserInputType.Touch then
+		rockScaleDragging=false
+	end
+end))
 
 Runtime.refreshRockList=refreshRockList
 
 local lockRockSlider
 local bugSlider
 
-lockRockSlider=makeFeatureToggle(bugFeatureBody,"◇","ФИКСАЦИЯ","держит у камня",false,function(on,api)
+lockRockSlider=makeFeatureToggle(bugFeatureBody,"◇","У КАМНЯ","не даёт отойти",false,function(on,api)
 	if on then
 		local ok,err=teleportInsideSelected()
 
@@ -2872,7 +2964,7 @@ lockRockSlider=makeFeatureToggle(bugFeatureBody,"◇","ФИКСАЦИЯ","дер
 	end
 end)
 
-bugSlider=makeFeatureToggle(bugFeatureBody,"▷","АВТОУДАР","сам бьёт камень",false,function(on,api)
+bugSlider=makeFeatureToggle(bugFeatureBody,"▷","АВТОУДАР","бьёт автоматически",false,function(on,api)
 	if on then
 		if not startBug() then
 			api.Set(false,true)
@@ -2885,19 +2977,19 @@ end)
 Runtime.leverRefs.lockRock=lockRockSlider
 Runtime.leverRefs.bug=bugSlider
 
-local remoteSlider=makeFeatureToggle(bugFeatureBody,"◎","УСКОРЕНИЕ","ускоряет отправку",true,function(on)
+local remoteSlider=makeFeatureToggle(bugFeatureBody,"◎","БЫСТРЫЙ УДАР","ускоряет команды",true,function(on)
 	Runtime.directRemoteEnabled=on
 	setStatus("УСКОРЕНИЕ: "..(on and "включено" or "выключено"))
 end)
 
 -- TRAIN PAGE
 
-local trainFeaturePanel,trainFeatureBody=makeFeaturePanel(trainPage,"ВЫБЕРИ ВИД КАЧА",139,3)
+local trainFeaturePanel,trainFeatureBody=makeFeaturePanel(trainPage,"ВИД ТРЕНИРОВКИ",139,3)
 trainFeaturePanel.LayoutOrder=1
-local trainSettingsPanel,trainSettingsBody=makeFeaturePanel(trainPage,"ДОПОЛНИТЕЛЬНО",86,3)
+local trainSettingsPanel,trainSettingsBody=makeFeaturePanel(trainPage,"НАСТРОЙКИ ТРЕНИРОВКИ",86,3)
 trainSettingsPanel.LayoutOrder=2
 
-local lockPosSlider=makeFeatureToggle(trainSettingsBody,"◇","ПОЗИЦИЯ","держать на месте",false,function(on,api)
+local lockPosSlider=makeFeatureToggle(trainSettingsBody,"◇","ЗАКРЕПИТЬСЯ","держит на месте",false,function(on,api)
 	if on then
 		local r=root()
 
@@ -2922,7 +3014,7 @@ end)
 
 Runtime.leverRefs.lockPosition=lockPosSlider
 
-local visualSlider=makeFeatureToggle(trainSettingsBody,"◫","ЭФФЕКТЫ","уменьшить",false,function(on)
+local visualSlider=makeFeatureToggle(trainSettingsBody,"◫","ЛЁГКАЯ ГРАФИКА","снижает нагрузку",false,function(on)
 	setVisualLow(on)
 end)
 
@@ -2953,7 +3045,7 @@ netQuickRow.Position=UDim2.new(0.5,3,0,0)
 
 Runtime.leverRefs.netGuard=netGuardSlider
 
-local wifiHoldSlider=makeFeatureToggle(trainSettingsBody,"◌","ПАУЗА СЕТИ","вручную",false,function(on)
+local wifiHoldSlider=makeFeatureToggle(trainSettingsBody,"◌","РУЧНАЯ ПАУЗА","удерживает клиент",false,function(on)
 	Runtime.manualNetworkHold=on
 	if on then
 		Runtime.netGuardEnabled=true
@@ -3026,14 +3118,14 @@ end
 
 -- REBIRTH PAGE
 
-local rebFeaturePanel,rebFeatureBody=makeFeaturePanel(rebPage,"РЕБИРТ И РАЗМЕР",86,3)
+local rebFeaturePanel,rebFeatureBody=makeFeaturePanel(rebPage,"АВТОМАТИЗАЦИЯ",86,3)
 rebFeaturePanel.LayoutOrder=1
-local rebSettingsPanel,rebSettingsBody=makeSettingsPanel(rebPage,"РАЗМЕР ПЕРСОНАЖА",78)
+local rebSettingsPanel,rebSettingsBody=makeSettingsPanel(rebPage,"ТОЧНЫЙ РАЗМЕР",78)
 rebSettingsPanel.LayoutOrder=2
 
 local rebInfo=card(rebPage,52)
 rebInfo.LayoutOrder=3
-local rebInfoTitle=label(rebInfo,"AUTO REBIRTH",12,Enum.Font.GothamBlack,THEME.Accent2)
+local rebInfoTitle=label(rebInfo,"АВТОРЕБИРТ",12,Enum.Font.GothamBlack,THEME.Accent2)
 rebInfoTitle.Size=UDim2.new(1,-16,0,17)
 rebInfoTitle.Position=UDim2.new(0,8,0,4)
 
@@ -3041,7 +3133,7 @@ local rebInfoText=label(rebInfo,"Rebirth каждые 1.2с • King Gym: -8626 
 rebInfoText.Size=UDim2.new(1,-16,0,22)
 rebInfoText.Position=UDim2.new(0,8,0,23)
 
-local autoRebSlider=makeFeatureToggle(rebFeatureBody,"↻","АВТО РЕБИРТ","реб при готовности",false,function(on,api)
+local autoRebSlider=makeFeatureToggle(rebFeatureBody,"↻","АВТОРЕБИРТ","срабатывает сам",false,function(on,api)
 	if on and not findRebirthRemote() then
 		api.Set(false,true)
 		setStatus("РЕБИРТ: функция игры не найдена")
@@ -3055,13 +3147,13 @@ end)
 
 Runtime.leverRefs.autoRebirth=autoRebSlider
 
-local sizeInput=makeNumberInput(rebSettingsBody,"НУЖНЫЙ РАЗМЕР","введи число от 0.1 до 1000",1,function(value)
+local sizeInput=makeNumberInput(rebSettingsBody,"РАЗМЕР ПЕРСОНАЖА","значение от 0.1 до 1000",1,function(value)
 	Runtime.sizeTarget=value
 	if Runtime.autoSize then Runtime.nextSize=0 end
 	setStatus("РАЗМЕР: "..tostring(value))
 end)
 
-local autoSizeSlider=makeFeatureToggle(rebFeatureBody,"◫","АВТО РАЗМЕР","держит введённое число",false,function(on,api)
+local autoSizeSlider=makeFeatureToggle(rebFeatureBody,"◫","ФИКС. РАЗМЕР","держит значение",false,function(on,api)
 	if on and not findSizeRemote() then
 		api.Set(false,true)
 		setStatus("РАЗМЕР: функция игры не найдена")
@@ -3076,7 +3168,7 @@ end)
 
 Runtime.leverRefs.autoSize=autoSizeSlider
 
-local kingLockSlider=makeFeatureToggle(rebFeatureBody,"♛","KING ЗОНА","держит в King Gym",false,function(on,api)
+local kingLockSlider=makeFeatureToggle(rebFeatureBody,"♛","KING GYM","удерживает в зоне",false,function(on,api)
 	if on then
 		if Runtime.mode=="bug" then stopMode("BUG STOP / KING LOCK") end
 
