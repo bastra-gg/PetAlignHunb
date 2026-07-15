@@ -1,642 +1,171 @@
--- Muscle Legends RockBug Hub v13 COMPACT ULTRA FIX
--- Standalone: без Speed Hub. Камни через neededDurability + TP LOCK + BUG HIT + Anti AFK.
+-- RockBugHub v13.1: full v20 base + AutoKill/Crystals extension
+-- Clean rebuild: single scheduler, hard stop, adaptive network throttle.
+-- No getgc patching, no full workspace scans inside fast loops, no unknown train remote spam.
 
 local Players=game:GetService("Players")
-local RunService=game:GetService("RunService")
-local VirtualUser=game:GetService("VirtualUser")
 local ReplicatedStorage=game:GetService("ReplicatedStorage")
-local lp=Players.LocalPlayer
-local HUB_VERSION="RockBugHub_v13_1_UltraSmallUI"
+local RunService=game:GetService("RunService")
+local Stats=game:GetService("Stats")
+local VirtualUser=game:GetService("VirtualUser")
+local UserInputService=game:GetService("UserInputService")
+local StarterGui=game:GetService("StarterGui")
+local NetworkClient=nil
+pcall(function() NetworkClient=game:GetService("NetworkClient") end)
 
--- Anti AFK
-local antiAfkEnabled=true
-local antiAfkConn=nil
-local function startAntiAfk()
-	if antiAfkConn then antiAfkConn:Disconnect() antiAfkConn=nil end
-	antiAfkConn=lp.Idled:Connect(function()
-		if not antiAfkEnabled then return end
-		pcall(function()
-			VirtualUser:CaptureController()
-			VirtualUser:ClickButton2(Vector2.new())
-		end)
-	end)
+-- Delta/auto-execute can run before the client has finished creating LocalPlayer.
+if not game:IsLoaded() then
+	game.Loaded:Wait()
 end
-startAntiAfk()
 
--- Анти-дубль.
+local lp=Players.LocalPlayer
+while not lp do
+	task.wait()
+	lp=Players.LocalPlayer
+end
+
+local playerGui=lp:WaitForChild("PlayerGui",60)
+if not playerGui then
+	warn("[RockBugHub] PlayerGui was not created")
+	pcall(function()
+		StarterGui:SetCore("SendNotification",{
+			Title="RockBugHub",
+			Text="Ошибка запуска: PlayerGui не найден",
+			Duration=8,
+		})
+	end)
+	return
+end
+
 pcall(function()
-	local old=lp:WaitForChild("PlayerGui"):FindFirstChild("RockBugHub_v13_1_UltraSmallUI")
-	if old then old:Destroy() end
+	StarterGui:SetCore("SendNotification",{
+		Title="RockBugHub",
+		Text="Скрипт загружен, создаю интерфейс...",
+		Duration=3,
+	})
 end)
 
-local ROCKS={
-	{id="AncientJungle",label="Древний лес",req=10000000,color=Color3.fromRGB(120,70,255)},
-	{id="MuscleKing",label="Король мышц",req=5000000,color=Color3.fromRGB(255,190,80)},
-	{id="Legends",label="Легенды",req=1000000,color=Color3.fromRGB(90,170,255)},
-	{id="Inferno",label="Инферно",req=750000,color=Color3.fromRGB(255,85,85)},
-	{id="Mystic",label="Мистический",req=400000,color=Color3.fromRGB(180,90,255)},
-	{id="Frozen",label="Ледяной",req=150000,color=Color3.fromRGB(95,220,255)},
-	{id="Golden",label="Золотой",req=5000,color=Color3.fromRGB(255,210,65)},
-	{id="Large",label="Большой",req=100,color=Color3.fromRGB(170,170,190)},
-	{id="Punching",label="Пробивной",req=10,color=Color3.fromRGB(255,130,90)},
-	{id="Tiny",label="Маленький",req=0,color=Color3.fromRGB(110,255,155)},
+local HUB_VERSION="RockBugHub_v13_1_UltraSmallUI"
+
+local ENV=(type(getgenv)=="function" and getgenv()) or _G
+
+-- Stop previous clean-runtime build.
+pcall(function()
+	if ENV.RockBugRuntime and type(ENV.RockBugRuntime.Stop)=="function" then
+		ENV.RockBugRuntime:Stop("replaced")
+	end
+end)
+
+-- Remove old windows only. No invasive getgc scan.
+pcall(function()
+	for _,g in ipairs(playerGui:GetChildren()) do
+		if g:IsA("ScreenGui") and tostring(g.Name):find("RockBugHub",1,true) then
+			g:Destroy()
+		end
+	end
+end)
+
+local Runtime={
+	alive=true,
+	mode=nil,              -- nil / "bug" / "train"
+	modeToken=0,
+	connections={},
+	selectedTrain=nil,
+	selectedRock=nil,
+	autoRockSelection=true,
+	petGradeIndex=5,
+	lastAutoRockRebs=nil,
+	autoRockReason=nil,
+	autoRebirth=false,
+	rebirthInFlight=false,
+	autoSize=false,
+	sizeTarget=1,
+	sizeInFlight=false,
+	kingLock=false,
+	kingCF=nil,
+	kingRoot=nil,
+	kingSavedAnchored=nil,
+	kingPresenceInFlight=false,
+	lockRock=false,
+	lockPosition=false,
+	lockCF=nil,
+	positionCF=nil,
+	activeTool=nil,
+	nextAction=0,
+	nextEquip=0,
+	nextNearCheck=0,
+	nextPosTick=0,
+	nextRebirth=0,
+	nextSize=0,
+	nextKingTick=0,
+	nextNetUpdate=0,
+	nextCooldownSweep=0,
+	punchCycle=0,
+	pingMs=0,
+	pingAvailable=false,
+	netGuardEnabled=true,
+	autoWifiHold=true,
+	networkPaused=false,
+	manualNetworkHold=false,
+	networkState="HEALTHY",
+	networkBadSamples=0,
+	networkGoodSamples=0,
+	networkHoldSince=0,
+	networkLastGoodAt=os.clock(),
+	networkProbeDeadline=os.clock()+5,
+	networkProbeUnsupported=false,
+	networkReason=nil,
+	networkRecoveries=0,
+	networkHoldRoot=nil,
+	networkHoldCF=nil,
+	networkHoldSavedAnchored=nil,
+	nextNetworkHoldTick=0,
+	networkReplicatorSeen=false,
+	networkReplicatorMissingSince=nil,
+	networkHttpSupported=false,
+	networkHttpProbeInFlight=false,
+	networkHttpProbeStartedAt=0,
+	networkHttpProbeGeneration=0,
+	networkHttpLastSuccess=os.clock(),
+	networkHttpLastFinish=0,
+	networkTrafficLastSeen=os.clock(),
+	networkHttpBadSamples=0,
+	networkHttpRequiredRecovery=false,
+	nextNetworkHttpProbe=0,
+	transientFailures={},
+	respawnGeneration=0,
+	autoResumeAfterRespawn=true,
+	schedulerRestarts=0,
+	remoteTokens=0,
+	remoteLastRefill=os.clock(),
+	remoteSentWindow=0,
+	remoteWindowStart=os.clock(),
+	remotePps=0,
+	directRemoteEnabled=true,
+	antiAfkEnabled=true,
+	visualLow=false,
+	visualSaved={},
+	killMode="off",
+	killToken=0,
+	killWhitelist={},
+	killBlacklist={},
+	crystalMode="off",
+	crystalToken=0,
+	selectedCrystal="Blue Crystal",
+	selectedPet=nil,
+	selectedAura=nil,
+	characterCollisionSaved={},
+	characterLockSaved=nil,
+	lastSchedulerTick=0,
+	lastError=nil,
+	status="ready",
+	ui=nil,
+	leverRefs={},
 }
 
-local selected=ROCKS[1]
-local rockCache={}
-local lockConn=nil
-local hitConn=nil
-local lockCF=nil
-local oldSpeed=nil
-local oldAuto=nil
-local hitting=false
-local fastHitEnabled=false
-local ultraOptEnabled=false
-local fastHitPower=1 -- v10: обычный КД, без FAST-спама
+ENV.RockBugRuntime=Runtime
 
-local function root()
-	local c=lp.Character
-	return c and c:FindFirstChild("HumanoidRootPart")
-end
-
-local function char()
-	return lp.Character or lp.CharacterAdded:Wait()
-end
-
-local function hum()
-	local c=lp.Character
-	return c and c:FindFirstChildWhichIsA("Humanoid")
-end
-
-local function valOf(v)
-	if not v then return nil end
-	if v:IsA("IntValue")or v:IsA("NumberValue")then return tonumber(v.Value)end
-	if v:IsA("StringValue")then return tonumber(v.Value)end
-	local ok,res=pcall(function()return tonumber(v.Value)end)
-	if ok then return res end
-	return nil
-end
-
-local function hasHands(obj)
-	if not obj then return false end
-	local l=obj:FindFirstChild("LeftHand",true)
-	local r=obj:FindFirstChild("RightHand",true)
-	return l~=nil and r~=nil
-end
-
-local function findRockModelFromValue(valueObj)
-	local p=valueObj
-	for _=1,8 do
-		if not p or p==workspace then break end
-		if hasHands(p) then return p end
-		p=p.Parent
-	end
-
-	p=valueObj.Parent
-	for _=1,4 do
-		if not p or p==workspace then break end
-		for _,d in ipairs(p:GetDescendants())do
-			if hasHands(d)then return d end
-		end
-		p=p.Parent
-	end
-
-	return valueObj.Parent
-end
-
-local function biggestPart(obj)
-	if not obj then return nil end
-	if obj:IsA("BasePart")then return obj end
-
-	local best=nil
-	local vol=-1
-	for _,d in ipairs(obj:GetDescendants())do
-		if d:IsA("BasePart")then
-			local v=d.Size.X*d.Size.Y*d.Size.Z
-			if v>vol then
-				vol=v
-				best=d
-			end
-		end
-	end
-	return best
-end
-
-local function scanRocks()
-	local found={}
-	local all=workspace:GetDescendants()
-
-	for _,v in ipairs(all)do
-		if tostring(v.Name)=="neededDurability"then
-			local req=valOf(v)
-			if req~=nil then
-				local model=findRockModelFromValue(v)
-				local body=biggestPart(model)
-				local lh=model and model:FindFirstChild("LeftHand",true)
-				local rh=model and model:FindFirstChild("RightHand",true)
-				local hit=rh or lh or body
-
-				if body or hit then
-					found[req]={
-						req=req,
-						valueObj=v,
-						model=model,
-						body=body,
-						hit=hit,
-						left=lh,
-						right=rh,
-						name=model and model.Name or "?",
-					}
-				end
-			end
-		end
-	end
-
-	rockCache=found
-	return found
-end
-
-local function getRock(row)
-	if not row then return nil end
-	if not rockCache[row.req]then scanRocks()end
-	return rockCache[row.req]
-end
-
-local lowMapState={
-	on=false,
-	saved={},
-	count=0,
-	lighting={},
-}
-
-local function isProtectedFromLowMap(obj,keepModel)
-	local c=lp.Character
-	if c and obj:IsDescendantOf(c)then return true end
-	if keepModel and obj:IsDescendantOf(keepModel)then return true end
-	return false
-end
-
-local function lowSave(obj,key,val)
-	local rec=lowMapState.saved[obj]
-	if not rec then
-		rec={}
-		lowMapState.saved[obj]=rec
-	end
-	if rec[key]==nil then rec[key]=val end
-end
-
-local function setLowMap(enabled,keepModel,statusFn)
-	if enabled then
-		if lowMapState.on then return end
-		lowMapState.on=true
-		lowMapState.saved={}
-		lowMapState.count=0
-
-		local lighting=game:GetService("Lighting")
-		pcall(function()
-			lowMapState.lighting.GlobalShadows=lighting.GlobalShadows
-			lighting.GlobalShadows=false
-		end)
-
-		for _,obj in ipairs(workspace:GetDescendants())do
-			if not isProtectedFromLowMap(obj,keepModel)then
-				if obj:IsA("BasePart")then
-					lowSave(obj,"LocalTransparencyModifier",obj.LocalTransparencyModifier)
-					lowSave(obj,"CastShadow",obj.CastShadow)
-					pcall(function()
-						obj.LocalTransparencyModifier=math.max(obj.LocalTransparencyModifier,_G.RockBugLowMapTransparency or 1)
-						obj.CastShadow=false
-					end)
-					lowMapState.count+=1
-
-				elseif obj:IsA("ParticleEmitter")or obj:IsA("Trail")or obj:IsA("Beam")or obj:IsA("Fire")or obj:IsA("Smoke")or obj:IsA("Sparkles")then
-					lowSave(obj,"Enabled",obj.Enabled)
-					pcall(function()obj.Enabled=false end)
-					lowMapState.count+=1
-
-				elseif obj:IsA("Decal")or obj:IsA("Texture")then
-					lowSave(obj,"Transparency",obj.Transparency)
-					pcall(function()obj.Transparency=1 end)
-					lowMapState.count+=1
-
-				elseif obj:IsA("PointLight")or obj:IsA("SpotLight")or obj:IsA("SurfaceLight")then
-					lowSave(obj,"Enabled",obj.Enabled)
-					pcall(function()obj.Enabled=false end)
-					lowMapState.count+=1
-				end
-			end
-		end
-
-		if statusFn then statusFn("LOW MAP ON: карта приглушена ("..lowMapState.count..")")end
-	else
-		if not lowMapState.on then return end
-		lowMapState.on=false
-
-		for obj,rec in pairs(lowMapState.saved)do
-			if obj and obj.Parent then
-				for k,v in pairs(rec)do
-					pcall(function()obj[k]=v end)
-				end
-			end
-		end
-		lowMapState.saved={}
-
-		local lighting=game:GetService("Lighting")
-		pcall(function()
-			if lowMapState.lighting.GlobalShadows~=nil then
-				lighting.GlobalShadows=lowMapState.lighting.GlobalShadows
-			end
-		end)
-		lowMapState.lighting={}
-
-		if statusFn then statusFn("LOW MAP OFF: карта восстановлена")end
-	end
-end
-
-local function stopLock()
-	if lockConn then lockConn:Disconnect() lockConn=nil end
-	lockCF=nil
-
-	local h=hum()
-	if h then
-		if oldSpeed then pcall(function()h.WalkSpeed=oldSpeed end)end
-		if oldAuto~=nil then pcall(function()h.AutoRotate=oldAuto end)end
-	end
-	oldSpeed=nil
-	oldAuto=nil
-end
-
-local function startLock(cf)
-	stopLock()
-	lockCF=cf
-
-	local h=hum()
-	if h then
-		oldSpeed=h.WalkSpeed
-		oldAuto=h.AutoRotate
-		pcall(function()h.WalkSpeed=0 end)
-		pcall(function()h.AutoRotate=false end)
-	end
-
-	lockConn=RunService.Heartbeat:Connect(function()
-		local r=root()
-		if r and lockCF then
-			r.CFrame=lockCF
-			r.AssemblyLinearVelocity=Vector3.zero
-			r.AssemblyAngularVelocity=Vector3.zero
-		end
-	end)
-end
-
-local function tpInsideRock(row)
-	local info=getRock(row)
-	if not info then return false,"камень не найден"end
-
-	local body=info.body or info.hit
-	if not body then return false,"нет BasePart камня"end
-
-	local r=root()
-	if not r then return false,"нет HumanoidRootPart"end
-
-	local size=body.Size
-	local offsetY=math.clamp(size.Y*0.08,0,2)
-
-	-- Фикс внутри/около центра камня. Если где-то застревает — можно поставить _G.RockBugInsideOffset.
-	local custom=_G.RockBugInsideOffset
-	local cf
-	if typeof(custom)=="Vector3"then
-		cf=body.CFrame*CFrame.new(custom)
-	else
-		cf=body.CFrame*CFrame.new(0,offsetY,0)
-	end
-
-	r.CFrame=cf
-	task.wait(.08)
-	startLock(cf)
-	return true,info
-end
-
-local function firePunchRemote()
-	-- Основной рабочий вариант для Muscle Legends: punch + rightHand.
-	pcall(function()
-		if lp:FindFirstChild("muscleEvent")then
-			lp.muscleEvent:FireServer("punch","rightHand")
-			lp.muscleEvent:FireServer("punch","leftHand")
-		end
-	end)
-
-	pcall(function()
-		local rs=game:GetService("ReplicatedStorage")
-		local re=rs:FindFirstChild("rEvents")
-		local ev=re and re:FindFirstChild("muscleEvent")
-		if ev and ev.FireServer then
-			ev:FireServer("punch","rightHand")
-			ev:FireServer("punch","leftHand")
-			ev:FireServer("punch")
-		end
-	end)
-end
-
-local lastEquipTry=0
-local selectedPunchToolName=nil
-
-local function toolScore(tool)
-	if not tool or not tool:IsA("Tool")then return -999 end
-
-	local n=tostring(tool.Name):lower()
-	local full=""
-	pcall(function() full=tostring(tool:GetFullName()):lower() end)
-
-	-- Для багов по камню нужен именно Punch. Вес/гантели/штанги/тренировки не подходят.
-	local hardBad={
-		"weight","dumb","barbell","bench","push","sit","handstand",
-		"гант","гир","штанг","вес","отжим","пресс"
-	}
-	for _,w in ipairs(hardBad)do
-		if n:find(w,1,true) or full:find(w,1,true) then
-			return -999
-		end
-	end
-
-	-- Лучший вариант: точное имя Punch.
-	if n=="punch" or n=="punches" or n=="удар" or n=="кулак" then
-		return 10000
-	end
-
-	-- Потом любые варианты с punch/кулак.
-	if n:find("punch",1,true) or n:find("кулак",1,true) or n:find("удар",1,true) then
-		return 9000
-	end
-
-	-- Если внутри Tool есть скрипты/ремоуты с punch — тоже вероятно правильный инструмент.
-	for _,d in ipairs(tool:GetDescendants())do
-		local dn=tostring(d.Name):lower()
-		if dn:find("punch",1,true) or dn:find("кулак",1,true) or dn:find("удар",1,true) then
-			return 7500
-		end
-	end
-
-	-- Fist оставляем только как запасной вариант, если Punch реально не найден.
-	if n:find("fist",1,true) or n:find("combat",1,true) or n:find("hand",1,true) then
-		return 1200
-	end
-
-	return -999
-end
-
-
-local function clearToolCooldowns(tool)
-	if not tool then return end
-
-	local cooldownNames={
-		"Cooldown","cooldown","CD","cd","Delay","delay",
-		"AttackCooldown","attackCooldown","SwingCooldown","swingCooldown",
-		"LastUse","lastUse","LastSwing","lastSwing","LastAttack","lastAttack",
-		"CanUse","canUse","CanSwing","canSwing","Ready","ready"
-	}
-
-	local function fixObj(obj)
-		for _,name in ipairs(cooldownNames)do
-			local child=nil
-			pcall(function()child=obj:FindFirstChild(name)end)
-			if child then
-				pcall(function()
-					if child:IsA("NumberValue")or child:IsA("IntValue")then child.Value=0 end
-					if child:IsA("BoolValue")then child.Value=true end
-					if child:IsA("StringValue")then child.Value="0" end
-				end)
-			end
-		end
-
-		pcall(function()
-			for _,name in ipairs(cooldownNames)do
-				local v=obj:GetAttribute(name)
-				if v~=nil then
-					if type(v)=="number"then obj:SetAttribute(name,0)end
-					if type(v)=="boolean"then obj:SetAttribute(name,true)end
-					if type(v)=="string"then obj:SetAttribute(name,"0")end
-				end
-			end
-		end)
-	end
-
-	fixObj(tool)
-	for _,d in ipairs(tool:GetDescendants())do
-		fixObj(d)
-	end
-end
-
-local function clearAllLocalCooldowns()
-	local c=lp.Character
-	local bp=lp:FindFirstChildOfClass("Backpack")
-
-	for _,container in ipairs({c,bp})do
-		if container then
-			for _,tool in ipairs(container:GetChildren())do
-				if tool:IsA("Tool")then
-					clearToolCooldowns(tool)
-				end
-			end
-		end
-	end
-end
-
-local function findBestPunchTool()
-	local c=lp.Character
-	local bp=lp:FindFirstChildOfClass("Backpack")
-	local best=nil
-	local bestScore=-999
-
-	local function scan(container,bonus)
-		if not container then return end
-		for _,tool in ipairs(container:GetChildren())do
-			if tool:IsA("Tool")then
-				local sc=toolScore(tool)+bonus
-				if sc>bestScore then
-					bestScore=sc
-					best=tool
-				end
-			end
-		end
-	end
-
-	-- Сначала уже экипнутый нормальный предмет, потом Backpack.
-	scan(c,20)
-	scan(bp,0)
-
-	if bestScore<=0 then return nil end
-	return best,bestScore
-end
-
-local function ensurePunchTool(statusFn)
-	local c=lp.Character
-	local h=hum()
-	if not c or not h then return nil end
-
-	local equipped=nil
-	local equippedBad=false
-
-	for _,tool in ipairs(c:GetChildren())do
-		if tool:IsA("Tool")then
-			if toolScore(tool)>0 then
-				equipped=tool
-			else
-				equippedBad=true
-			end
-		end
-	end
-
-	if equipped then
-		selectedPunchToolName=equipped.Name
-		return equipped
-	end
-
-	if equippedBad then
-		pcall(function()h:UnequipTools()end)
-		task.wait(.05)
-	end
-
-	local best=findBestPunchTool()
-	if best and best.Parent~=c then
-		pcall(function()h:EquipTool(best)end)
-		task.wait(.08)
-	end
-
-	if best then
-		clearToolCooldowns(best)
-		selectedPunchToolName=best.Name
-		if statusFn then statusFn("BUG HIT: выбран Punch → "..best.Name)end
-		return best
-	end
-
-	if statusFn then statusFn("BUG HIT: предмет не найден, бью remote/touch")end
-	return nil
-end
-
-local function activateFistTool(statusFn)
-	if os.clock()-lastEquipTry>1.2 then
-		lastEquipTry=os.clock()
-		ensurePunchTool(statusFn)
-	end
-
-	local c=lp.Character
-	if not c then return end
-
-	for _,tool in ipairs(c:GetChildren())do
-		if tool:IsA("Tool") and toolScore(tool)>0 then
-			clearToolCooldowns(tool)
-			pcall(function()tool:Activate()end)
-		end
-	end
-end
-
-
-local function touchRock(row)
-	local info=getRock(row)
-	if not info then return end
-	local target=info.hit or info.body
-	if not target or not target:IsA("BasePart")then return end
-	if not firetouchinterest then return end
-
-	local c=lp.Character
-	if not c then return end
-
-	local parts={
-		c:FindFirstChild("RightHand"),
-		c:FindFirstChild("LeftHand"),
-		c:FindFirstChild("Right Arm"),
-		c:FindFirstChild("Left Arm"),
-		c:FindFirstChild("HumanoidRootPart"),
-	}
-
-	for _,p in ipairs(parts)do
-		if p and p:IsA("BasePart")then
-			pcall(function()
-				firetouchinterest(p,target,0)
-				task.wait()
-				firetouchinterest(p,target,1)
-			end)
-		end
-	end
-end
-
-local hitLoopId=0
-
-local function currentPunchTool()
-	local c=lp.Character
-	if not c then return nil end
-	for _,tool in ipairs(c:GetChildren())do
-		if tool:IsA("Tool") and toolScore(tool)>0 then
-			return tool
-		end
-	end
-	return nil
-end
-
-local function startHit(row,statusFn)
-	hitting=true
-	hitLoopId+=1
-	local myId=hitLoopId
-
-	if hitConn then hitConn:Disconnect() hitConn=nil end
-
-	local tool=ensurePunchTool(statusFn)
-	local info=getRock(row)
-
-	local lastTouch=0
-	local lastEquip=0
-	local lastActivate=0
-
-	task.spawn(function()
-		while hitting and myId==hitLoopId do
-			local now=os.clock()
-
-			-- Обычный КД: не спамим, не чистим cooldown, не душим телефон.
-			if now-lastEquip>2.0 then
-				lastEquip=now
-				tool=ensurePunchTool(nil) or currentPunchTool()
-			end
-
-			firePunchRemote()
-
-			if tool and tool.Parent and now-lastActivate>=(_G.RockBugActivateDelay or 0.22) then
-				lastActivate=now
-				pcall(function()tool:Activate()end)
-			elseif not tool or not tool.Parent then
-				activateFistTool(nil)
-			end
-
-			if now-lastTouch>=(_G.RockBugTouchDelay or 0.40) then
-				lastTouch=now
-				touchRock(row)
-			end
-
-			task.wait(_G.RockBugHitDelay or 0.16)
-		end
-	end)
-
-	if statusFn then
-		statusFn("BUG HIT: обычный КД"..(ultraOptEnabled and " | ULTRA ON" or "")..(selectedPunchToolName and (" | "..selectedPunchToolName) or ""))
-	end
-end
-
-
-local function stopHit(statusFn)
-	hitting=false
-	hitLoopId+=1
-	if hitConn then hitConn:Disconnect() hitConn=nil end
-	setLowMap(false,nil,nil)
-	if statusFn then statusFn("BUG HIT: остановлен")end
-end
-
--- Separate AUTO KILL + CRYSTALS engines. UI callbacks are assigned below.
-local killMode="off"
-local killLoopId=0
-local killWhitelist={}
-local killBlacklist={}
-local killStatusFn=function()end
-local killRefreshFn=function()end
-
+-- Current permanent crystal rewards. Event crystals are still discovered
+-- dynamically from workspace.mapCrystalsFolder when they are present.
 local PET_TARGETS={
 	{name="Orange Hedgehog",crystal="Blue Crystal"},
 	{name="Blue Birdie",crystal="Blue Crystal"},
@@ -693,71 +222,1272 @@ local AURA_TARGETS={
 local FALLBACK_CRYSTALS={
 	"Blue Crystal","Green Crystal","Frost Crystal","Mythical Crystal",
 	"Inferno Crystal","Legends Crystal","Muscle Elite Crystal",
-	"Galaxy Oracle Crystal","Sky Eclipse Crystal","Dark Nebula Crystal","Jungle Crystal",
+	"Galaxy Oracle Crystal","Dark Nebula Crystal","Sky Eclipse Crystal","Jungle Crystal",
 }
 
-local selectedCrystal="Blue Crystal"
-local selectedPet=PET_TARGETS[1]
-local selectedAura=AURA_TARGETS[1]
-local crystalMode="off"
-local crystalLoopId=0
-local crystalStatusFn=function()end
-local crystalRefreshFn=function()end
+Runtime.selectedPet=PET_TARGETS[1]
+Runtime.selectedAura=AURA_TARGETS[1]
 
-local function tableCount(t)
-	local n=0
-	for _,v in pairs(t)do if v then n+=1 end end
-	return n
+local function safe(fn)
+	local ok,res=pcall(fn)
+	return ok,res
 end
 
-local function getAvailableCrystalNames()
-	local names,seen={},{}
+local function addConn(c)
+	if c then
+		table.insert(Runtime.connections,c)
+	end
+	return c
+end
+
+local function disconnectAll()
+	for _,c in ipairs(Runtime.connections) do
+		safe(function() c:Disconnect() end)
+	end
+	Runtime.connections={}
+end
+
+local function char()
+	return lp.Character
+end
+
+local function hum()
+	local c=char()
+	return c and c:FindFirstChildWhichIsA("Humanoid")
+end
+
+local function root()
+	local c=char()
+	return c and c:FindFirstChild("HumanoidRootPart")
+end
+
+local function setStatus(text)
+	Runtime.status=tostring(text or "")
+	if Runtime.ui and Runtime.ui.status and Runtime.ui.status.Parent then
+		Runtime.ui.status.Text=Runtime.status
+	end
+end
+
+local function setNetText()
+	if Runtime.ui and Runtime.ui.net and Runtime.ui.net.Parent then
+		local pingText=Runtime.pingAvailable and tostring(math.floor((Runtime.pingMs or 0)+0.5)).."ms" or "?"
+		if Runtime.networkPaused then
+			local held=math.max(0,os.clock()-(Runtime.networkHoldSince or os.clock()))
+			Runtime.ui.net.Text=("СЕТЬ: ПАУЗА %.1fs | %s"):format(held,pingText)
+		elseif Runtime.networkProbeUnsupported then
+			Runtime.ui.net.Text=("СЕТЬ: ОГРАНИЧЕНО | УДАР %.1f/s"):format(Runtime.remotePps or 0)
+		else
+			Runtime.ui.net.Text=("PING %s | УДАР %.1f/s"):format(pingText,Runtime.remotePps or 0)
+		end
+	end
+end
+
+-- ---------- ROCK DATA ----------
+
+local ROCKS={
+	{id="AncientJungle",label="Древний лес",req=10000000,mult=16.25},
+	{id="MuscleKing",label="Король мышц",req=5000000,mult=12.5},
+	{id="Legends",label="Легенды",req=1000000,mult=2.5},
+	{id="Inferno",label="Инферно",req=750000,mult=1.125},
+	{id="Mystic",label="Мистический",req=400000,mult=0.75},
+	{id="Frozen",label="Ледяной",req=150000,mult=0.375},
+	{id="Golden",label="Золотой",req=5000,mult=0.2},
+	{id="Large",label="Большой",req=100,mult=0.075},
+	{id="Punching",label="Пробивной",req=10,mult=0.05},
+	{id="Tiny",label="Маленький",req=0,mult=0.025},
+}
+
+local rockCache={}
+
+local function valOf(v)
+	if not v then return nil end
+	local ok,res=pcall(function() return v.Value end)
+	if not ok then return nil end
+	return tonumber(res)
+end
+
+local function hasHands(obj)
+	if not obj then return false end
+	return obj:FindFirstChild("LeftHand",true)~=nil and obj:FindFirstChild("RightHand",true)~=nil
+end
+
+local function findRockModelFromValue(valueObj)
+	local p=valueObj
+	for _=1,8 do
+		if not p or p==workspace then break end
+		if hasHands(p) then return p end
+		p=p.Parent
+	end
+
+	p=valueObj
+	for _=1,8 do
+		if not p or p==workspace then break end
+		if p:IsA("Model") then return p end
+		p=p.Parent
+	end
+
+	return valueObj.Parent
+end
+
+local function biggestPart(obj)
+	if not obj then return nil end
+	if obj:IsA("BasePart") then return obj end
+
+	local best=nil
+	local bestVol=-1
+
+	for _,d in ipairs(obj:GetDescendants()) do
+		if d:IsA("BasePart") then
+			local vol=d.Size.X*d.Size.Y*d.Size.Z
+			if vol>bestVol then
+				bestVol=vol
+				best=d
+			end
+		end
+	end
+
+	return best
+end
+
+local function scanRocks()
+	local found={}
+	local descendants=workspace:GetDescendants()
+
+	for i,v in ipairs(descendants) do
+		if tostring(v.Name)=="neededDurability" then
+			local req=valOf(v)
+
+			if req~=nil then
+				local model=findRockModelFromValue(v)
+				local body=biggestPart(model)
+				local left=model and model:FindFirstChild("LeftHand",true)
+				local right=model and model:FindFirstChild("RightHand",true)
+				local hit=right or left or body
+
+				if body or hit then
+					-- If duplicates exist, prefer the one with actual hands.
+					local current=found[req]
+					local better=(not current) or (hasHands(model) and not hasHands(current.model))
+
+					if better then
+						found[req]={
+							req=req,
+							model=model,
+							body=body,
+							hit=hit,
+							left=left,
+							right=right,
+							name=model and model.Name or "?",
+						}
+					end
+				end
+			end
+		end
+
+		-- Do not hold the client for the whole scan on large maps.
+		if i%800==0 then task.wait() end
+	end
+
+	rockCache=found
+	return found
+end
+
+local function getRockInfo(row)
+	if not row then return nil end
+	return rockCache[row.req]
+end
+
+-- ---------- REBIRTH READER / AUTO ROCK ----------
+
+local function parseCompactNumber(text)
+	local s=tostring(text or ""):lower()
+	s=s:gsub("%s+"," ")
+
+	-- Number + optional suffix immediately after the number.
+	local raw,suffix=s:match("([%d][%d,%.]*)%s*([kmbt]?)")
+	if not raw then return nil end
+
+	-- Support decimal comma (1,5K), but keep 1,000 and 1,000,000 as grouped integers.
+	if not raw:find(".",1,true) and raw:match("^%d+,%d%d?$") then
+		raw=raw:gsub(",",".")
+	else
+		raw=raw:gsub(",","")
+	end
+	local n=tonumber(raw)
+	if not n then return nil end
+
+	local mult={k=1e3,m=1e6,b=1e9,t=1e12}
+	if suffix~="" then
+		n=n*(mult[suffix] or 1)
+	end
+
+	return math.floor(n+0.5)
+end
+
+local function looksLikeRebirthName(s)
+	s=tostring(s or ""):lower()
+	return s:find("rebirth",1,true)
+		or s:find("rebs",1,true)
+		or s:find("реб",1,true)
+		or s:find("перерожд",1,true)
+end
+
+local function readRebirths()
+	local leader=lp:FindFirstChild("leaderstats")
+
+	if leader then
+		for _,d in ipairs(leader:GetChildren()) do
+			if looksLikeRebirthName(d.Name) then
+				local ok,val=pcall(function() return d.Value end)
+				if ok then
+					local n=tonumber(val) or parseCompactNumber(val)
+					if n then return n,"leaderstats" end
+				end
+			end
+		end
+	end
+
+	-- Search value objects only once on request, not in fast loops.
+	local checked=0
+	for _,d in ipairs(lp:GetDescendants()) do
+		checked=checked+1
+		if checked>1800 then break end
+
+		if looksLikeRebirthName(d.Name) then
+			local ok,val=pcall(function() return d.Value end)
+			if ok then
+				local n=tonumber(val) or parseCompactNumber(val)
+				if n then return n,"value" end
+			end
+		end
+	end
+
+	-- Conservative GUI fallback.
+	local pg=lp:FindFirstChild("PlayerGui")
+	if pg then
+		local scanned=0
+
+		for _,d in ipairs(pg:GetDescendants()) do
+			scanned=scanned+1
+			if scanned>2600 then break end
+
+			if d:IsA("TextLabel") or d:IsA("TextButton") or d:IsA("TextBox") then
+				local text=tostring(d.Text or "")
+				if looksLikeRebirthName(text) or looksLikeRebirthName(d.Name) then
+					local n=parseCompactNumber(text)
+					if n then return n,"gui" end
+				end
+			end
+		end
+	end
+
+	return nil,"not found"
+end
+
+local PET_GRADES={
+	{name="BASIC",base=250},
+	{name="UNCOMMON",base=500},
+	{name="RARE",base=750},
+	{name="EPIC",base=1000},
+	{name="UNIQUE",base=1250},
+}
+
+local function currentPetGrade()
+	return PET_GRADES[math.clamp(tonumber(Runtime.petGradeIndex) or 5,1,#PET_GRADES)]
+end
+
+local function compactXp(value40)
+	local value=value40/40
+	if value==math.floor(value) then return tostring(math.floor(value)) end
+	local text=("%.3f"):format(value):gsub("0+$","")
+	return (text:gsub("%.$",""))
+end
+
+local function chooseSafeRockByRebirths()
+	local rebs,source=readRebirths()
+	local grade=currentPetGrade()
+
+	if rebs then
+		rebs=math.max(0,math.floor(rebs+0.5))
+		local maxPetXp40=grade.base*19*20/2*40
+
+		-- Rocks are ordered from strongest to weakest. Pick the strongest available
+		-- multiplier that still fits into the pet's level 19 XP range at these rebirths.
+		-- This avoids the old "no exact division -> Tiny" fallback.
+		for rockIndex,row in ipairs(ROCKS) do
+			if rockCache[row.req] then
+				local multiplier40=math.floor(row.mult*40+0.5)
+				local hitXp40=(rebs+20)*multiplier40
+
+				if hitXp40>0 and hitXp40<=maxPetXp40 then
+					local bestForRock=nil
+
+					for level=1,19 do
+						local targetXp40=grade.base*level*(level+1)/2*40
+						if targetXp40>=hitXp40 then
+							local hits=math.max(1,math.floor(targetXp40/hitXp40))
+							local remainder=targetXp40-(hits*hitXp40)
+							local accuracy=1-(remainder/targetXp40)
+							local candidate={
+								row=row,
+								rockIndex=rockIndex,
+								level=level,
+								hits=hits,
+								hitXp40=hitXp40,
+								remainder40=remainder,
+								accuracy=accuracy,
+							}
+
+							if not bestForRock
+								or candidate.accuracy>bestForRock.accuracy
+								or (candidate.accuracy==bestForRock.accuracy and candidate.hits<bestForRock.hits)
+								or (candidate.accuracy==bestForRock.accuracy and candidate.hits==bestForRock.hits and candidate.level<bestForRock.level) then
+								bestForRock=candidate
+							end
+						end
+					end
+
+					if bestForRock then
+						local exact=bestForRock.remainder40==0
+						local percent=math.floor(bestForRock.accuracy*1000+0.5)/10
+						local reason=("%d реб • %s XP • L%d / %d уд. • %.1f%%"):format(
+							rebs,compactXp(bestForRock.hitXp40),bestForRock.level,bestForRock.hits,percent
+						)
+						local calc={
+							rebirths=rebs,
+							xp40=bestForRock.hitXp40,
+							level=bestForRock.level,
+							hits=bestForRock.hits,
+							accuracy=percent,
+							grade=grade.name,
+							exact=exact,
+							source=source,
+						}
+						return row,reason,rebs,exact,calc
+					end
+				end
+			end
+		end
+
+		-- At extreme rebirth counts even Tiny can exceed the pet XP range. In that
+		-- case the weakest available rock is the only safe direction and the UI says why.
+		for i=#ROCKS,1,-1 do
+			local row=ROCKS[i]
+			if rockCache[row.req] then
+				local hitXp40=(rebs+20)*math.floor(row.mult*40+0.5)
+				local calc={
+					rebirths=rebs,
+					xp40=hitXp40,
+					level=19,
+					hits=1,
+					accuracy=0,
+					grade=grade.name,
+					exact=false,
+					overLimit=true,
+					source=source,
+				}
+				return row,("%d реб • XP выше лимита питомца"):format(rebs),rebs,false,calc
+			end
+		end
+	end
+
+	for i=#ROCKS,1,-1 do
+		local row=ROCKS[i]
+		if rockCache[row.req] then
+			return row,"ребы не найдены ("..tostring(source)..")",nil,false,{grade=grade.name,exact=false}
+		end
+	end
+
+	return ROCKS[#ROCKS],"камни не найдены",nil,false,{grade=grade.name,exact=false}
+end
+
+local function applyAutoRockSelection(force)
+	if not Runtime.autoRockSelection and not force then return false end
+	local row,reason,rebs,exact,calc=chooseSafeRockByRebirths()
+	if not force and rebs~=nil and Runtime.lastAutoRockRebs==rebs then return false end
+
+	local previous=Runtime.selectedRock
+	Runtime.selectedRock=row
+	Runtime.lastAutoRockRebs=rebs
+	Runtime.autoRockReason=reason
+	Runtime.autoRockExact=exact
+	Runtime.autoRockCalc=calc
+
+	if Runtime.ui then
+		if Runtime.ui.autoRockTitle and Runtime.ui.autoRockTitle.Parent then
+			Runtime.ui.autoRockTitle.Text="АВТОПОДБОР ПО РЕБЁРТАМ"
+		end
+		if Runtime.ui.autoRockName and Runtime.ui.autoRockName.Parent then
+			Runtime.ui.autoRockName.Text=row.label.."  •  питомец "..tostring(calc and calc.grade or "-")
+		end
+		if Runtime.ui.autoRockStats and Runtime.ui.autoRockStats.Parent then
+			local rebText=calc and calc.rebirths~=nil and tostring(calc.rebirths) or "не найдены"
+			local xpText=calc and calc.xp40 and compactXp(calc.xp40) or "?"
+			if calc and calc.overLimit then
+				Runtime.ui.autoRockStats.Text=("Ребёрты: %s  •  XP/удар: %s  •  превышен лимит питомца"):format(rebText,xpText)
+			elseif calc and calc.level and calc.hits then
+				Runtime.ui.autoRockStats.Text=("Ребёрты: %s  •  XP/удар: %s  •  цель L%d  •  %d уд.  •  %.1f%%"):format(
+					rebText,xpText,calc.level,calc.hits,tonumber(calc.accuracy) or (calc.exact and 100 or 0)
+				)
+			else
+				Runtime.ui.autoRockStats.Text=("Ребёрты: %s  •  XP/удар: %s  •  данные персонажа не найдены"):format(rebText,xpText)
+			end
+		end
+	end
+
+	if type(Runtime.refreshRockList)=="function" then Runtime.refreshRockList() end
+	if previous and previous.id~=row.id and Runtime.mode=="bug" and type(Runtime.teleportInsideSelected)=="function" then
+		Runtime.teleportInsideSelected()
+	end
+	return true
+end
+
+-- ---------- TOOL HELPERS ----------
+
+local function toolName(tool)
+	return tostring(tool and tool.Name or ""):lower()
+end
+
+local function containsAny(s,words)
+	s=tostring(s or ""):lower()
+	for _,w in ipairs(words) do
+		if s:find(tostring(w):lower(),1,true) then return true end
+	end
+	return false
+end
+
+local PUNCH_GOOD={"punch","fist","combat","кулак","удар"}
+local PUNCH_BAD={"weight","dumb","barbell","bench","push","sit","handstand","tread","гант","гир","штанг","отжим","пресс","бег"}
+
+local function isPunchTool(tool)
+	if not tool or not tool:IsA("Tool") then return false end
+
+	local n=toolName(tool)
+	if containsAny(n,PUNCH_BAD) then return false end
+	if containsAny(n,PUNCH_GOOD) then return true end
+
+	for _,d in ipairs(tool:GetDescendants()) do
+		if containsAny(d.Name,PUNCH_BAD) then return false end
+		if containsAny(d.Name,PUNCH_GOOD) then return true end
+	end
+
+	return false
+end
+
+local TRAIN_TYPES={
+	{id="Punch",label="PUNCH",desc="удары / сила",words={"punch","fist","combat","кулак","удар"}},
+	{id="Weight",label="WEIGHT",desc="вес / гантели / штанга",words={"weight","dumb","dumbbell","barbell","bench","вес","гант","штанг","гир"}},
+	{id="Push",label="PUSH",desc="отжимания",words={"push","pushup","push-up","отжим"}},
+	{id="Sit",label="SIT",desc="пресс / situps",words={"sit","situp","sit-up","abs","пресс"}},
+	{id="Hand",label="HANDSTAND",desc="стойка на руках",words={"handstand","hand stand","стойк"}},
+	{id="Tread",label="TREADMILL",desc="бег / agility",words={"tread","treadmill","agility","speed","бег","дорож","ловк","скор"}},
+}
+
+local function toolMatchesTrain(tool,t)
+	if not tool or not tool:IsA("Tool") then return false end
+
+	if t.id=="Punch" then
+		return isPunchTool(tool)
+	end
+
+	local n=toolName(tool)
+	if containsAny(n,t.words) then return true end
+
+	for _,d in ipairs(tool:GetDescendants()) do
+		if containsAny(d.Name,t.words) then return true end
+	end
+
+	return false
+end
+
+local function findTool(predicate)
+	local c=char()
+	local bp=lp:FindFirstChildOfClass("Backpack")
+
+	if c then
+		for _,tool in ipairs(c:GetChildren()) do
+			if tool:IsA("Tool") and predicate(tool) then
+				return tool,true
+			end
+		end
+	end
+
+	if bp then
+		for _,tool in ipairs(bp:GetChildren()) do
+			if tool:IsA("Tool") and predicate(tool) then
+				return tool,false
+			end
+		end
+	end
+
+	return nil,false
+end
+
+local function equipTool(tool)
+	if not tool then return false end
+
+	local c=char()
+	local h=hum()
+	if not c or not h then return false end
+
+	if tool.Parent==c then
+		return true
+	end
+
+	safe(function() h:UnequipTools() end)
+	task.wait(0.04)
+	safe(function() h:EquipTool(tool) end)
+	task.wait(0.06)
+
+	return tool.Parent==c
+end
+
+local COOLDOWN_NAMES={
+	"Cooldown","cooldown","CD","cd","Delay","delay",
+	"AttackCooldown","attackCooldown","SwingCooldown","swingCooldown",
+	"AttackTime","attackTime","PunchCooldown","punchCooldown",
+	"LastUse","lastUse","LastSwing","lastSwing","LastAttack","lastAttack",
+	"CanUse","canUse","CanSwing","canSwing","Ready","ready"
+}
+
+local function clearCooldownsOnce(tool)
+	if not tool then return end
+	safe(function() tool.Enabled=true end)
+
+	local function fix(obj)
+		for _,name in ipairs(COOLDOWN_NAMES) do
+			local child=obj:FindFirstChild(name)
+
+			if child then
+				safe(function()
+					if child:IsA("NumberValue") or child:IsA("IntValue") then child.Value=0 end
+					if child:IsA("BoolValue") then child.Value=true end
+					if child:IsA("StringValue") then child.Value="0" end
+				end)
+			end
+
+			safe(function()
+				local v=obj:GetAttribute(name)
+				if v~=nil then
+					if type(v)=="number" then obj:SetAttribute(name,0) end
+					if type(v)=="boolean" then obj:SetAttribute(name,true) end
+					if type(v)=="string" then obj:SetAttribute(name,"0") end
+				end
+			end)
+		end
+	end
+
+	fix(tool)
+	for _,d in ipairs(tool:GetDescendants()) do
+		fix(d)
+	end
+end
+
+local function findPunchTool()
+	return findTool(isPunchTool)
+end
+
+local function findTrainTool(t)
+	return findTool(function(tool)
+		return toolMatchesTrain(tool,t)
+	end)
+end
+
+local function textOfGui(obj)
+	local s=tostring(obj.Name)
+
+	if obj:IsA("TextButton") or obj:IsA("TextLabel") or obj:IsA("TextBox") then
+		s=s.." "..tostring(obj.Text or "")
+	end
+
+	return s:lower()
+end
+
+local function guiMatchesTrain(text,t)
+	local normalized=(" "..tostring(text or ""):lower():gsub("[^%w]+"," ").." ")
+
+	for _,word in ipairs(t.words) do
+		local w=tostring(word):lower()
+
+		-- Short ASCII words such as "sit" and "abs" must be whole words;
+		-- otherwise "position" would incorrectly match "sit".
+		if #w<=3 and w:match("^[%w]+$") then
+			if normalized:find(" "..w.." ",1,true) then return true end
+		elseif tostring(text or ""):lower():find(w,1,true) then
+			return true
+		end
+	end
+
+	return false
+end
+
+local function guiIsActuallyVisible(obj,playerGui)
+	local current=obj
+
+	while current and current~=playerGui do
+		if current:IsA("GuiObject") and not current.Visible then return false end
+		if current:IsA("LayerCollector") and not current.Enabled then return false end
+		current=current.Parent
+	end
+
+	return current==playerGui
+end
+
+local function findGuiButtonForTrain(t)
+	local pg=lp:FindFirstChild("PlayerGui")
+	if not pg then return nil end
+
+	local scanned=0
+
+	for _,d in ipairs(pg:GetDescendants()) do
+		scanned=scanned+1
+		if scanned>2600 then break end
+
+		if (d:IsA("TextButton") or d:IsA("ImageButton")) and d.Active and guiIsActuallyVisible(d,pg) then
+			local full=string.lower(d:GetFullName())
+
+			-- Never click trading or purchasing UI by fuzzy matching.
+			local blocked=containsAny(full,{"trade","purchase","shop","store","buy","магаз","купить"})
+			if not blocked then
+				local txt=textOfGui(d)
+				if guiMatchesTrain(txt,t) then
+					return d
+				end
+			end
+		end
+	end
+
+	return nil
+end
+
+local function trySelectTrainFromGui(t)
+	local btn=findGuiButtonForTrain(t)
+	if not btn then return false end
+
+	local activated=safe(function()
+		btn:Activate()
+	end)
+
+	-- Executor-specific signal firing is only a fallback. Calling both paths
+	-- can toggle a button twice or execute a purchase/action twice.
+	if not activated and type(firesignal)=="function" then
+		activated=safe(function()
+			firesignal(btn.Activated)
+		end)
+	end
+
+	if activated then task.wait(0.18) end
+	return activated
+end
+
+local function ensurePunchTool()
+	local tool,equipped=findPunchTool()
+
+	if not tool then
+		return nil,"Punch Tool не найден"
+	end
+
+	if not equipped and not equipTool(tool) then
+		return nil,"не удалось надеть Punch"
+	end
+
+	return tool,"Punch: "..tool.Name
+end
+
+local function ensureTrainTool(t)
+	local tool,equipped=findTrainTool(t)
+
+	if not tool then
+		trySelectTrainFromGui(t)
+		tool,equipped=findTrainTool(t)
+	end
+
+	if not tool then
+		return nil,t.label..": предмет не найден"
+	end
+
+	if not equipped and not equipTool(tool) then
+		return nil,t.label..": не удалось надеть"
+	end
+
+	return tool,t.label..": "..tool.Name
+end
+
+-- ---------- NETWORK CONTROL ----------
+
+local NET_HOLD_PING_MS=900
+local NET_RECOVER_PING_MS=650
+local NET_RECOVER_SAMPLES=3
+local NET_MIN_HOLD_SECONDS=1.5
+local NET_OFFLINE_AFTER_SECONDS=6
+local NET_HTTP_INTERVAL=1.25
+local NET_HTTP_TIMEOUT=2.75
+local NET_REPLICATOR_GRACE=1.0
+local NET_HTTP_URL="https://clients3.google.com/generate_204"
+
+local function resolveHttpRequest()
+	local candidates={}
+	local function addCandidate(candidate)
+		if type(candidate)=="function" then table.insert(candidates,candidate) end
+	end
+	addCandidate(ENV.request)
+	addCandidate(ENV.http_request)
+	addCandidate(type(ENV.syn)=="table" and ENV.syn.request or nil)
+	addCandidate(type(ENV.http)=="table" and ENV.http.request or nil)
+
+	for _,candidate in ipairs(candidates) do
+		if type(candidate)=="function" then
+			return function(url)
+				return candidate({
+					Url=url,
+					Method="GET",
+					Headers={["Cache-Control"]="no-cache"},
+				})
+			end
+		end
+	end
+
+	-- Delta's loader already exposes HttpGet even when no request alias exists.
+	return function(url)
+		return game:HttpGet(url,true)
+	end
+end
+
+local networkHttpRequest=resolveHttpRequest()
+
+local function getReceiveKbps()
+	local ok,value=safe(function() return Stats.DataReceiveKbps end)
+	if ok and type(value)=="number" and value==value and value>=0 then
+		return value
+	end
+	return nil
+end
+
+local function hasClientReplicator()
+	if not NetworkClient then return nil end
+	local ok,present=safe(function()
+		for _,child in ipairs(NetworkClient:GetChildren()) do
+			if child:IsA("ClientReplicator") then return true end
+		end
+		return false
+	end)
+	if not ok then return nil end
+	return present
+end
+
+local function beginNetworkHttpProbe(now)
+	if not Runtime.autoWifiHold or Runtime.networkHttpProbeInFlight or now<Runtime.nextNetworkHttpProbe then return end
+	Runtime.nextNetworkHttpProbe=now+NET_HTTP_INTERVAL
+	Runtime.networkHttpProbeInFlight=true
+	Runtime.networkHttpProbeStartedAt=now
+	Runtime.networkHttpProbeGeneration=Runtime.networkHttpProbeGeneration+1
+	local generation=Runtime.networkHttpProbeGeneration
+
+	task.spawn(function()
+		local nonce=tostring(math.floor(os.clock()*1000))
+		local ok,response=safe(function()
+			return networkHttpRequest(NET_HTTP_URL.."?rh="..nonce)
+		end)
+		local finished=os.clock()
+		if not Runtime.alive or generation~=Runtime.networkHttpProbeGeneration then return end
+
+		Runtime.networkHttpProbeInFlight=false
+		Runtime.networkHttpLastFinish=finished
+
+		-- Any real HTTP response proves that DNS/routing works. Some request APIs
+		-- represent the expected 204 response as an empty string, others as a table.
+		local gotResponse=ok
+		if type(response)=="table" then
+			local code=tonumber(response.StatusCode or response.Status or response.status_code)
+			if code then gotResponse=code>=100 and code<600 end
+		end
+
+		if gotResponse then
+			Runtime.networkHttpSupported=true
+			Runtime.networkHttpLastSuccess=finished
+			Runtime.networkHttpBadSamples=0
+		else
+			Runtime.networkHttpBadSamples=Runtime.networkHttpBadSamples+1
+		end
+	end)
+end
+
+local function validPing(value)
+	return type(value)=="number" and value==value and value>0 and value<math.huge
+end
+
+local function getPingMs()
+	-- Player:GetNetworkPing() is the lightest probe when the client exposes it.
+	local directOk,direct=safe(function()
+		return lp:GetNetworkPing()*1000
+	end)
+	if not directOk or not validPing(direct) then direct=nil end
+
+	-- Data Ping also sees replication queues/retransmissions, so use the worse of
+	-- both probes instead of hiding a replication stall behind a healthy raw ping.
+	local ok,res=safe(function()
+		local network=Stats:FindFirstChild("Network")
+		local server=network and network:FindFirstChild("ServerStatsItem")
+		local ping=server and server:FindFirstChild("Data Ping")
+
+		if ping then
+			local text=tostring(ping:GetValueString())
+			return tonumber(text:match("([%d%.]+)"))
+		end
+	end)
+
+	if not ok or not validPing(res) then res=nil end
+	if direct and res then return math.max(direct,res) end
+	if direct then return direct end
+	if res then return res end
+
+	-- Unknown is deliberately nil. Treating it as 0 would enable full remote rate
+	-- exactly while replication statistics are unavailable.
+	return nil
+end
+
+local function releaseNetworkCharacterHold()
+	local heldRoot=Runtime.networkHoldRoot
+	if heldRoot and heldRoot.Parent and Runtime.networkHoldSavedAnchored~=nil then
+		safe(function()
+			if Runtime.kingLock and Runtime.kingRoot==heldRoot then
+				heldRoot.Anchored=true
+			else
+				heldRoot.Anchored=Runtime.networkHoldSavedAnchored
+			end
+			heldRoot.AssemblyLinearVelocity=Vector3.new(0,0,0)
+			heldRoot.AssemblyAngularVelocity=Vector3.new(0,0,0)
+		end)
+	end
+
+	Runtime.networkHoldRoot=nil
+	Runtime.networkHoldCF=nil
+	Runtime.networkHoldSavedAnchored=nil
+	Runtime.nextNetworkHoldTick=0
+end
+
+local function keepNetworkCharacterHold()
+	local r=root()
+	if not r then return false end
+
+	if Runtime.networkHoldRoot~=r then
+		releaseNetworkCharacterHold()
+		Runtime.networkHoldRoot=r
+		Runtime.networkHoldCF=r.CFrame
+		Runtime.networkHoldSavedAnchored=r.Anchored
+	end
+
+	local cf=Runtime.networkHoldCF or r.CFrame
+	safe(function()
+		r.CFrame=cf
+		r.AssemblyLinearVelocity=Vector3.new(0,0,0)
+		r.AssemblyAngularVelocity=Vector3.new(0,0,0)
+		r.Anchored=true
+	end)
+	return true
+end
+
+local function enterNetworkHold(reason,now)
+	if not Runtime.netGuardEnabled then return end
+	now=now or os.clock()
+
+	if not Runtime.networkPaused then
+		Runtime.networkPaused=true
+		Runtime.networkHoldSince=now
+		Runtime.networkState="SUSPECT"
+		Runtime.transientFailures={}
+		Runtime.remoteTokens=0
+		Runtime.nextAction=now+0.25
+		Runtime.nextRebirth=now+0.5
+		Runtime.nextSize=now+0.5
+	end
+
+	Runtime.networkReason=tostring(reason or "connection unstable")
+	keepNetworkCharacterHold()
+	setStatus("СЕТЬ: ПАУЗА • "..Runtime.networkReason)
+end
+
+local function leaveNetworkHold(now,reason)
+	now=now or os.clock()
+	local wasPaused=Runtime.networkPaused
+	Runtime.networkPaused=false
+	Runtime.networkState="HEALTHY"
+	Runtime.networkBadSamples=0
+	Runtime.networkGoodSamples=0
+	Runtime.networkHoldSince=0
+	Runtime.networkReason=nil
+	Runtime.networkLastGoodAt=now
+	Runtime.networkHttpRequiredRecovery=false
+	Runtime.transientFailures={}
+	Runtime.remoteTokens=0
+	Runtime.remoteLastRefill=now
+	Runtime.nextAction=now+0.25
+	Runtime.nextRebirth=now+0.5
+	Runtime.nextSize=now+0.5
+	releaseNetworkCharacterHold()
+
+	if wasPaused then
+		Runtime.networkRecoveries=Runtime.networkRecoveries+1
+		setStatus("СЕТЬ ВОССТАНОВЛЕНА • режим продолжен")
+	end
+end
+
+local function noteNetworkFailure(reason)
+	if not Runtime.netGuardEnabled then return end
+	Runtime.networkBadSamples=math.max(1,Runtime.networkBadSamples or 0)
+	Runtime.networkGoodSamples=0
+	enterNetworkHold(reason or "remote error",os.clock())
+end
+
+local function updateNetworkGuard(now)
+	local sample=getPingMs()
+	local receiveKbps=getReceiveKbps()
+	local replicatorPresent=hasClientReplicator()
+
+	if sample then
+		Runtime.pingMs=sample
+		Runtime.pingAvailable=true
+		Runtime.networkProbeUnsupported=false
+	end
+	if receiveKbps and receiveKbps>0.01 then
+		Runtime.networkTrafficLastSeen=now
+	end
+
+	-- ClientReplicator represents the actual Roblox server connection. Only a
+	-- transition from seen -> missing is authoritative, so restricted executors
+	-- cannot create a false offline state merely by hiding NetworkClient children.
+	if replicatorPresent==true then
+		Runtime.networkReplicatorSeen=true
+		Runtime.networkReplicatorMissingSince=nil
+	elseif replicatorPresent==false and Runtime.networkReplicatorSeen then
+		Runtime.networkReplicatorMissingSince=Runtime.networkReplicatorMissingSince or now
+	end
+
+	if Runtime.netGuardEnabled then
+		beginNetworkHttpProbe(now)
+	end
+
+	if not Runtime.netGuardEnabled then
+		Runtime.networkBadSamples=0
+		Runtime.networkGoodSamples=0
+		return sample
+	end
+
+	if Runtime.manualNetworkHold then
+		enterNetworkHold("manual WiFi hold",now)
+		Runtime.networkState="MANUAL HOLD"
+		return sample
+	end
+
+	-- Give Stats/GetNetworkPing five seconds to appear. If this executor never
+	-- exposes either probe, fall back to a permanently conservative rate instead
+	-- of freezing every existing feature forever.
+	if sample==nil and not Runtime.pingAvailable and not Runtime.networkHttpSupported
+		and not Runtime.networkReplicatorSeen and now>=Runtime.networkProbeDeadline then
+		if Runtime.networkPaused then leaveNetworkHold(now,"LIMITED / NO PING PROBE") end
+		Runtime.networkProbeUnsupported=true
+		Runtime.networkState="LIMITED"
+		Runtime.networkBadSamples=0
+		Runtime.networkGoodSamples=0
+		return nil
+	end
+
+	local invalid=(sample==nil)
+	local replicatorMissing=Runtime.networkReplicatorSeen
+		and Runtime.networkReplicatorMissingSince~=nil
+		and now-Runtime.networkReplicatorMissingSince>=NET_REPLICATOR_GRACE
+	local httpTimedOut=Runtime.autoWifiHold
+		and Runtime.networkHttpSupported
+		and Runtime.networkHttpProbeInFlight
+		and now-Runtime.networkHttpProbeStartedAt>=NET_HTTP_TIMEOUT
+	local httpFailed=Runtime.autoWifiHold
+		and Runtime.networkHttpSupported
+		and Runtime.networkHttpBadSamples>=2
+
+	if httpTimedOut or httpFailed or replicatorMissing then
+		Runtime.networkHttpRequiredRecovery=true
+	end
+
+	local recentHttpSuccess=Runtime.networkHttpSupported
+		and now-Runtime.networkHttpLastSuccess<=math.max(3,NET_HTTP_INTERVAL*2.5)
+	local replicatorReady=not Runtime.networkReplicatorSeen or replicatorPresent==true
+	local confirmedOnline=recentHttpSuccess and replicatorReady
+	local bad=replicatorMissing or httpTimedOut or httpFailed
+		or (invalid and not confirmedOnline)
+		or (sample~=nil and sample>=NET_HOLD_PING_MS)
+	local good=((sample~=nil and sample<=NET_RECOVER_PING_MS) or (invalid and confirmedOnline))
+		and not replicatorMissing and not httpTimedOut and not httpFailed
+
+	if bad then
+		Runtime.networkBadSamples=Runtime.networkBadSamples+1
+		Runtime.networkGoodSamples=0
+		local reason
+		if replicatorMissing then
+			reason="Roblox connection missing"
+		elseif httpTimedOut then
+			reason="WiFi probe timeout"
+		elseif httpFailed then
+			reason="WiFi probe failed"
+		else
+			reason=invalid and "ping unavailable" or ("ping "..math.floor(sample).."ms")
+		end
+		enterNetworkHold(reason,now)
+
+		if Runtime.networkBadSamples>=2 then
+			Runtime.networkState="GRACE"
+		end
+	elseif good then
+		Runtime.networkBadSamples=0
+		Runtime.networkGoodSamples=math.min(NET_RECOVER_SAMPLES,Runtime.networkGoodSamples+1)
+		Runtime.networkLastGoodAt=now
+		if not Runtime.networkPaused then Runtime.networkState="HEALTHY" end
+	else
+		-- Middle band is intentional hysteresis: do not oscillate between hold/resume.
+		Runtime.networkBadSamples=math.max(0,Runtime.networkBadSamples-1)
+		Runtime.networkGoodSamples=0
+	end
+
+	if Runtime.networkPaused then
+		local held=now-Runtime.networkHoldSince
+		if held>=NET_OFFLINE_AFTER_SECONDS and Runtime.networkState~="HEALTHY" then
+			Runtime.networkState="OFFLINE WAIT"
+		end
+
+		local recoveredAfterHold=Runtime.networkHttpLastSuccess>=Runtime.networkHoldSince
+			or Runtime.networkTrafficLastSeen>=Runtime.networkHoldSince
+		local recoveryProof=not Runtime.networkHttpRequiredRecovery
+			or (recoveredAfterHold and replicatorReady)
+		if good and recoveryProof and Runtime.networkGoodSamples>=NET_RECOVER_SAMPLES and held>=NET_MIN_HOLD_SECONDS then
+			leaveNetworkHold(now,"RECOVERED")
+		end
+	end
+
+	return sample
+end
+
+local function clearTransientFailure(key)
+	Runtime.transientFailures[key]=nil
+end
+
+local function transientFailureExpired(key,now,grace)
+	local started=Runtime.transientFailures[key]
+	if not started then
+		Runtime.transientFailures[key]=now
+		return false,0
+	end
+
+	local elapsed=now-started
+	return elapsed>=grace,elapsed
+end
+
+local function effectiveRates()
+	if Runtime.networkPaused then
+		return 1,0
+	end
+	if Runtime.netGuardEnabled and not Runtime.pingAvailable then
+		return 3,1
+	end
+
+	local ping=Runtime.pingMs or 0
+
+	if ping>=700 then
+		return 3,0
+	elseif ping>=450 then
+		return 4,1
+	elseif ping>=300 then
+		return 6,3
+	elseif ping>=200 then
+		return 8,5
+	end
+
+	return 9,5
+end
+
+local function refillRemoteTokens()
+	if Runtime.networkPaused then
+		Runtime.remoteTokens=0
+		Runtime.remoteLastRefill=os.clock()
+		return
+	end
+
+	local now=os.clock()
+	local _,limit=effectiveRates()
+	local elapsed=now-Runtime.remoteLastRefill
+
+	Runtime.remoteLastRefill=now
+	Runtime.remoteTokens=math.min(limit,Runtime.remoteTokens+elapsed*limit)
+end
+
+local function findMuscleRemote()
+	local direct=lp:FindFirstChild("muscleEvent")
+	if direct and direct:IsA("RemoteEvent") then return direct end
+
+	local events=ReplicatedStorage:FindFirstChild("rEvents")
+	local remote=events and events:FindFirstChild("muscleEvent")
+
+	if remote and remote:IsA("RemoteEvent") then
+		return remote
+	end
+
+	return nil
+end
+
+local function updateRemotePps()
+	local now=os.clock()
+	local elapsed=now-Runtime.remoteWindowStart
+
+	if elapsed>=1 then
+		Runtime.remotePps=Runtime.remoteSentWindow/elapsed
+		Runtime.remoteSentWindow=0
+		Runtime.remoteWindowStart=now
+	end
+end
+
+local function countRemoteSent()
+	Runtime.remoteSentWindow=Runtime.remoteSentWindow+1
+	updateRemotePps()
+end
+
+local function tryPunchRemote()
+	if not Runtime.directRemoteEnabled then return false end
+	if Runtime.networkPaused then return false,"network hold" end
+
+	refillRemoteTokens()
+
+	if Runtime.remoteTokens<1 then
+		return false
+	end
+
+	local remote=findMuscleRemote()
+	if not remote then return false end
+
+	Runtime.remoteTokens=Runtime.remoteTokens-1
+
+	local hand=(Runtime.punchCycle%2==0) and "rightHand" or "leftHand"
+
+	local ok=safe(function()
+		remote:FireServer("punch",hand)
+	end)
+
+	if ok then
+		countRemoteSent()
+		return true
+	end
+
+	local _,limit=effectiveRates()
+	Runtime.remoteTokens=math.min(limit,Runtime.remoteTokens+1)
+	noteNetworkFailure("punch remote error")
+
+	return false
+end
+
+local function tryTrainRemote()
+	if not Runtime.directRemoteEnabled then return false end
+	if Runtime.networkPaused then return false,"network hold" end
+
+	refillRemoteTokens()
+
+	if Runtime.remoteTokens<1 then
+		return false
+	end
+
+	local remote=findMuscleRemote()
+	if not remote then return false end
+
+	Runtime.remoteTokens=Runtime.remoteTokens-1
+
+	local ok=safe(function()
+		remote:FireServer("rep")
+	end)
+
+	if ok then
+		countRemoteSent()
+		return true
+	end
+
+	local _,limit=effectiveRates()
+	Runtime.remoteTokens=math.min(limit,Runtime.remoteTokens+1)
+	noteNetworkFailure("train remote error")
+
+	return false
+end
+
+-- ---------- AUTO KILL / CRYSTALS ----------
+
+local function selectedCount(values)
+	local count=0
+	for _,enabled in pairs(values or {}) do
+		if enabled then count=count+1 end
+	end
+	return count
+end
+
+local function refreshExtraUI()
+	if type(Runtime.refreshExtraUI)=="function" then
+		safe(Runtime.refreshExtraUI)
+	end
+end
+
+local function availableCrystalNames()
+	local names={}
+	local seen={}
 	local folder=workspace:FindFirstChild("mapCrystalsFolder")
+
 	if folder then
-		for _,obj in ipairs(folder:GetChildren())do
-			local name=tostring(obj.Name)
-			if string.find(string.lower(name),"crystal",1,true)and not seen[string.lower(name)]then
-				seen[string.lower(name)]=true
+		for _,item in ipairs(folder:GetChildren()) do
+			local name=tostring(item.Name)
+			local key=string.lower(name)
+			if key:find("crystal",1,true) and not seen[key] then
+				seen[key]=true
 				table.insert(names,name)
 			end
 		end
 	end
+
 	if #names==0 then
-		for _,name in ipairs(FALLBACK_CRYSTALS)do table.insert(names,name)end
+		for _,name in ipairs(FALLBACK_CRYSTALS) do
+			table.insert(names,name)
+		end
 	end
-	table.sort(names,function(a,b)return string.lower(a)<string.lower(b)end)
+
+	table.sort(names,function(a,b)
+		return string.lower(a)<string.lower(b)
+	end)
 	return names
 end
 
 local function resolveCrystalName(wanted)
-	local names=getAvailableCrystalNames()
-	local lower=string.lower(tostring(wanted or ""))
-	for _,name in ipairs(names)do
-		if string.lower(name)==lower then return name end
+	local wantedLower=string.lower(tostring(wanted or ""))
+	local names=availableCrystalNames()
+
+	for _,name in ipairs(names) do
+		if string.lower(name)==wantedLower then return name end
 	end
-	if lower=="frost crystal"then
-		for _,name in ipairs(names)do
-			if string.lower(name)=="frozen crystal"then return name end
-		end
-	elseif lower=="frozen crystal"then
-		for _,name in ipairs(names)do
-			if string.lower(name)=="frost crystal"then return name end
+
+	local alias=wantedLower=="frost crystal" and "frozen crystal"
+		or (wantedLower=="frozen crystal" and "frost crystal")
+	if alias then
+		for _,name in ipairs(names) do
+			if string.lower(name)==alias then return name end
 		end
 	end
+
 	return wanted
 end
 
 local function folderOwnsNamed(folderName,targetName)
 	local folder=lp:FindFirstChild(folderName)
 	if not folder then return false end
-	local wanted=string.lower(tostring(targetName or ""))
-	for _,obj in ipairs(folder:GetDescendants())do
-		if string.lower(obj.Name)==wanted then return true end
-		if obj:IsA("StringValue")then
-			local ok,value=pcall(function()return string.lower(tostring(obj.Value))end)
-			if ok and value==wanted then return true end
+	local target=string.lower(tostring(targetName or ""))
+
+	for _,item in ipairs(folder:GetDescendants()) do
+		if string.lower(tostring(item.Name))==target then return true end
+		if item:IsA("StringValue") then
+			local ok,value=safe(function() return string.lower(tostring(item.Value)) end)
+			if ok and value==target then return true end
 		end
 	end
+
 	return false
 end
 
@@ -766,36 +1496,36 @@ local function ownsPet(name)
 end
 
 local function ownsAura(name)
-	return folderOwnsNamed("trailsFolder",name)or folderOwnsNamed("aurasFolder",name)
+	return folderOwnsNamed("trailsFolder",name) or folderOwnsNamed("aurasFolder",name)
 end
 
-local function shouldKillPlayer(player)
-	if player==lp then return false end
-	if killMode=="all"then return true end
-	if killMode=="whitelist"then return not killWhitelist[player.UserId]end
-	if killMode=="blacklist"then return killBlacklist[player.UserId]==true end
+local function shouldKillPlayer(player,mode)
+	if not player or player==lp then return false end
+	if mode=="all" then return true end
+	if mode=="whitelist" then return Runtime.killWhitelist[player.UserId]~=true end
+	if mode=="blacklist" then return Runtime.killBlacklist[player.UserId]==true end
 	return false
 end
 
-local function attackPlayer(player)
-	local myChar=lp.Character
-	local targetChar=player and player.Character
-	local targetHum=targetChar and targetChar:FindFirstChildWhichIsA("Humanoid")
-	local targetRoot=targetChar and targetChar:FindFirstChild("HumanoidRootPart")
-	if not myChar or not targetRoot or not targetHum or targetHum.Health<=0 then return end
+local function touchKillTarget(player,tool)
+	local localCharacter=char()
+	local targetCharacter=player and player.Character
+	local targetHumanoid=targetCharacter and targetCharacter:FindFirstChildWhichIsA("Humanoid")
+	local targetRoot=targetCharacter and targetCharacter:FindFirstChild("HumanoidRootPart")
 
-	local tool=ensurePunchTool(nil)
-	if tool then
-		clearToolCooldowns(tool)
-		pcall(function()tool:Activate()end)
+	if not localCharacter or not targetRoot or not targetHumanoid or targetHumanoid.Health<=0 then return end
+
+	if tool and tool.Parent then
+		clearCooldownsOnce(tool)
+		safe(function() tool:Activate() end)
 	end
-	firePunchRemote()
+	tryPunchRemote()
 
-	if firetouchinterest then
-		for _,handName in ipairs({"RightHand","LeftHand","Right Arm","Left Arm"})do
-			local hand=myChar:FindFirstChild(handName,true)
-			if hand and hand:IsA("BasePart")then
-				pcall(function()
+	if type(firetouchinterest)=="function" then
+		for _,handName in ipairs({"RightHand","LeftHand","Right Arm","Left Arm"}) do
+			local hand=localCharacter:FindFirstChild(handName,true)
+			if hand and hand:IsA("BasePart") then
+				safe(function()
 					firetouchinterest(hand,targetRoot,0)
 					firetouchinterest(hand,targetRoot,1)
 				end)
@@ -804,21 +1534,33 @@ local function attackPlayer(player)
 	end
 end
 
-local function setKillMode(mode)
-	killLoopId+=1
-	killMode=mode or "off"
-	killRefreshFn()
-	if killMode=="off"then
-		killStatusFn("АВТОКИЛ: выключен")
-		return
+local function stopKillAutomation(message)
+	Runtime.killToken=Runtime.killToken+1
+	Runtime.killMode="off"
+	for _,lever in pairs(Runtime.leverRefs.kill or {}) do
+		if lever then lever.Set(false,true) end
 	end
-	local myId=killLoopId
-	killStatusFn("АВТОКИЛ: "..string.upper(killMode))
+	refreshExtraUI()
+	if message then setStatus(message) end
+end
+
+local function startKillAutomation(mode)
+	Runtime.killToken=Runtime.killToken+1
+	Runtime.killMode=mode
+	local token=Runtime.killToken
+	refreshExtraUI()
+	setStatus("АВТОКИЛ: "..string.upper(mode))
+
 	task.spawn(function()
-		while killMode~="off"and killLoopId==myId do
-			for _,player in ipairs(Players:GetPlayers())do
-				if killLoopId~=myId then break end
-				if shouldKillPlayer(player)then attackPlayer(player)end
+		while Runtime.alive and Runtime.killMode==mode and Runtime.killToken==token do
+			if not Runtime.networkPaused then
+				local tool=ensurePunchTool()
+				for _,player in ipairs(Players:GetPlayers()) do
+					if Runtime.killToken~=token then break end
+					if shouldKillPlayer(player,mode) then
+						touchKillTarget(player,tool)
+					end
+				end
 			end
 			task.wait(0.10)
 		end
@@ -826,101 +1568,918 @@ local function setKillMode(mode)
 end
 
 local function openCrystalOnce(name)
-	local rEvents=ReplicatedStorage:FindFirstChild("rEvents")
-	local remote=rEvents and rEvents:FindFirstChild("openCrystalRemote")
-	if not remote then return false,"openCrystalRemote не найден"end
+	local events=ReplicatedStorage:FindFirstChild("rEvents")
+	local remote=events and events:FindFirstChild("openCrystalRemote")
+	if not remote then return false,"openCrystalRemote не найден" end
 	local resolved=resolveCrystalName(name)
-	local ok,err=pcall(function()remote:InvokeServer("openCrystal",resolved)end)
+
+	local ok,err=safe(function()
+		if remote:IsA("RemoteFunction") then
+			remote:InvokeServer("openCrystal",resolved)
+		else
+			remote:FireServer("openCrystal",resolved)
+		end
+	end)
 	return ok,err,resolved
 end
 
-local function crystalTargetForMode(mode)
-	if mode=="crystal"then return selectedCrystal,selectedCrystal end
-	if mode=="pet"and selectedPet then return selectedPet.crystal,selectedPet.name end
-	if mode=="aura"and selectedAura then return selectedAura.crystal,selectedAura.name end
+local function crystalTarget(mode)
+	if mode=="crystal" then return Runtime.selectedCrystal,Runtime.selectedCrystal end
+	if mode=="pet" and Runtime.selectedPet then return Runtime.selectedPet.crystal,Runtime.selectedPet.name end
+	if mode=="aura" and Runtime.selectedAura then return Runtime.selectedAura.crystal,Runtime.selectedAura.name end
 	return nil,nil
 end
 
-local function setCrystalMode(mode)
-	crystalLoopId+=1
-	crystalMode=mode or "off"
-	crystalRefreshFn()
-	if crystalMode=="off"then
-		crystalStatusFn("КРИСТАЛЛЫ: выключено")
-		return
+local function stopCrystalAutomation(message)
+	Runtime.crystalToken=Runtime.crystalToken+1
+	Runtime.crystalMode="off"
+	for _,lever in pairs(Runtime.leverRefs.crystal or {}) do
+		if lever then lever.Set(false,true) end
 	end
-	local crystalName,targetName=crystalTargetForMode(crystalMode)
-	if not crystalName then
-		crystalMode="off"
-		crystalRefreshFn()
-		crystalStatusFn("Сначала выбери цель")
-		return
-	end
-	local myMode=crystalMode
-	local myId=crystalLoopId
-	crystalStatusFn("АВТО: "..targetName)
-	task.spawn(function()
-		while crystalMode==myMode and crystalLoopId==myId do
-			if myMode=="pet"and ownsPet(targetName)then
-				crystalMode="off"
-				crystalLoopId+=1
-				crystalRefreshFn()
-				crystalStatusFn("ПОЛУЧЕН: "..targetName)
-				break
-			end
-			if myMode=="aura"and ownsAura(targetName)then
-				crystalMode="off"
-				crystalLoopId+=1
-				crystalRefreshFn()
-				crystalStatusFn("ПОЛУЧЕНА: "..targetName)
-				break
-			end
-			local ok,err,resolved=openCrystalOnce(crystalName)
-			if not ok then
-				crystalStatusFn("ОШИБКА: "..tostring(err))
-				task.wait(1)
-			else
-				crystalStatusFn("ОТКРЫВАЮ: "..tostring(resolved))
-				task.wait(0.35)
-			end
-		end
-	end)
+	refreshExtraUI()
+	if message then setStatus(message) end
 end
 
--- Legacy UI kept for reference but disabled; the active three-tab UI is below.
-if false then
--- UI v12: новый компактный дизайн без SCAN/COPY/лишних надписей
+local function startCrystalAutomation(mode)
+	local crystalName,targetName=crystalTarget(mode)
+	if not crystalName then
+		setStatus("СНАЧАЛА ВЫБЕРИ ЦЕЛЬ")
+		return false
+	end
+
+	Runtime.crystalToken=Runtime.crystalToken+1
+	Runtime.crystalMode=mode
+	local token=Runtime.crystalToken
+	refreshExtraUI()
+	setStatus("АВТОПОКУПКА: "..targetName)
+
+	task.spawn(function()
+		while Runtime.alive and Runtime.crystalMode==mode and Runtime.crystalToken==token do
+			if mode=="pet" and ownsPet(targetName) then
+				stopCrystalAutomation("ПОЛУЧЕН: "..targetName)
+				break
+			elseif mode=="aura" and ownsAura(targetName) then
+				stopCrystalAutomation("ПОЛУЧЕНА: "..targetName)
+				break
+			end
+
+			if not Runtime.networkPaused then
+				local ok,err,resolved=openCrystalOnce(crystalName)
+				if ok then
+					setStatus("ОТКРЫВАЮ: "..tostring(resolved))
+				else
+					setStatus("КРИСТАЛЛ: "..tostring(err))
+					task.wait(0.8)
+				end
+			end
+			task.wait(0.38)
+		end
+	end)
+	return true
+end
+
+local function stopExtraAutomation(message)
+	stopKillAutomation(nil)
+	stopCrystalAutomation(nil)
+	if message then setStatus(message) end
+end
+
+-- ---------- REBIRTH / MUSCLE KING ----------
+
+local DEFAULT_KING_CF=CFrame.new(
+	-8625.93262,17.2325287,-5730.47217,
+	0.765763462,-1.84813775e-09,0.643122315,
+	-1.32089262e-09,1,4.44647785e-09,
+	-0.643122315,-4.25444568e-09,0.765763462
+)
+
+local function findRebirthRemote()
+	local events=ReplicatedStorage:FindFirstChild("rEvents")
+	local remote=events and events:FindFirstChild("rebirthRemote")
+
+	if remote and (remote:IsA("RemoteFunction") or remote:IsA("RemoteEvent")) then
+		return remote
+	end
+
+	return nil
+end
+
+local function tryRebirth()
+	if Runtime.networkPaused then return false,"network hold" end
+	local remote=findRebirthRemote()
+	if not remote then return false,"rebirthRemote не найден" end
+
+	local ok,err=safe(function()
+		if remote:IsA("RemoteFunction") then
+			remote:InvokeServer("rebirthRequest")
+		else
+			remote:FireServer("rebirthRequest")
+		end
+	end)
+
+	return ok,err
+end
+
+local function findSizeRemote()
+	local events=ReplicatedStorage:FindFirstChild("rEvents")
+	local remote=events and events:FindFirstChild("changeSpeedSizeRemote")
+
+	if remote and (remote:IsA("RemoteFunction") or remote:IsA("RemoteEvent")) then
+		return remote
+	end
+
+	return nil
+end
+
+local function trySetSize(value)
+	if Runtime.networkPaused then return false,"network hold" end
+	local remote=findSizeRemote()
+	if not remote then return false,"changeSpeedSizeRemote не найден" end
+
+	local size=tonumber(value)
+	if not size then return false,"неверный размер" end
+	size=math.clamp(size,0.1,1000)
+
+	local ok,err=safe(function()
+		if remote:IsA("RemoteFunction") then
+			remote:InvokeServer("changeSize",size)
+		else
+			remote:FireServer("changeSize",size)
+		end
+	end)
+
+	return ok,err
+end
+
+local function kingTargetCF()
+	local custom=ENV.RockBugKingCF
+	if typeof(custom)=="CFrame" then return custom end
+	return DEFAULT_KING_CF
+end
+
+local function findKingTriggerPart()
+	local targetPosition=kingTargetCF().Position
+	local best=nil
+	local bestScore=-math.huge
+	local scanned=0
+
+	for _,d in ipairs(workspace:GetDescendants()) do
+		scanned=scanned+1
+		if scanned>12000 then break end
+
+		if d:IsA("BasePart") then
+			local distance=(d.Position-targetPosition).Magnitude
+			if distance<=320 then
+				local full=tostring(d:GetFullName()):lower()
+				local score=-distance*0.08
+				local hasTouch=d:FindFirstChildOfClass("TouchTransmitter")~=nil
+
+				if hasTouch then score=score+100 end
+				if full:find("muscle king",1,true) or full:find("muscleking",1,true) then score=score+80 end
+				if full:find("king",1,true) then score=score+35 end
+				if containsAny(full,{"trigger","zone","area","hill","gym","capture","touch"}) then score=score+45 end
+
+				if score>bestScore and (hasTouch or score>=45) then
+					best=d
+					bestScore=score
+				end
+			end
+		end
+	end
+
+	return best
+end
+
+local function triggerKingPresence(r)
+	if Runtime.kingPresenceInFlight or not Runtime.kingLock or not r or not r.Parent then return false end
+	Runtime.kingPresenceInFlight=true
+
+	local ok,err=xpcall(function()
+		local cf=Runtime.kingCF or kingTargetCF()
+		r.Anchored=false
+		r.CFrame=cf*CFrame.new(0,6,0)
+		r.AssemblyLinearVelocity=Vector3.new(0,-18,0)
+		r.AssemblyAngularVelocity=Vector3.new(0,0,0)
+		task.wait(0.18)
+
+		if not Runtime.alive or not Runtime.kingLock or Runtime.kingRoot~=r or not r.Parent then return end
+
+		r.CFrame=cf
+		r.AssemblyLinearVelocity=Vector3.new(0,0,0)
+		r.AssemblyAngularVelocity=Vector3.new(0,0,0)
+
+		local trigger=findKingTriggerPart()
+		if trigger and type(firetouchinterest)=="function" then
+			local c=char()
+			local contacts={
+				r,
+				c and (c:FindFirstChild("LeftFoot") or c:FindFirstChild("Left Leg")),
+				c and (c:FindFirstChild("RightFoot") or c:FindFirstChild("Right Leg")),
+			}
+
+			for _,part in ipairs(contacts) do
+				if part and part:IsA("BasePart") then
+					safe(function()
+						firetouchinterest(part,trigger,0)
+						firetouchinterest(part,trigger,1)
+					end)
+				end
+			end
+		end
+
+		task.wait(0.18)
+		if Runtime.alive and Runtime.kingLock and Runtime.kingRoot==r and r.Parent then
+			r.CFrame=cf
+			r.AssemblyLinearVelocity=Vector3.new(0,0,0)
+			r.AssemblyAngularVelocity=Vector3.new(0,0,0)
+			r.Anchored=true
+		end
+	end,function(e)
+		return tostring(e)
+	end)
+
+	Runtime.kingPresenceInFlight=false
+	if not ok and Runtime.alive then setStatus("KING TRIGGER: "..tostring(err)) end
+	return ok
+end
+
+local function disableKingLock()
+	local savedRoot=Runtime.kingRoot
+	if savedRoot and savedRoot.Parent and Runtime.kingSavedAnchored~=nil then
+		safe(function() savedRoot.Anchored=Runtime.kingSavedAnchored end)
+	end
+
+	Runtime.kingLock=false
+	Runtime.kingCF=nil
+	Runtime.kingRoot=nil
+	Runtime.kingSavedAnchored=nil
+	Runtime.kingPresenceInFlight=false
+end
+
+local function enableKingLock()
+	local r=root()
+	if not r then return false,"нет root" end
+
+	disableKingLock()
+
+	Runtime.kingCF=kingTargetCF()
+	Runtime.kingLock=true
+	Runtime.kingRoot=r
+	Runtime.kingSavedAnchored=r.Anchored
+	Runtime.nextKingTick=0
+
+	triggerKingPresence(r)
+	return true
+end
+
+-- ---------- STABLE CHARACTER LOCK ----------
+
+local function restoreCharacterLock()
+	local saved=Runtime.characterLockSaved
+
+	-- Nothing was locked by this runtime, so do not overwrite game-owned state.
+	if not saved then
+		Runtime.characterCollisionSaved={}
+		return
+	end
+
+	-- Restore the exact instances that were changed. After respawn, using root()
+	-- here could apply the previous character's state to the new character.
+	local r=saved.root
+	local h=saved.humanoid
+
+	if r and r.Parent then
+		safe(function()
+			r.Anchored=saved.rootAnchored
+			r.AssemblyLinearVelocity=Vector3.new(0,0,0)
+			r.AssemblyAngularVelocity=Vector3.new(0,0,0)
+		end)
+	end
+
+	if h and h.Parent then
+		safe(function()
+			h.AutoRotate=saved.autoRotate
+			if saved.walkSpeed~=nil then h.WalkSpeed=saved.walkSpeed end
+		end)
+	end
+
+	for part,state in pairs(Runtime.characterCollisionSaved) do
+		if part and part.Parent then
+			safe(function()
+				part.CanCollide=state.CanCollide
+				part.CanTouch=state.CanTouch
+			end)
+		end
+	end
+
+	Runtime.characterCollisionSaved={}
+	Runtime.characterLockSaved=nil
+end
+
+local function lockCharacterAt(cf)
+	local c=char()
+	local r=root()
+	local h=hum()
+	if not c or not r then return false,"нет персонажа" end
+
+	-- Restore any previous lock first, then save a fresh clean state.
+	restoreCharacterLock()
+
+	Runtime.characterLockSaved={
+		character=c,
+		root=r,
+		humanoid=h,
+		rootAnchored=r.Anchored,
+		autoRotate=h and h.AutoRotate or true,
+		walkSpeed=h and h.WalkSpeed or 16,
+	}
+	Runtime.characterCollisionSaved={}
+
+	for _,part in ipairs(c:GetDescendants()) do
+		if part:IsA("BasePart") then
+			Runtime.characterCollisionSaved[part]={
+				CanCollide=part.CanCollide,
+				CanTouch=part.CanTouch,
+			}
+			part.CanCollide=false
+		end
+	end
+
+	if h then
+		h.AutoRotate=false
+		h.WalkSpeed=0
+	end
+
+	r.CFrame=cf
+	r.AssemblyLinearVelocity=Vector3.new(0,0,0)
+	r.AssemblyAngularVelocity=Vector3.new(0,0,0)
+
+	-- Keep the assembly movable so punch animation/touch can replicate.
+	-- The scheduler only corrects the CFrame after real drift.
+	r.Anchored=false
+
+	Runtime.lockCF=cf
+	return true
+end
+
+-- ---------- SAFE TOUCH / LOCK ----------
+
+local function targetPart()
+	local info=getRockInfo(Runtime.selectedRock)
+	return info and (info.hit or info.body) or nil
+end
+
+local function oneTouch()
+	if type(firetouchinterest)~="function" then return end
+
+	local target=targetPart()
+	local c=char()
+
+	if not target or not c or not target:IsA("BasePart") then return end
+
+	local hands={
+		c:FindFirstChild("RightHand") or c:FindFirstChild("Right Arm"),
+		c:FindFirstChild("LeftHand") or c:FindFirstChild("Left Arm"),
+	}
+
+	if not hands[1] and not hands[2] then
+		hands[1]=c:FindFirstChild("HumanoidRootPart")
+	end
+
+	for _,hand in ipairs(hands) do
+		if hand and hand:IsA("BasePart") then
+			safe(function()
+				firetouchinterest(hand,target,0)
+				firetouchinterest(hand,target,1)
+			end)
+		end
+	end
+end
+
+local function insideRockCF(row)
+	local info=getRockInfo(row)
+	if not info then return nil,"камень не найден" end
+
+	local body=info.body
+	local left=info.left
+	local right=info.right
+	local hit=info.hit
+	local cf=nil
+
+	-- Stand inside the server-facing hit part so physical punches can register.
+	if hit and hit:IsA("BasePart") then
+		local offsetY=math.clamp(hit.Size.Y*0.03,0,0.75)
+		cf=hit.CFrame*CFrame.new(0,offsetY,0)
+	elseif left and left:IsA("BasePart") and right and right:IsA("BasePart") then
+		local center=(left.Position+right.Position)/2
+		local rot=(body and body:IsA("BasePart")) and (body.CFrame-body.Position) or CFrame.new()
+		cf=CFrame.new(center)*rot
+	elseif body and body:IsA("BasePart") then
+		local offsetY=math.clamp(body.Size.Y*0.08,0,2)
+		cf=body.CFrame*CFrame.new(0,offsetY,0)
+	end
+
+	if not cf then return nil,"нет точки внутри камня" end
+
+	local custom=ENV.RockBugInsideOffset
+	if typeof(custom)=="Vector3" then
+		cf=cf*CFrame.new(custom)
+	end
+
+	return cf
+end
+
+local function teleportInsideSelected()
+	local cf,err=insideRockCF(Runtime.selectedRock)
+	if not cf then return false,err end
+
+	local ok,why=lockCharacterAt(cf)
+	if not ok then return false,why end
+
+	Runtime.nextLockTick=0
+	return true
+end
+
+Runtime.teleportInsideSelected=teleportInsideSelected
+
+local function nearSelectedRock()
+	local r=root()
+	local target=targetPart()
+
+	if not r or not target then return false,"нет цели" end
+
+	local distance=(r.Position-target.Position).Magnitude
+	local maxSize=math.max(target.Size.X,target.Size.Y,target.Size.Z)
+	local limit=math.max(70,maxSize+38)
+
+	if distance>limit then
+		return false,"вышел из камня"
+	end
+
+	return true
+end
+
+local function insideSelectedRockLockZone(r)
+	local info=getRockInfo(Runtime.selectedRock)
+	local zone=info and (info.body or info.hit)
+	if not r or not zone or not zone:IsA("BasePart") then return false end
+
+	local localPosition=zone.CFrame:PointToObjectSpace(r.Position)
+	local half=zone.Size*0.5
+	local maxSize=math.max(zone.Size.X,zone.Size.Y,zone.Size.Z)
+	local margin=math.clamp(maxSize*0.18,8,22)
+
+	return math.abs(localPosition.X)<=half.X+margin
+		and math.abs(localPosition.Y)<=half.Y+margin
+		and math.abs(localPosition.Z)<=half.Z+margin
+end
+
+-- ---------- SAFE VISUAL LOW ----------
+
+local function setVisualLow(on)
+	if on==Runtime.visualLow then return end
+	Runtime.visualLow=on
+
+	if on then
+		Runtime.visualSaved={}
+
+		local scanned=0
+		for _,d in ipairs(workspace:GetDescendants()) do
+			scanned=scanned+1
+			if scanned>6500 then break end
+
+			if d:IsA("ParticleEmitter") or d:IsA("Trail") or d:IsA("Beam") or d:IsA("Smoke") or d:IsA("Fire") or d:IsA("Sparkles") then
+				Runtime.visualSaved[d]={Enabled=d.Enabled}
+				d.Enabled=false
+			elseif d:IsA("BasePart") then
+				Runtime.visualSaved[d]={CastShadow=d.CastShadow}
+				d.CastShadow=false
+			end
+
+			if scanned%500==0 then task.wait() end
+		end
+
+		setStatus("МЕНЬШЕ ЭФФЕКТОВ: включено")
+	else
+		for obj,saved in pairs(Runtime.visualSaved) do
+			if obj and obj.Parent then
+				if saved.Enabled~=nil then safe(function() obj.Enabled=saved.Enabled end) end
+				if saved.CastShadow~=nil then safe(function() obj.CastShadow=saved.CastShadow end) end
+			end
+		end
+
+		Runtime.visualSaved={}
+		setStatus("МЕНЬШЕ ЭФФЕКТОВ: выключено")
+	end
+end
+
+-- ---------- MODE CONTROL ----------
+
+local function unequip()
+	local h=hum()
+	if h then safe(function() h:UnequipTools() end) end
+end
+
+local function setAllModeLeversOff()
+	if Runtime.leverRefs.bug then Runtime.leverRefs.bug.Set(false,true) end
+	if Runtime.leverRefs.lockRock then Runtime.leverRefs.lockRock.Set(false,true) end
+
+	for _,lever in pairs(Runtime.leverRefs.train or {}) do
+		if lever then lever.Set(false,true) end
+	end
+end
+
+local function clearModeState(reason,updateLevers)
+	Runtime.modeToken=Runtime.modeToken+1
+	Runtime.mode=nil
+	Runtime.selectedTrain=nil
+	Runtime.activeTool=nil
+	Runtime.nextAction=0
+	Runtime.nextEquip=0
+	Runtime.nextCooldownSweep=0
+	Runtime.punchCycle=0
+	Runtime.lockRock=false
+	Runtime.lockCF=nil
+	Runtime.transientFailures={}
+
+	restoreCharacterLock()
+	unequip()
+
+	if updateLevers then
+		setAllModeLeversOff()
+	end
+
+	if reason then setStatus(reason) end
+end
+
+local function stopMode(reason)
+	clearModeState(reason or "STOP",true)
+end
+
+local function panicStop()
+	clearModeState("ВСЁ ОСТАНОВЛЕНО",true)
+	stopExtraAutomation(nil)
+	Runtime.lockPosition=false
+	Runtime.positionCF=nil
+	Runtime.autoRebirth=false
+	Runtime.rebirthInFlight=false
+	Runtime.autoSize=false
+	disableKingLock()
+
+	if Runtime.leverRefs.lockPosition then Runtime.leverRefs.lockPosition.Set(false,true) end
+	if Runtime.leverRefs.autoRebirth then Runtime.leverRefs.autoRebirth.Set(false,true) end
+	if Runtime.leverRefs.autoSize then Runtime.leverRefs.autoSize.Set(false,true) end
+	if Runtime.leverRefs.kingLock then Runtime.leverRefs.kingLock.Set(false,true) end
+
+	setVisualLow(false)
+	if Runtime.leverRefs.visualLow then Runtime.leverRefs.visualLow.Set(false,true) end
+end
+
+local function startBug()
+	stopKillAutomation(nil)
+	-- Reset the previous mode and all of its UI levers before enabling BUG.
+	clearModeState(nil,true)
+
+	-- Position lock belongs to TRAIN and would fight the rock CFrame lock.
+	Runtime.lockPosition=false
+	Runtime.positionCF=nil
+	disableKingLock()
+	if Runtime.leverRefs.lockPosition then
+		Runtime.leverRefs.lockPosition.Set(false,true)
+	end
+	if Runtime.leverRefs.kingLock then
+		Runtime.leverRefs.kingLock.Set(false,true)
+	end
+
+	if not Runtime.selectedRock then
+		setStatus("камень не выбран")
+		return false
+	end
+
+	local ok,err=teleportInsideSelected()
+	if not ok then
+		setStatus("BUG: "..tostring(err))
+		return false
+	end
+
+	local tool,msg=ensurePunchTool()
+	if not tool then
+		restoreCharacterLock()
+		setStatus(tostring(msg))
+		return false
+	end
+
+	Runtime.activeTool=tool
+	Runtime.modeToken=Runtime.modeToken+1
+	Runtime.mode="bug"
+	Runtime.lockRock=true
+	Runtime.nextAction=0
+	Runtime.nextEquip=0
+	Runtime.nextCooldownSweep=0
+	Runtime.nextNearCheck=0
+	local _,remoteLimit=effectiveRates()
+	Runtime.remoteTokens=remoteLimit
+
+	if Runtime.leverRefs.bug then Runtime.leverRefs.bug.Set(true,true) end
+	if Runtime.leverRefs.lockRock then Runtime.leverRefs.lockRock.Set(true,true) end
+
+	clearCooldownsOnce(tool)
+	safe(function() tool:Activate() end)
+	oneTouch()
+
+	setStatus("АВТОУДАР: включён • "..tostring(Runtime.selectedRock.label))
+	return true
+end
+
+local function startTrain(t)
+	stopKillAutomation(nil)
+	-- Clear BUG/TP LOCK and stale TRAIN levers before enabling this one.
+	clearModeState(nil,true)
+
+	local tool,msg=ensureTrainTool(t)
+	if not tool then
+		setStatus(tostring(msg))
+		return false
+	end
+
+	Runtime.activeTool=tool
+	Runtime.selectedTrain=t
+	Runtime.modeToken=Runtime.modeToken+1
+	Runtime.mode="train"
+	Runtime.nextAction=0
+	Runtime.nextEquip=0
+	Runtime.nextCooldownSweep=0
+	local _,remoteLimit=effectiveRates()
+	Runtime.remoteTokens=remoteLimit
+
+	local lever=Runtime.leverRefs.train and Runtime.leverRefs.train[t.id]
+	if lever then lever.Set(true,true) end
+
+	clearCooldownsOnce(tool)
+	safe(function() tool:Activate() end)
+	tryTrainRemote()
+
+	setStatus("КАЧ: "..tostring(t.label).." включён")
+	return true
+end
+
+-- ---------- SINGLE SCHEDULER ----------
+
+local function scheduler()
+	while Runtime.alive do
+		local now=os.clock()
+		Runtime.lastSchedulerTick=now
+
+		if now>=Runtime.nextNetUpdate then
+			Runtime.nextNetUpdate=now+0.5
+			updateNetworkGuard(now)
+			updateRemotePps()
+			setNetText()
+		end
+
+		if Runtime.networkPaused and now>=Runtime.nextNetworkHoldTick then
+			Runtime.nextNetworkHoldTick=now+0.05
+			keepNetworkCharacterHold()
+		end
+
+		if not Runtime.networkPaused and Runtime.autoRebirth and not Runtime.rebirthInFlight and now>=Runtime.nextRebirth then
+			Runtime.nextRebirth=now+1.2
+			Runtime.rebirthInFlight=true
+			task.spawn(function()
+				local ok,err=tryRebirth()
+				Runtime.rebirthInFlight=false
+				if not ok and Runtime.alive and Runtime.autoRebirth then
+					setStatus("AUTO REB: "..tostring(err))
+				end
+			end)
+		end
+
+		if not Runtime.networkPaused and Runtime.autoSize and not Runtime.sizeInFlight and now>=Runtime.nextSize then
+			Runtime.nextSize=now+0.25
+			Runtime.sizeInFlight=true
+			local requestedSize=Runtime.sizeTarget
+			task.spawn(function()
+				local ok,err=trySetSize(requestedSize)
+				Runtime.sizeInFlight=false
+				if not ok and Runtime.alive and Runtime.autoSize then
+					setStatus("AUTO SIZE: "..tostring(err))
+				end
+			end)
+		end
+
+		if not Runtime.networkPaused and Runtime.kingLock and Runtime.kingCF and now>=Runtime.nextKingTick then
+			Runtime.nextKingTick=now+0.25
+			local r=root()
+
+			if r then
+				if Runtime.kingRoot~=r then
+					Runtime.kingRoot=r
+					Runtime.kingSavedAnchored=r.Anchored
+					if not Runtime.kingPresenceInFlight then
+						task.spawn(function() triggerKingPresence(r) end)
+					end
+				elseif not r.Anchored or (r.Position-Runtime.kingCF.Position).Magnitude>0.75 then
+					if not Runtime.kingPresenceInFlight then
+						task.spawn(function() triggerKingPresence(r) end)
+					end
+				end
+			end
+		end
+
+		if Runtime.mode=="train" and Runtime.lockPosition and Runtime.positionCF and now>=Runtime.nextPosTick then
+			Runtime.nextPosTick=now+0.05
+			local r=root()
+
+			if r then
+				r.CFrame=Runtime.positionCF
+				r.AssemblyLinearVelocity=Vector3.new(0,0,0)
+				r.AssemblyAngularVelocity=Vector3.new(0,0,0)
+			end
+		end
+
+		if Runtime.mode=="bug" then
+			-- Keep physical punching enabled; correct only after actual drift.
+			if Runtime.lockRock and Runtime.lockCF then
+				local r=root()
+				if not r then
+					if not Runtime.networkPaused then
+						local expired=transientFailureExpired("bugRoot",now,2.5)
+						if expired then stopMode("AUTO STOP: нет root после grace") end
+					end
+				elseif (r.Position-Runtime.lockCF.Position).Magnitude>1.25 then
+					clearTransientFailure("bugRoot")
+					local drift=(r.Position-Runtime.lockCF.Position).Magnitude
+					if insideSelectedRockLockZone(r) then
+						-- Physics may push the character from the center toward a valid edge.
+						-- Follow that stable contact point instead of teleporting to center.
+						Runtime.lockCF=r.CFrame
+					elseif drift>8 then
+						r.CFrame=Runtime.lockCF
+						r.AssemblyLinearVelocity=Vector3.new(0,0,0)
+						r.AssemblyAngularVelocity=Vector3.new(0,0,0)
+					end
+				else
+					clearTransientFailure("bugRoot")
+				end
+			end
+
+			if not Runtime.networkPaused and now>=Runtime.nextNearCheck then
+				Runtime.nextNearCheck=now+0.35
+				local near,why=nearSelectedRock()
+
+				if not near then
+					local expired=transientFailureExpired("rockNear",now,2.5)
+					if expired then stopMode("AUTO STOP: "..tostring(why).." после grace") end
+				else
+					clearTransientFailure("rockNear")
+				end
+			end
+
+			if not Runtime.networkPaused and Runtime.mode=="bug" and now>=Runtime.nextAction then
+				local actionRate=effectiveRates()
+				Runtime.nextAction=now+(1/actionRate)
+				Runtime.punchCycle=Runtime.punchCycle+1
+
+				if not Runtime.activeTool or Runtime.activeTool.Parent~=char() then
+					local tool,msg=ensurePunchTool()
+					Runtime.activeTool=tool
+					if not tool then setStatus(msg) end
+				end
+
+				if Runtime.activeTool then
+					safe(function() Runtime.activeTool:Activate() end)
+				end
+
+				-- One bounded direct remote attempt, never loops.
+				tryPunchRemote()
+
+				-- Touch on every bounded action so Delta can register either hand.
+				oneTouch()
+			end
+
+			if not Runtime.networkPaused and now>=Runtime.nextCooldownSweep then
+				Runtime.nextCooldownSweep=now+2
+				clearCooldownsOnce(Runtime.activeTool)
+			end
+
+			if not Runtime.networkPaused and now>=Runtime.nextEquip then
+				Runtime.nextEquip=now+1.5
+
+				if not Runtime.activeTool or Runtime.activeTool.Parent~=char() then
+					Runtime.activeTool=ensurePunchTool()
+				end
+			end
+		elseif Runtime.mode=="train" then
+			if not Runtime.networkPaused and now>=Runtime.nextAction then
+				-- Match the validated punch cadence and its adaptive network throttle.
+				local rate=effectiveRates()
+				Runtime.nextAction=now+(1/rate)
+
+				if Runtime.selectedTrain then
+					if not Runtime.activeTool or Runtime.activeTool.Parent~=char() then
+						Runtime.activeTool=ensureTrainTool(Runtime.selectedTrain)
+					end
+
+					if Runtime.activeTool then
+						safe(function() Runtime.activeTool:Activate() end)
+						tryTrainRemote()
+					end
+				end
+			end
+
+			if not Runtime.networkPaused and now>=Runtime.nextCooldownSweep then
+				Runtime.nextCooldownSweep=now+2
+				clearCooldownsOnce(Runtime.activeTool)
+			end
+
+			if not Runtime.networkPaused and now>=Runtime.nextEquip then
+				Runtime.nextEquip=now+1.5
+
+				if Runtime.selectedTrain then
+					Runtime.activeTool=ensureTrainTool(Runtime.selectedTrain)
+				end
+			end
+		end
+
+		task.wait(0.015)
+	end
+end
+
+-- ---------- ANTI AFK ----------
+
+local antiAfkConn=addConn(lp.Idled:Connect(function()
+	if not Runtime.antiAfkEnabled then return end
+
+	safe(function()
+		VirtualUser:CaptureController()
+		VirtualUser:ClickButton2(Vector2.new())
+	end)
+end))
+
+local function buildUI()
+-- ---------- UI ----------
+
 local gui=Instance.new("ScreenGui")
-gui.Name="RockBugHub_v13_1_UltraSmallUI"
+gui.Name=HUB_VERSION
 gui.ResetOnSpawn=false
 gui.IgnoreGuiInset=true
 gui.DisplayOrder=999999
-gui.Parent=lp:WaitForChild("PlayerGui")
+gui.Parent=playerGui
+Runtime.uiRoot=gui
 
-local UserInputService=game:GetService("UserInputService")
+local THEME={
+	Bg=Color3.fromRGB(11,17,27),
+	Panel=Color3.fromRGB(18,27,40),
+	Surface=Color3.fromRGB(24,34,49),
+	SurfaceAlt=Color3.fromRGB(31,43,60),
+	Accent=Color3.fromRGB(171,83,255),
+	Accent2=Color3.fromRGB(226,104,255),
+	Neon=Color3.fromRGB(86,190,255),
+	Success=Color3.fromRGB(183,92,255),
+	Danger=Color3.fromRGB(255,102,119),
+	Text=Color3.fromRGB(232,239,247),
+	Muted=Color3.fromRGB(184,190,208),
+	Border=Color3.fromRGB(118,72,178),
+	Warm=Color3.fromRGB(255,180,84),
+}
 
 local function corner(o,r)
 	local c=Instance.new("UICorner")
-	c.CornerRadius=UDim.new(0,r or 12)
+	c.CornerRadius=UDim.new(0,r)
 	c.Parent=o
-	return c
 end
 
-local function stroke(o,col,t,trans)
+local function stroke(o,color,thickness,transparency)
 	local s=Instance.new("UIStroke")
-	s.Color=col or Color3.fromRGB(120,110,210)
-	s.Thickness=t or 1
-	s.Transparency=trans or 0
+	s.Color=color
+	s.Thickness=thickness
+	s.Transparency=transparency
+	s.ApplyStrokeMode=Enum.ApplyStrokeMode.Border
+	s.LineJoinMode=Enum.LineJoinMode.Round
 	s.Parent=o
 	return s
 end
 
-local function makeText(parent,text,size,font,color)
+local function gradient(o,fromColor,toColor,rotation)
+	local g=Instance.new("UIGradient")
+	g.Color=ColorSequence.new(fromColor,toColor)
+	g.Rotation=rotation or 0
+	g.Parent=o
+	return g
+end
+
+local function neonStroke(o,thickness,transparency)
+	local s=stroke(o,THEME.Accent,thickness or 1.2,transparency or 0.42)
+	gradient(s,THEME.Accent2,THEME.Neon,28)
+	return s
+end
+
+local function label(parent,text,size,font,color)
 	local l=Instance.new("TextLabel")
 	l.Parent=parent
 	l.BackgroundTransparency=1
-	l.Text=text or ""
-	l.TextColor3=color or Color3.fromRGB(232,236,255)
+	l.Text=text
+	l.TextColor3=color or THEME.Text
 	l.Font=font or Enum.Font.GothamBold
 	l.TextSize=size or 12
 	l.TextXAlignment=Enum.TextXAlignment.Left
@@ -929,1058 +2488,829 @@ local function makeText(parent,text,size,font,color)
 	return l
 end
 
-local function makeBtn(parent,text,color)
+local function button(parent,text,color)
 	local b=Instance.new("TextButton")
 	b.Parent=parent
 	b.Text=text
-	b.TextColor3=Color3.fromRGB(238,241,255)
+	b.TextColor3=THEME.Text
 	b.BackgroundColor3=color
-	b.BackgroundTransparency=0.06
+	b.BackgroundTransparency=0.10
 	b.BorderSizePixel=0
 	b.AutoButtonColor=true
 	b.Font=Enum.Font.GothamBlack
-	b.TextSize=12
-	corner(b,14)
-	stroke(b,Color3.fromRGB(255,255,255),1,0.88)
+	b.TextSize=13
+	corner(b,8)
+	local edge=neonStroke(b,1,0.68)
+	edge.Name="NeonEdge"
 	return b
 end
 
+local function viewportSize()
+	local camera=workspace.CurrentCamera
+	return camera and camera.ViewportSize or Vector2.new(800,600)
+end
+
+local initialViewport=viewportSize()
+local minWindowWidth=math.max(280,math.min(320,initialViewport.X-12))
+local minWindowHeight=math.max(360,math.min(410,initialViewport.Y-12))
+local defaultWidth=math.min(560,math.max(minWindowWidth,math.floor(initialViewport.X*0.62)))
+local defaultHeight=math.min(410,math.max(minWindowHeight,math.floor(initialViewport.Y*0.60)))
+
 local main=Instance.new("Frame")
 main.Parent=gui
-main.Size=UDim2.new(0,300,0,414)
-main.Position=UDim2.new(0,10,0,74)
-main.BackgroundColor3=Color3.fromRGB(8,10,18)
-main.BackgroundTransparency=0.10
+main.Size=UDim2.fromOffset(defaultWidth,defaultHeight)
+main.Position=UDim2.fromOffset(
+	math.max(6,math.floor((initialViewport.X-defaultWidth)/2)),
+	math.max(18,math.floor((initialViewport.Y-defaultHeight)/2))
+)
+main.BackgroundColor3=THEME.Bg
+main.BackgroundTransparency=0.08
 main.BorderSizePixel=0
 main.Active=true
-corner(main,22)
-stroke(main,Color3.fromRGB(95,85,180),1.4,0.2)
+main.ClipsDescendants=true
+corner(main,14)
+local mainStroke=neonStroke(main,1.6,0.24)
+gradient(main,THEME.Panel,THEME.Bg,125)
 
-local top=Instance.new("Frame")
-top.Parent=main
-top.Size=UDim2.new(1,-14,0,46)
-top.Position=UDim2.new(0,7,0,7)
-top.BackgroundColor3=Color3.fromRGB(14,16,30)
-top.BackgroundTransparency=0.08
-top.BorderSizePixel=0
-corner(top,18)
-stroke(top,Color3.fromRGB(70,68,130),1,0.45)
+local topBar=Instance.new("Frame")
+topBar.Parent=main
+topBar.Size=UDim2.new(1,0,0,48)
+topBar.BackgroundColor3=THEME.Panel
+topBar.BackgroundTransparency=0.18
+topBar.BorderSizePixel=0
+topBar.Active=true
+gradient(topBar,THEME.Panel,THEME.Surface,0)
 
-local icon=Instance.new("TextLabel")
-icon.Parent=top
-icon.Size=UDim2.new(0,30,0,30)
-icon.Position=UDim2.new(0,9,0,8)
-icon.BackgroundColor3=Color3.fromRGB(42,38,86)
-icon.BackgroundTransparency=0.05
-icon.Text="◆"
-icon.TextColor3=Color3.fromRGB(150,130,255)
-icon.Font=Enum.Font.GothamBlack
-icon.TextSize=18
-corner(icon,13)
+local headerLine=Instance.new("Frame")
+headerLine.Parent=topBar
+headerLine.Size=UDim2.new(1,0,0,1)
+headerLine.Position=UDim2.new(0,0,1,-1)
+headerLine.BackgroundColor3=THEME.Border
+headerLine.BackgroundTransparency=0.58
+headerLine.BorderSizePixel=0
 
-local title=makeText(top,"BUG HUB",18,Enum.Font.GothamBlack,Color3.fromRGB(248,249,255))
-title.Size=UDim2.new(1,-108,0,22)
-title.Position=UDim2.new(0,46,0,6)
+local brand=button(topBar,">_",THEME.SurfaceAlt)
+brand.Size=UDim2.fromOffset(30,30)
+brand.Position=UDim2.fromOffset(9,9)
+brand.TextColor3=THEME.Accent
+brand.TextSize=12
 
-local sub=makeText(top,"камень • lock • punch",10,Enum.Font.GothamBold,Color3.fromRGB(165,172,205))
-sub.Size=UDim2.new(1,-108,0,16)
-sub.Position=UDim2.new(0,47,0,26)
+local title=label(topBar,"ROCK BUG HUB",14,Enum.Font.GothamBold,THEME.Text)
+title.Size=UDim2.new(1,-130,0,20)
+title.Position=UDim2.fromOffset(49,5)
 
-local min=makeBtn(top,"−",Color3.fromRGB(42,39,78))
-min.Size=UDim2.new(0,29,0,29)
-min.Position=UDim2.new(1,-66,0,9)
-min.TextSize=18
+local author=label(topBar,"УПРАВЛЕНИЕ СКРИПТОМ",8,Enum.Font.GothamBold,THEME.Muted)
+author.Size=UDim2.new(1,-130,0,14)
+author.Position=UDim2.fromOffset(50,26)
 
-local close=makeBtn(top,"×",Color3.fromRGB(78,28,42))
-close.Size=UDim2.new(0,29,0,29)
-close.Position=UDim2.new(1,-33,0,9)
-close.TextSize=18
-close.TextColor3=Color3.fromRGB(255,210,218)
+local closeBtn=button(topBar,"×",THEME.SurfaceAlt)
+closeBtn.Size=UDim2.fromOffset(26,26)
+closeBtn.Position=UDim2.new(1,-34,0,11)
+closeBtn.TextColor3=THEME.Danger
+closeBtn.TextSize=19
 
-local mini=makeBtn(gui,"BUG HUB",Color3.fromRGB(46,42,120))
-mini.Size=UDim2.new(0,90,0,36)
-mini.Position=main.Position
-mini.Visible=false
-mini.TextSize=11
+local minimizeBtn=button(topBar,"−",THEME.SurfaceAlt)
+minimizeBtn.Size=UDim2.fromOffset(26,26)
+minimizeBtn.Position=UDim2.new(1,-64,0,11)
+minimizeBtn.TextColor3=THEME.Muted
+minimizeBtn.TextSize=18
 
-local selectedCard=Instance.new("Frame")
-selectedCard.Parent=main
-selectedCard.Size=UDim2.new(1,-14,0,48)
-selectedCard.Position=UDim2.new(0,7,0,60)
-selectedCard.BackgroundColor3=Color3.fromRGB(15,18,32)
-selectedCard.BackgroundTransparency=0.07
-selectedCard.BorderSizePixel=0
-corner(selectedCard,18)
-stroke(selectedCard,Color3.fromRGB(65,62,120),1,0.45)
+local rail=Instance.new("Frame")
+rail.Parent=main
+rail.Size=UDim2.new(0,82,1,-48)
+rail.Position=UDim2.fromOffset(0,48)
+rail.BackgroundColor3=THEME.Panel
+rail.BackgroundTransparency=0.20
+rail.BorderSizePixel=0
 
-local selectedLabel=makeText(selectedCard,"ВЫБРАНО",9,Enum.Font.GothamBlack,Color3.fromRGB(135,145,180))
-selectedLabel.Size=UDim2.new(1,-24,0,14)
-selectedLabel.Position=UDim2.new(0,10,0,6)
+local railLine=Instance.new("Frame")
+railLine.Parent=rail
+railLine.Size=UDim2.new(0,1,1,0)
+railLine.Position=UDim2.new(1,-1,0,0)
+railLine.BackgroundColor3=THEME.Border
+railLine.BackgroundTransparency=0.62
+railLine.BorderSizePixel=0
 
-local selectedName=makeText(selectedCard,"-",18,Enum.Font.GothamBlack,Color3.fromRGB(255,238,185))
-selectedName.Size=UDim2.new(1,-20,0,24)
-selectedName.Position=UDim2.new(0,10,0,20)
+local function styleTab(tab,y)
+	tab.Size=UDim2.new(1,-12,0,52)
+	tab.Position=UDim2.fromOffset(6,y)
+	tab.TextSize=9
+	tab.TextWrapped=true
+	tab.BackgroundTransparency=0.52
+	local tabStroke=neonStroke(tab,1.1,0.66)
+	tabStroke.Name="TabStroke"
 
-local status=makeText(main,"Готово",11,Enum.Font.GothamBold,Color3.fromRGB(210,216,245))
-status.Size=UDim2.new(1,-14,0,28)
-status.Position=UDim2.new(0,7,0,114)
+	local mark=Instance.new("Frame")
+	mark.Name="ActiveMark"
+	mark.Parent=tab
+	mark.Size=UDim2.new(0,4,1,-12)
+	mark.Position=UDim2.fromOffset(0,6)
+	mark.BackgroundColor3=THEME.Accent
+	mark.BorderSizePixel=0
+	mark.Visible=false
+	corner(mark,2)
+end
 
-local versionText=makeText(main,HUB_VERSION,9,Enum.Font.GothamBlack,Color3.fromRGB(150,158,190))
-versionText.Name="VersionText"
-versionText.Size=UDim2.new(1,-18,0,14)
-versionText.Position=UDim2.new(0,9,0,396)
-versionText.TextXAlignment=Enum.TextXAlignment.Center
-status.BackgroundColor3=Color3.fromRGB(9,11,24)
-status.BackgroundTransparency=0.20
+local bugTab=button(rail,"◈\nКАМНИ",THEME.Accent)
+styleTab(bugTab,6)
+
+local trainTab=button(rail,"▤\nТРЕНИРОВКА",THEME.Surface)
+styleTab(trainTab,62)
+
+local rebTab=button(rail,"↻\nРЕБИРТЫ",THEME.Surface)
+styleTab(rebTab,118)
+
+local killTab=button(rail,"✦\nАВТОКИЛ",THEME.Surface)
+styleTab(killTab,174)
+
+local crystalTab=button(rail,"◇\nКРИСТАЛЛЫ",THEME.Surface)
+styleTab(crystalTab,230)
+
+local rescanBtn=button(rail,"ПЕРЕСЧИТАТЬ",THEME.SurfaceAlt)
+rescanBtn.Size=UDim2.new(1,-12,0,28)
+rescanBtn.Position=UDim2.fromOffset(6,286)
+rescanBtn.TextSize=9
+
+local panicBtn=button(rail,"СТОП",THEME.Danger)
+panicBtn.Size=UDim2.new(1,-12,0,28)
+panicBtn.Position=UDim2.new(0,6,1,-34)
+panicBtn.TextSize=9
+
+local content=Instance.new("Frame")
+content.Parent=main
+content.Size=UDim2.new(1,-82,1,-48)
+content.Position=UDim2.fromOffset(82,48)
+content.BackgroundColor3=THEME.Bg
+content.BackgroundTransparency=0.38
+content.BorderSizePixel=0
+content.ClipsDescendants=true
+
+local quickBar=Instance.new("Frame")
+quickBar.Parent=content
+quickBar.Size=UDim2.new(1,-12,0,64)
+quickBar.Position=UDim2.fromOffset(6,5)
+quickBar.BackgroundColor3=THEME.Surface
+quickBar.BackgroundTransparency=0.14
+quickBar.BorderSizePixel=0
+corner(quickBar,10)
+neonStroke(quickBar,1.2,0.52)
+gradient(quickBar,THEME.Surface,THEME.Panel,0)
+
+local quickTitle=label(quickBar,"⚡  ВАЖНОЕ",11,Enum.Font.GothamBold,THEME.Text)
+quickTitle.Size=UDim2.new(1,-16,0,18)
+quickTitle.Position=UDim2.fromOffset(8,3)
+
+local quickBody=Instance.new("Frame")
+quickBody.Parent=quickBar
+quickBody.Size=UDim2.new(1,-12,0,34)
+quickBody.Position=UDim2.fromOffset(6,24)
+quickBody.BackgroundTransparency=1
+
+local statusPanel=Instance.new("Frame")
+statusPanel.Parent=content
+statusPanel.Size=UDim2.new(1,-12,0,40)
+statusPanel.Position=UDim2.new(0,6,1,-46)
+statusPanel.BackgroundColor3=THEME.Surface
+statusPanel.BackgroundTransparency=0.30
+statusPanel.BorderSizePixel=0
+corner(statusPanel,10)
+neonStroke(statusPanel,1.1,0.58)
+
+local statusTitle=label(statusPanel,"⌁  СТАТУС",8,Enum.Font.GothamBold,THEME.Accent)
+statusTitle.Size=UDim2.new(1,-12,0,12)
+statusTitle.Position=UDim2.fromOffset(6,1)
+
+local status=label(statusPanel,"ГОТОВО",9,Enum.Font.GothamBold,THEME.Text)
+status.Size=UDim2.new(0.62,-7,0,21)
+status.Position=UDim2.fromOffset(4,14)
+status.BackgroundColor3=THEME.SurfaceAlt
+status.BackgroundTransparency=0.34
 status.BorderSizePixel=0
 status.TextXAlignment=Enum.TextXAlignment.Center
-corner(status,13)
-stroke(status,Color3.fromRGB(55,52,95),1,0.55)
+status.TextWrapped=false
+status.TextTruncate=Enum.TextTruncate.AtEnd
+corner(status,7)
+neonStroke(status,1,0.66)
 
-local function setStatus(t)
-	status.Text=tostring(t or "")
+local net=label(statusPanel,"PING ? | УДАР 0/s",8,Enum.Font.GothamBold,THEME.Accent)
+net.Size=UDim2.new(0.38,-5,0,21)
+net.Position=UDim2.new(0.62,1,0,14)
+net.BackgroundColor3=THEME.SurfaceAlt
+net.BackgroundTransparency=0.34
+net.BorderSizePixel=0
+net.TextXAlignment=Enum.TextXAlignment.Center
+net.TextWrapped=false
+net.TextTruncate=Enum.TextTruncate.AtEnd
+corner(net,7)
+neonStroke(net,1,0.66)
+
+Runtime.ui={status=status,net=net}
+
+local function makePage(color)
+	local page=Instance.new("ScrollingFrame")
+	page.Parent=content
+	page.Size=UDim2.new(1,-12,1,-126)
+	page.Position=UDim2.fromOffset(6,75)
+	page.BackgroundTransparency=1
+	page.BorderSizePixel=0
+	page.ScrollBarThickness=0
+	page.ScrollBarImageColor3=color
+	page.CanvasSize=UDim2.new(0,0,0,0)
+	page.ScrollingDirection=Enum.ScrollingDirection.Y
+	page.ScrollingEnabled=false
+	return page
 end
 
-local list=Instance.new("ScrollingFrame")
-list.Parent=main
-list.Size=UDim2.new(1,-14,0,130)
-list.Position=UDim2.new(0,7,0,150)
-list.BackgroundColor3=Color3.fromRGB(7,8,17)
-list.BackgroundTransparency=0.18
-list.BorderSizePixel=0
-list.ScrollBarThickness=3
-list.ScrollBarImageColor3=Color3.fromRGB(100,92,180)
-list.CanvasSize=UDim2.new(0,0,0,0)
-list.Active=true
-corner(list,18)
-stroke(list,Color3.fromRGB(48,48,90),1,0.52)
+local bugPage=makePage(THEME.Accent)
+local trainPage=makePage(THEME.Success)
+trainPage.Visible=false
+local rebPage=makePage(THEME.Accent2)
+rebPage.Visible=false
+local killPage=makePage(THEME.Danger)
+killPage.Visible=false
+local crystalPage=makePage(THEME.Neon)
+crystalPage.Visible=false
 
-local listPad=Instance.new("UIPadding")
-listPad.Parent=list
-listPad.PaddingTop=UDim.new(0,8)
-listPad.PaddingBottom=UDim.new(0,8)
-listPad.PaddingLeft=UDim.new(0,8)
-listPad.PaddingRight=UDim.new(0,8)
+local resizeHandle=button(main,"◢",THEME.SurfaceAlt)
+resizeHandle.Size=UDim2.fromOffset(18,18)
+resizeHandle.Position=UDim2.new(1,-18,1,-18)
+resizeHandle.TextColor3=THEME.Accent
+resizeHandle.TextSize=13
+resizeHandle.BackgroundTransparency=0.42
 
-local listLayout=Instance.new("UIListLayout")
-listLayout.Parent=list
-listLayout.SortOrder=Enum.SortOrder.LayoutOrder
-listLayout.Padding=UDim.new(0,7)
-listLayout.HorizontalAlignment=Enum.HorizontalAlignment.Center
+local miniButton=button(gui,"RH\n+",THEME.Panel)
+miniButton.Size=UDim2.fromOffset(42,42)
+miniButton.Position=main.Position
+miniButton.TextColor3=THEME.Accent
+miniButton.TextSize=12
+miniButton.Visible=false
+miniButton.Active=true
+miniButton.ZIndex=30
+neonStroke(miniButton,1.5,0.18)
+gradient(miniButton,THEME.Surface,THEME.Bg,135)
 
-local buttons={}
+local function listLayout(frame)
+	local pad=Instance.new("UIPadding")
+	pad.Parent=frame
+	pad.PaddingTop=UDim.new(0,2)
+	pad.PaddingBottom=UDim.new(0,2)
+	pad.PaddingLeft=UDim.new(0,1)
+	pad.PaddingRight=UDim.new(0,1)
 
-local function updateSelected()
-	if selected then
-		selectedName.Text=selected.label.."  •  "..tostring(selected.req)
-	else
-		selectedName.Text="-"
-	end
+	local list=Instance.new("UIListLayout")
+	list.Parent=frame
+	list.SortOrder=Enum.SortOrder.LayoutOrder
+	list.Padding=UDim.new(0,5)
+	return list
 end
 
-local function refreshButtons()
-	for _,b in pairs(buttons)do
-		if b and b.Parent then b:Destroy()end
-	end
-	buttons={}
+local bugList=listLayout(bugPage)
+local trainList=listLayout(trainPage)
+local rebList=listLayout(rebPage)
+local killList=listLayout(killPage)
+local crystalList=listLayout(crystalPage)
 
-	for i,row in ipairs(ROCKS)do
-		local info=rockCache[row.req]
-		local active=selected and selected.id==row.id
-
-		local card=Instance.new("TextButton")
-		card.Parent=list
-		card.Name="Rock_"..row.id
-		card.Size=UDim2.new(1,-4,0,40)
-		card.LayoutOrder=i
-		card.Text=""
-		card.AutoButtonColor=true
-		card.BackgroundColor3=active and Color3.fromRGB(46,42,105) or Color3.fromRGB(14,16,31)
-		card.BackgroundTransparency=active and 0.02 or 0.10
-		card.BorderSizePixel=0
-		corner(card,15)
-		stroke(card,active and Color3.fromRGB(145,120,255) or Color3.fromRGB(52,52,95),active and 1.4 or 1,active and 0.08 or 0.45)
-
-		local leftBar=Instance.new("Frame")
-		leftBar.Parent=card
-		leftBar.Size=UDim2.new(0,4,1,-12)
-		leftBar.Position=UDim2.new(0,8,0,6)
-		leftBar.BackgroundColor3=info and row.color or Color3.fromRGB(75,78,100)
-		leftBar.BorderSizePixel=0
-		corner(leftBar,6)
-
-		local name=makeText(card,row.label,12,Enum.Font.GothamBlack,active and Color3.fromRGB(255,240,190) or Color3.fromRGB(230,234,255))
-		name.Size=UDim2.new(1,-62,0,18)
-		name.Position=UDim2.new(0,20,0,4)
-
-		local meta=makeText(card,"req "..tostring(row.req),10,Enum.Font.GothamBold,Color3.fromRGB(145,153,185))
-		meta.Size=UDim2.new(1,-72,0,18)
-		meta.Position=UDim2.new(0,20,0,22)
-
-		local ok=makeText(card,info and "найден" or "нет",10,Enum.Font.GothamBlack,info and Color3.fromRGB(100,255,160) or Color3.fromRGB(150,150,170))
-		ok.Size=UDim2.new(0,46,0,20)
-		ok.Position=UDim2.new(1,-54,0,10)
-		ok.TextXAlignment=Enum.TextXAlignment.Center
-		ok.BackgroundColor3=info and Color3.fromRGB(15,55,34) or Color3.fromRGB(36,36,48)
-		ok.BackgroundTransparency=0.12
-		corner(ok,11)
-
-		card.Activated:Connect(function()
-			selected=row
-			updateSelected()
-			refreshButtons()
-			if ultraOptEnabled then
-				setLowMap(false,nil,nil)
-				local old=_G.RockBugLowMapTransparency
-				_G.RockBugLowMapTransparency=1
-				local info=getRock(selected)
-				setLowMap(true,info and info.model,nil)
-				_G.RockBugLowMapTransparency=old
-			end
-			setStatus("Камень: "..row.label)
-		end)
-
-		table.insert(buttons,card)
-	end
-
-	list.CanvasSize=UDim2.new(0,0,0,#ROCKS*47+16)
-	updateSelected()
+local function updateCanvas()
+	task.defer(function()
+		bugPage.CanvasSize=UDim2.new(0,0,0,bugList.AbsoluteContentSize.Y+20)
+		trainPage.CanvasSize=UDim2.new(0,0,0,trainList.AbsoluteContentSize.Y+20)
+		rebPage.CanvasSize=UDim2.new(0,0,0,rebList.AbsoluteContentSize.Y+20)
+		killPage.CanvasSize=UDim2.new(0,0,0,killList.AbsoluteContentSize.Y+20)
+		crystalPage.CanvasSize=UDim2.new(0,0,0,crystalList.AbsoluteContentSize.Y+20)
+	end)
 end
 
-local row1=Instance.new("Frame")
-row1.Parent=main
-row1.Size=UDim2.new(1,-14,0,36)
-row1.Position=UDim2.new(0,7,0,288)
-row1.BackgroundTransparency=1
+addConn(bugList:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(updateCanvas))
+addConn(trainList:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(updateCanvas))
+addConn(rebList:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(updateCanvas))
+addConn(killList:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(updateCanvas))
+addConn(crystalList:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(updateCanvas))
 
-local lockBtn=makeBtn(row1,"LOCK",Color3.fromRGB(42,84,160))
-lockBtn.Size=UDim2.new(0.5,-5,1,0)
-lockBtn.Position=UDim2.new(0,0,0,0)
+local function card(parent,height)
+	local f=Instance.new("Frame")
+	f.Parent=parent
+	f.Size=UDim2.new(1,0,0,height)
+	f.BackgroundColor3=THEME.Surface
+	f.BackgroundTransparency=0.16
+	f.BorderSizePixel=0
+	corner(f,10)
+	neonStroke(f,1.1,0.48)
+	gradient(f,THEME.Surface,THEME.Bg,115)
+	return f
+end
 
-local hitBtn=makeBtn(row1,"BUG HIT",Color3.fromRGB(30,125,72))
-hitBtn.Size=UDim2.new(0.5,-5,1,0)
-hitBtn.Position=UDim2.new(0.5,5,0,0)
+local function makeFeaturePanel(parent,titleText,height,columns)
+	local panel=card(parent,height)
+	panel.LayoutOrder=1
 
-local row2=Instance.new("Frame")
-row2.Parent=main
-row2.Size=UDim2.new(1,-14,0,36)
-row2.Position=UDim2.new(0,7,0,330)
-row2.BackgroundTransparency=1
+	local icon=label(panel,"ϟ",14,Enum.Font.GothamBold,THEME.Accent)
+	icon.Size=UDim2.fromOffset(20,20)
+	icon.Position=UDim2.fromOffset(8,4)
+	icon.TextXAlignment=Enum.TextXAlignment.Center
 
-local unlockBtn=makeBtn(row2,"UNLOCK",Color3.fromRGB(120,70,38))
-unlockBtn.Size=UDim2.new(0.5,-5,1,0)
-unlockBtn.Position=UDim2.new(0,0,0,0)
+	local heading=label(panel,titleText,12,Enum.Font.GothamBold,THEME.Text)
+	heading.Size=UDim2.new(1,-40,0,20)
+	heading.Position=UDim2.fromOffset(32,4)
 
-local ultraBtn=makeBtn(row2,"ULTRA",Color3.fromRGB(82,58,135))
-ultraBtn.Size=UDim2.new(0.5,-5,1,0)
-ultraBtn.Position=UDim2.new(0.5,5,0,0)
+	local body=Instance.new("Frame")
+	body.Parent=panel
+	body.Size=UDim2.new(1,-14,1,-34)
+	body.Position=UDim2.fromOffset(7,28)
+	body.BackgroundTransparency=1
 
-local row3=Instance.new("Frame")
-row3.Parent=main
-row3.Size=UDim2.new(1,-14,0,36)
-row3.Position=UDim2.new(0,7,0,372)
-row3.BackgroundTransparency=1
+	local grid=Instance.new("UIGridLayout")
+	grid.Parent=body
+	grid.SortOrder=Enum.SortOrder.LayoutOrder
+	grid.CellPadding=UDim2.fromOffset(5,5)
+	grid.CellSize=UDim2.new(1/(columns or 2),-4,0,50)
+	return panel,body,grid
+end
 
-local antiBtn=makeBtn(row3,"AFK ON",Color3.fromRGB(42,84,145))
-antiBtn.Size=UDim2.new(0.5,-5,1,0)
-antiBtn.Position=UDim2.new(0,0,0,0)
+local function makeSettingsPanel(parent,titleText,height)
+	local panel=card(parent,height)
 
-local stopBtn=makeBtn(row3,"STOP",Color3.fromRGB(122,34,48))
-stopBtn.Size=UDim2.new(0.5,-5,1,0)
-stopBtn.Position=UDim2.new(0.5,5,0,0)
-stopBtn.TextColor3=Color3.fromRGB(255,230,236)
+	local icon=label(panel,"☷",13,Enum.Font.GothamBold,THEME.Accent)
+	icon.Size=UDim2.fromOffset(20,20)
+	icon.Position=UDim2.fromOffset(8,4)
+	icon.TextXAlignment=Enum.TextXAlignment.Center
 
-local lastReport=""
+	local heading=label(panel,titleText,12,Enum.Font.GothamBold,THEME.Text)
+	heading.Size=UDim2.new(1,-40,0,20)
+	heading.Position=UDim2.fromOffset(32,4)
 
-lockBtn.Activated:Connect(function()
-	local ok,res=tpInsideRock(selected)
-	if ok then
-		setStatus("LOCK: "..selected.label)
-		lastReport="TP LOCK OK\nRock: "..selected.label.."\nReq: "..selected.req.."\nModel: "..tostring(res.name)
-	else
-		setStatus("LOCK error: "..tostring(res))
-		lastReport="TP LOCK ERROR\nRock: "..selected.label.."\nReq: "..selected.req.."\nError: "..tostring(res)
+	local body=Instance.new("Frame")
+	body.Parent=panel
+	body.Size=UDim2.new(1,-14,1,-34)
+	body.Position=UDim2.fromOffset(7,28)
+	body.BackgroundTransparency=1
+
+	local list=Instance.new("UIListLayout")
+	list.Parent=body
+	list.SortOrder=Enum.SortOrder.LayoutOrder
+	list.Padding=UDim.new(0,3)
+	return panel,body,list
+end
+
+local function makeSlider(parent,name,desc,initial,callback)
+	local row=Instance.new("TextButton")
+	row.Parent=parent
+	row.Size=UDim2.new(1,0,0,44)
+	row.Text=""
+	row.AutoButtonColor=false
+	row.BackgroundColor3=THEME.Surface
+	row.BackgroundTransparency=0.22
+	row.BorderSizePixel=0
+	corner(row,6)
+	neonStroke(row,1,0.72)
+
+	local n=label(row,name,11,Enum.Font.GothamBold,THEME.Text)
+	n.Size=UDim2.new(1,-62,0,16)
+	n.Position=UDim2.new(0,8,0,3)
+
+	local d=label(row,desc,8,Enum.Font.Gotham,THEME.Muted)
+	d.Size=UDim2.new(1,-62,0,15)
+	d.Position=UDim2.new(0,8,0,21)
+
+	local track=Instance.new("Frame")
+	track.Parent=row
+	track.Size=UDim2.new(0,44,0,22)
+	track.Position=UDim2.new(1,-50,0,11)
+	track.BorderSizePixel=0
+	track.BackgroundTransparency=0.04
+	corner(track,13)
+
+	local knob=Instance.new("Frame")
+	knob.Parent=track
+	knob.Size=UDim2.new(0,16,0,16)
+	knob.Position=UDim2.new(0,3,0,3)
+	knob.BackgroundColor3=THEME.Text
+	knob.BorderSizePixel=0
+	corner(knob,10)
+
+	local state=initial and true or false
+	local api={}
+
+	local function paint()
+		if state then
+			track.BackgroundColor3=THEME.Success
+			knob.Position=UDim2.new(1,-19,0,3)
+		else
+			track.BackgroundColor3=THEME.SurfaceAlt
+			knob.Position=UDim2.new(0,3,0,3)
+		end
 	end
-end)
 
-hitBtn.Activated:Connect(function()
-	if hitting then
-		stopHit(setStatus)
-		hitBtn.Text="BUG HIT"
-		hitBtn.BackgroundColor3=Color3.fromRGB(30,125,72)
-	else
-		local ok,msg=tpInsideRock(selected)
-		if not ok then
-			setStatus("BUG error: "..tostring(msg))
+	function api.Set(v,silent)
+		state=v and true or false
+		paint()
+		if callback and not silent then callback(state,api) end
+	end
+
+	function api.Get()
+		return state
+	end
+
+	addConn(row.Activated:Connect(function()
+		api.Set(not state,false)
+	end))
+
+	paint()
+	return api,row
+end
+
+local function makePinnedToggle(parent,name,initial,callback)
+	local row=Instance.new("TextButton")
+	row.Parent=parent
+	row.Text=""
+	row.AutoButtonColor=false
+	row.BackgroundColor3=THEME.SurfaceAlt
+	row.BackgroundTransparency=0.18
+	row.BorderSizePixel=0
+	corner(row,8)
+	local rowStroke=neonStroke(row,1.2,0.52)
+
+	local glyph=label(row,name=="АНТИ-AFK" and "♢" or "◌",15,Enum.Font.GothamBold,THEME.Accent)
+	glyph.Size=UDim2.fromOffset(18,20)
+	glyph.Position=UDim2.fromOffset(4,11)
+	glyph.TextXAlignment=Enum.TextXAlignment.Center
+
+	local n=label(row,name,10,Enum.Font.GothamBold,THEME.Text)
+	n.Size=UDim2.new(1,-31,1,0)
+	n.Position=UDim2.fromOffset(25,0)
+
+	local state=initial and true or false
+	local api={}
+	local function paint()
+		row.BackgroundColor3=state and THEME.SurfaceAlt or THEME.Surface
+		row.BackgroundTransparency=state and 0.08 or 0.30
+		n.TextColor3=state and THEME.Text or THEME.Muted
+		rowStroke.Color=state and THEME.Accent or THEME.Border
+		rowStroke.Thickness=state and 2.2 or 1.1
+		rowStroke.Transparency=state and 0.02 or 0.62
+		glyph.TextColor3=state and THEME.Accent2 or THEME.Muted
+	end
+
+	function api.Set(v,silent)
+		state=v and true or false
+		paint()
+		if callback and not silent then callback(state,api) end
+	end
+
+	function api.Get()
+		return state
+	end
+
+	addConn(row.Activated:Connect(function()
+		api.Set(not state,false)
+	end))
+
+	paint()
+	return api,row
+end
+
+local function makeFeatureToggle(parent,iconText,name,desc,initial,callback)
+	local tile=Instance.new("TextButton")
+	tile.Parent=parent
+	tile.Text=""
+	tile.AutoButtonColor=false
+	tile.BackgroundColor3=THEME.SurfaceAlt
+	tile.BackgroundTransparency=0.16
+	tile.BorderSizePixel=0
+	corner(tile,8)
+	local tileStroke=neonStroke(tile,1.2,0.50)
+
+	local glyph=label(tile,iconText,16,Enum.Font.GothamBold,THEME.Text)
+	glyph.Size=UDim2.fromOffset(20,16)
+	glyph.Position=UDim2.new(0.5,-10,0,2)
+	glyph.TextXAlignment=Enum.TextXAlignment.Center
+
+	local n=label(tile,name,10,Enum.Font.GothamBold,THEME.Text)
+	n.Size=UDim2.new(1,-10,0,15)
+	n.Position=UDim2.fromOffset(5,18)
+	n.TextXAlignment=Enum.TextXAlignment.Center
+
+	local d=label(tile,desc,8,Enum.Font.Gotham,THEME.Muted)
+	d.Size=UDim2.new(1,-10,0,12)
+	d.Position=UDim2.fromOffset(5,33)
+	d.TextXAlignment=Enum.TextXAlignment.Center
+
+	local state=initial and true or false
+	local api={}
+	local function paint()
+		tile.BackgroundColor3=state and THEME.SurfaceAlt or THEME.Surface
+		tile.BackgroundTransparency=state and 0.06 or 0.22
+		tileStroke.Color=state and THEME.Accent or THEME.Border
+		tileStroke.Thickness=state and 2.2 or 1.1
+		tileStroke.Transparency=state and 0.02 or 0.58
+		glyph.TextColor3=state and THEME.Accent or THEME.Text
+		n.TextColor3=state and THEME.Text or THEME.Muted
+	end
+
+	function api.Set(v,silent)
+		state=v and true or false
+		paint()
+		if callback and not silent then callback(state,api) end
+	end
+
+	function api.Get()
+		return state
+	end
+
+	addConn(tile.Activated:Connect(function()
+		api.Set(not state,false)
+	end))
+
+	paint()
+	return api,tile
+end
+
+local function makeNumberInput(parent,name,desc,initial,callback)
+	local row=Instance.new("Frame")
+	row.Parent=parent
+	row.Size=UDim2.new(1,0,0,44)
+	row.BackgroundColor3=THEME.Surface
+	row.BackgroundTransparency=0.22
+	row.BorderSizePixel=0
+	corner(row,6)
+	neonStroke(row,1,0.72)
+
+	local n=label(row,name,11,Enum.Font.GothamBold,THEME.Text)
+	n.Size=UDim2.new(1,-70,0,16)
+	n.Position=UDim2.new(0,8,0,3)
+
+	local d=label(row,desc,8,Enum.Font.Gotham,THEME.Muted)
+	d.Size=UDim2.new(1,-70,0,15)
+	d.Position=UDim2.new(0,8,0,21)
+
+	local box=Instance.new("TextBox")
+	box.Parent=row
+	box.Size=UDim2.new(0,58,0,26)
+	box.Position=UDim2.new(1,-64,0,9)
+	box.BackgroundColor3=THEME.SurfaceAlt
+	box.BackgroundTransparency=0.05
+	box.BorderSizePixel=0
+	box.TextColor3=THEME.Text
+	box.PlaceholderColor3=THEME.Muted
+	box.PlaceholderText="1"
+	box.ClearTextOnFocus=false
+	box.Font=Enum.Font.GothamBlack
+	box.TextSize=12
+	box.Text=tostring(initial or 1)
+	corner(box,10)
+	neonStroke(box,1.2,0.34)
+
+	local value=tonumber(initial) or 1
+	local api={}
+
+	local function commit()
+		local parsed=tonumber((tostring(box.Text):gsub(",",".")))
+		if not parsed then
+			box.Text=tostring(value)
+			setStatus(name..": введи число")
 			return
 		end
-		startHit(selected,setStatus)
-		hitBtn.Text="HITTING"
-		hitBtn.BackgroundColor3=Color3.fromRGB(28,150,82)
+
+		value=math.clamp(parsed,0.1,1000)
+		box.Text=tostring(value)
+		if callback then callback(value,api) end
 	end
-end)
 
-unlockBtn.Activated:Connect(function()
-	stopLock()
-	setStatus("UNLOCK: отпущено")
-end)
-
-ultraBtn.Activated:Connect(function()
-	ultraOptEnabled=not ultraOptEnabled
-	ultraBtn.Text=ultraOptEnabled and "ULTRA ON" or "ULTRA"
-	ultraBtn.BackgroundColor3=ultraOptEnabled and Color3.fromRGB(118,65,160) or Color3.fromRGB(82,58,135)
-
-	if ultraOptEnabled then
-		local old=_G.RockBugLowMapTransparency
-		_G.RockBugLowMapTransparency=1
-		local info=getRock(selected)
-		setLowMap(true,info and info.model,setStatus)
-		_G.RockBugLowMapTransparency=old
-	else
-		setLowMap(false,nil,setStatus)
+	function api.Get()
+		return value
 	end
-end)
 
-antiBtn.Activated:Connect(function()
-	antiAfkEnabled=not antiAfkEnabled
-	antiBtn.Text=antiAfkEnabled and "AFK ON" or "AFK OFF"
-	antiBtn.BackgroundColor3=antiAfkEnabled and Color3.fromRGB(42,84,145) or Color3.fromRGB(105,42,48)
-	setStatus("AFK "..(antiAfkEnabled and "ON" or "OFF"))
-end)
-
-stopBtn.Activated:Connect(function()
-	stopHit()
-	stopLock()
-	ultraOptEnabled=false
-	ultraBtn.Text="ULTRA"
-	ultraBtn.BackgroundColor3=Color3.fromRGB(82,58,135)
-	setLowMap(false,nil,nil)
-	setStatus("Остановлено")
-	hitBtn.Text="BUG HIT"
-	hitBtn.BackgroundColor3=Color3.fromRGB(30,125,72)
-end)
-
-min.Activated:Connect(function()
-	main.Visible=false
-	mini.Visible=true
-end)
-
-mini.Activated:Connect(function()
-	main.Visible=true
-	mini.Visible=false
-end)
-
-close.Activated:Connect(function()
-	stopHit()
-	stopLock()
-	setLowMap(false,nil,nil)
-	if antiAfkConn then antiAfkConn:Disconnect() antiAfkConn=nil end
-	gui:Destroy()
-end)
-
--- drag только за верх
-local dragging=false
-local dragStart=nil
-local startPos=nil
-
-top.InputBegan:Connect(function(input)
-	if input.UserInputType==Enum.UserInputType.MouseButton1 or input.UserInputType==Enum.UserInputType.Touch then
-		dragging=true
-		dragStart=input.Position
-		startPos=main.Position
+	function api.Set(v,silent)
+		local parsed=tonumber(v)
+		if not parsed then return end
+		value=math.clamp(parsed,0.1,1000)
+		box.Text=tostring(value)
+		if callback and not silent then callback(value,api) end
 	end
-end)
 
-UserInputService.InputEnded:Connect(function(input)
-	if input.UserInputType==Enum.UserInputType.MouseButton1 or input.UserInputType==Enum.UserInputType.Touch then
-		dragging=false
-	end
-end)
-
-UserInputService.InputChanged:Connect(function(input)
-	if dragging and (input.UserInputType==Enum.UserInputType.MouseMovement or input.UserInputType==Enum.UserInputType.Touch) then
-		local delta=input.Position-dragStart
-		main.Position=UDim2.new(startPos.X.Scale,startPos.X.Offset+delta.X,startPos.Y.Scale,startPos.Y.Offset+delta.Y)
-		mini.Position=main.Position
-	end
-end)
-
--- Auto scan без отдельной кнопки
-local found=scanRocks()
-refreshButtons()
-local count=0
-for _,row in ipairs(ROCKS)do
-	if found[row.req]then count+=1 end
-end
-setStatus("Готово • "..count.."/"..#ROCKS.." • "..HUB_VERSION)
+	addConn(box.FocusLost:Connect(commit))
+	return api,row
 end
 
--- UI v13.2: separate ROCK / AUTO KILL / CRYSTALS tabs and scrollable neon pickers.
-local UserInputService=game:GetService("UserInputService")
-local ACCENT=Color3.fromRGB(155,92,255)
-local ACCENT2=Color3.fromRGB(94,64,220)
-local BG=Color3.fromRGB(7,8,16)
-local PANEL=Color3.fromRGB(15,17,31)
-local CARD=Color3.fromRGB(23,26,46)
-local TEXT=Color3.fromRGB(239,241,255)
-local MUTED=Color3.fromRGB(157,163,195)
-local GOOD=Color3.fromRGB(84,224,168)
-local BAD=Color3.fromRGB(242,83,112)
+local function makeSelectionRow(parent,titleText,initialText,callback)
+	local row=Instance.new("TextButton")
+	row.Parent=parent
+	row.Size=UDim2.new(1,0,0,32)
+	row.Text=""
+	row.AutoButtonColor=true
+	row.BackgroundColor3=THEME.Surface
+	row.BackgroundTransparency=0.20
+	row.BorderSizePixel=0
+	corner(row,7)
+	local edge=neonStroke(row,1,0.66)
 
-local gui=Instance.new("ScreenGui")
-gui.Name="RockBugHub_v13_1_UltraSmallUI"
-gui.ResetOnSpawn=false
-gui.IgnoreGuiInset=true
-gui.DisplayOrder=999999
-gui.ZIndexBehavior=Enum.ZIndexBehavior.Sibling
-gui.Parent=lp:WaitForChild("PlayerGui")
+	local titleLabel=label(row,titleText,8,Enum.Font.GothamBlack,THEME.Accent2)
+	titleLabel.Size=UDim2.new(0.30,-7,1,0)
+	titleLabel.Position=UDim2.fromOffset(7,0)
 
-local function uiCorner(object,radius)
-	local c=Instance.new("UICorner")
-	c.CornerRadius=UDim.new(0,radius or 12)
-	c.Parent=object
-	return c
+	local valueLabel=label(row,initialText or "ВЫБРАТЬ",9,Enum.Font.GothamBold,THEME.Text)
+	valueLabel.Size=UDim2.new(0.70,-28,1,0)
+	valueLabel.Position=UDim2.new(0.30,0,0,0)
+	valueLabel.TextXAlignment=Enum.TextXAlignment.Right
+	valueLabel.TextWrapped=false
+	valueLabel.TextTruncate=Enum.TextTruncate.AtEnd
+
+	local arrow=label(row,"›",16,Enum.Font.GothamBlack,THEME.Accent)
+	arrow.Size=UDim2.fromOffset(20,32)
+	arrow.Position=UDim2.new(1,-22,0,0)
+	arrow.TextXAlignment=Enum.TextXAlignment.Center
+
+	addConn(row.Activated:Connect(function()
+		edge.Transparency=0.08
+		task.defer(function() if edge.Parent then edge.Transparency=0.66 end end)
+		if callback then callback() end
+	end))
+
+	return {
+		Row=row,
+		Set=function(value) valueLabel.Text=tostring(value or "ВЫБРАТЬ") end,
+		Get=function() return valueLabel.Text end,
+	}
 end
 
-local function uiStroke(object,color,thickness,transparency)
-	local s=Instance.new("UIStroke")
-	s.Color=color or ACCENT
-	s.Thickness=thickness or 1
-	s.Transparency=transparency or 0
-	s.Parent=object
-	return s
-end
-
-local function uiText(parent,value,size,font,color)
-	local label=Instance.new("TextLabel")
-	label.Parent=parent
-	label.BackgroundTransparency=1
-	label.BorderSizePixel=0
-	label.Text=tostring(value or "")
-	label.TextColor3=color or TEXT
-	label.Font=font or Enum.Font.GothamBold
-	label.TextSize=size or 12
-	label.TextXAlignment=Enum.TextXAlignment.Left
-	label.TextYAlignment=Enum.TextYAlignment.Center
-	label.TextWrapped=true
-	return label
-end
-
-local function uiButton(parent,value,color)
-	local button=Instance.new("TextButton")
-	button.Parent=parent
-	button.AutoButtonColor=true
-	button.BackgroundColor3=color or CARD
-	button.BackgroundTransparency=0.04
-	button.BorderSizePixel=0
-	button.Text=tostring(value or "")
-	button.TextColor3=TEXT
-	button.Font=Enum.Font.GothamBlack
-	button.TextSize=11
-	uiCorner(button,12)
-	uiStroke(button,ACCENT,1,0.66)
-	return button
-end
-
-local function uiCard(parent)
-	local card=Instance.new("Frame")
-	card.Parent=parent
-	card.BackgroundColor3=CARD
-	card.BackgroundTransparency=0.08
-	card.BorderSizePixel=0
-	uiCorner(card,14)
-	uiStroke(card,ACCENT,1,0.62)
-	return card
-end
-
-local main=Instance.new("Frame")
-main.Parent=gui
-main.Size=UDim2.new(0,346,0,468)
-main.Position=UDim2.new(0,12,0,72)
-main.BackgroundColor3=BG
-main.BackgroundTransparency=0.06
-main.BorderSizePixel=0
-main.Active=true
-uiCorner(main,20)
-uiStroke(main,ACCENT,1.5,0.18)
-
-local mainGradient=Instance.new("UIGradient")
-mainGradient.Color=ColorSequence.new({
-	ColorSequenceKeypoint.new(0,Color3.fromRGB(14,12,28)),
-	ColorSequenceKeypoint.new(0.55,Color3.fromRGB(7,8,16)),
-	ColorSequenceKeypoint.new(1,Color3.fromRGB(17,10,29)),
-})
-mainGradient.Rotation=120
-mainGradient.Parent=main
-
-local top=uiCard(main)
-top.Size=UDim2.new(1,-14,0,45)
-top.Position=UDim2.new(0,7,0,7)
-top.Active=true
-
-local logo=uiText(top,"RB",15,Enum.Font.GothamBlack,Color3.fromRGB(221,205,255))
-logo.Size=UDim2.new(0,34,0,31)
-logo.Position=UDim2.new(0,7,0,7)
-logo.BackgroundColor3=Color3.fromRGB(50,35,91)
-logo.BackgroundTransparency=0.04
-logo.TextXAlignment=Enum.TextXAlignment.Center
-uiCorner(logo,10)
-uiStroke(logo,ACCENT,1.2,0.18)
-
-local title=uiText(top,"ROCK BUG HUB",15,Enum.Font.GothamBlack,TEXT)
-title.Size=UDim2.new(1,-126,0,20)
-title.Position=UDim2.new(0,48,0,4)
-
-local subtitle=uiText(top,"v13.1 • KILL + CRYSTALS",9,Enum.Font.GothamBold,MUTED)
-subtitle.Size=UDim2.new(1,-126,0,15)
-subtitle.Position=UDim2.new(0,48,0,23)
-
-local minButton=uiButton(top,"-",Color3.fromRGB(42,37,74))
-minButton.Size=UDim2.new(0,29,0,29)
-minButton.Position=UDim2.new(1,-65,0,8)
-minButton.TextSize=17
-
-local closeButton=uiButton(top,"X",Color3.fromRGB(82,29,48))
-closeButton.Size=UDim2.new(0,29,0,29)
-closeButton.Position=UDim2.new(1,-32,0,8)
-closeButton.TextColor3=Color3.fromRGB(255,207,220)
-
-local mini=uiButton(gui,"RB",Color3.fromRGB(45,31,88))
-mini.Size=UDim2.new(0,43,0,43)
-mini.Position=main.Position
-mini.Visible=false
-mini.TextSize=13
-uiStroke(mini,ACCENT,1.5,0.12)
-
-local tabBar=Instance.new("Frame")
-tabBar.Parent=main
-tabBar.Size=UDim2.new(1,-14,0,34)
-tabBar.Position=UDim2.new(0,7,0,59)
-tabBar.BackgroundTransparency=1
-
-local tabButtons={}
-local pages={}
-local function createTab(id,label,index)
-	local button=uiButton(tabBar,label,Color3.fromRGB(22,23,42))
-	button.Size=UDim2.new(1/3,-4,1,0)
-	button.Position=UDim2.new((index-1)/3,(index-1)*2,0,0)
-	button.TextSize=10
-	button.Name="Tab_"..id
-	tabButtons[id]=button
-
-	local page=Instance.new("Frame")
-	page.Parent=main
-	page.Name="Page_"..id
-	page.Size=UDim2.new(1,-14,0,309)
-	page.Position=UDim2.new(0,7,0,100)
-	page.BackgroundTransparency=1
-	page.Visible=false
-	pages[id]=page
-	return button,page
-end
-
-local rockTab,rockPage=createTab("rock","КАМЕНЬ",1)
-local killTab,killPage=createTab("kill","АВТОКИЛ",2)
-local crystalTab,crystalPage=createTab("crystal","КРИСТАЛЛЫ",3)
-
-local status=uiText(main,"ГОТОВО",10,Enum.Font.GothamBlack,Color3.fromRGB(220,224,255))
-status.Size=UDim2.new(1,-14,0,35)
-status.Position=UDim2.new(0,7,0,422)
-status.BackgroundColor3=Color3.fromRGB(13,14,27)
-status.BackgroundTransparency=0.05
-status.BorderSizePixel=0
-status.TextXAlignment=Enum.TextXAlignment.Center
-status.TextTruncate=Enum.TextTruncate.AtEnd
-uiCorner(status,12)
-uiStroke(status,ACCENT,1,0.63)
-
-local function setStatus(value)
-	status.Text=tostring(value or "")
-end
-killStatusFn=setStatus
-crystalStatusFn=setStatus
-
-local activeTab="rock"
-local function showTab(id)
-	activeTab=id
-	for pageId,page in pairs(pages)do page.Visible=pageId==id end
-	for tabId,button in pairs(tabButtons)do
-		local active=tabId==id
-		button.BackgroundColor3=active and Color3.fromRGB(66,43,116)or Color3.fromRGB(22,23,42)
-		button.TextColor3=active and Color3.fromRGB(255,244,255)or MUTED
-		local s=button:FindFirstChildOfClass("UIStroke")
-		if s then
-			s.Color=active and Color3.fromRGB(190,125,255)or ACCENT
-			s.Transparency=active and 0.05 or 0.72
-			s.Thickness=active and 1.4 or 1
-		end
-	end
-end
-
-rockTab.Activated:Connect(function()showTab("rock")end)
-killTab.Activated:Connect(function()showTab("kill")end)
-crystalTab.Activated:Connect(function()showTab("crystal")end)
-
--- ROCK page: all original controls stay available.
-local rockSelected=uiCard(rockPage)
-rockSelected.Size=UDim2.new(1,0,0,43)
-rockSelected.Position=UDim2.new(0,0,0,0)
-
-local rockCaption=uiText(rockSelected,"ВЫБРАННЫЙ КАМЕНЬ",8,Enum.Font.GothamBlack,MUTED)
-rockCaption.Size=UDim2.new(1,-16,0,13)
-rockCaption.Position=UDim2.new(0,9,0,4)
-
-local rockName=uiText(rockSelected,"-",14,Enum.Font.GothamBlack,Color3.fromRGB(246,225,255))
-rockName.Size=UDim2.new(1,-16,0,21)
-rockName.Position=UDim2.new(0,9,0,17)
-
-local rockList=Instance.new("ScrollingFrame")
-rockList.Parent=rockPage
-rockList.Size=UDim2.new(1,0,0,143)
-rockList.Position=UDim2.new(0,0,0,49)
-rockList.BackgroundColor3=Color3.fromRGB(9,10,20)
-rockList.BackgroundTransparency=0.08
-rockList.BorderSizePixel=0
-rockList.ScrollBarThickness=3
-rockList.ScrollBarImageColor3=ACCENT
-rockList.CanvasSize=UDim2.new(0,0,0,0)
-rockList.Active=true
-uiCorner(rockList,14)
-uiStroke(rockList,ACCENT,1,0.70)
-
-local rockPadding=Instance.new("UIPadding")
-rockPadding.Parent=rockList
-rockPadding.PaddingTop=UDim.new(0,6)
-rockPadding.PaddingBottom=UDim.new(0,6)
-rockPadding.PaddingLeft=UDim.new(0,6)
-rockPadding.PaddingRight=UDim.new(0,6)
-
-local rockLayout=Instance.new("UIListLayout")
-rockLayout.Parent=rockList
-rockLayout.SortOrder=Enum.SortOrder.LayoutOrder
-rockLayout.Padding=UDim.new(0,5)
-
-local rockButtons={}
-local function updateRockSelected()
-	rockName.Text=selected and(selected.label.."  •  "..tostring(selected.req))or "-"
-end
-
-local function refreshRockButtons()
-	for _,button in ipairs(rockButtons)do if button.Parent then button:Destroy()end end
-	rockButtons={}
-	for index,row in ipairs(ROCKS)do
-		local found=rockCache[row.req]~=nil
-		local active=selected and selected.id==row.id
-		local button=uiButton(rockList,"",active and Color3.fromRGB(57,38,105)or Color3.fromRGB(19,21,38))
-		button.Name="Rock_"..row.id
-		button.Size=UDim2.new(1,-2,0,35)
-		button.LayoutOrder=index
-		local s=button:FindFirstChildOfClass("UIStroke")
-		if s then
-			s.Color=active and Color3.fromRGB(204,139,255)or Color3.fromRGB(79,61,125)
-			s.Transparency=active and 0.05 or 0.66
-		end
-
-		local marker=Instance.new("Frame")
-		marker.Parent=button
-		marker.Size=UDim2.new(0,3,1,-10)
-		marker.Position=UDim2.new(0,7,0,5)
-		marker.BackgroundColor3=found and row.color or Color3.fromRGB(89,91,112)
-		marker.BorderSizePixel=0
-		uiCorner(marker,4)
-
-		local name=uiText(button,row.label,11,Enum.Font.GothamBlack,active and Color3.fromRGB(255,235,255)or TEXT)
-		name.Size=UDim2.new(1,-95,1,0)
-		name.Position=UDim2.new(0,17,0,0)
-
-		local req=uiText(button,tostring(row.req),9,Enum.Font.GothamBold,found and GOOD or MUTED)
-		req.Size=UDim2.new(0,72,1,0)
-		req.Position=UDim2.new(1,-78,0,0)
-		req.TextXAlignment=Enum.TextXAlignment.Right
-
-		button.Activated:Connect(function()
-			selected=row
-			updateRockSelected()
-			refreshRockButtons()
-			if ultraOptEnabled then
-				setLowMap(false,nil,nil)
-				local old=_G.RockBugLowMapTransparency
-				_G.RockBugLowMapTransparency=1
-				local info=getRock(selected)
-				setLowMap(true,info and info.model,nil)
-				_G.RockBugLowMapTransparency=old
-			end
-			setStatus("КАМЕНЬ: "..row.label)
-		end)
-		table.insert(rockButtons,button)
-	end
-	rockList.CanvasSize=UDim2.new(0,0,0,#ROCKS*40+12)
-	updateRockSelected()
-end
-
-local rockRow1=Instance.new("Frame")
-rockRow1.Parent=rockPage
-rockRow1.Size=UDim2.new(1,0,0,34)
-rockRow1.Position=UDim2.new(0,0,0,199)
-rockRow1.BackgroundTransparency=1
-
-local lockButton=uiButton(rockRow1,"LOCK",Color3.fromRGB(42,72,143))
-lockButton.Size=UDim2.new(0.5,-4,1,0)
-local hitButton=uiButton(rockRow1,"BUG HIT",Color3.fromRGB(31,117,77))
-hitButton.Size=UDim2.new(0.5,-4,1,0)
-hitButton.Position=UDim2.new(0.5,4,0,0)
-
-local rockRow2=Instance.new("Frame")
-rockRow2.Parent=rockPage
-rockRow2.Size=UDim2.new(1,0,0,34)
-rockRow2.Position=UDim2.new(0,0,0,237)
-rockRow2.BackgroundTransparency=1
-
-local unlockButton=uiButton(rockRow2,"UNLOCK",Color3.fromRGB(113,67,38))
-unlockButton.Size=UDim2.new(0.5,-4,1,0)
-local ultraButton=uiButton(rockRow2,"ULTRA",Color3.fromRGB(76,48,130))
-ultraButton.Size=UDim2.new(0.5,-4,1,0)
-ultraButton.Position=UDim2.new(0.5,4,0,0)
-
-local rockRow3=Instance.new("Frame")
-rockRow3.Parent=rockPage
-rockRow3.Size=UDim2.new(1,0,0,34)
-rockRow3.Position=UDim2.new(0,0,0,275)
-rockRow3.BackgroundTransparency=1
-
-local antiButton=uiButton(rockRow3,"ANTI-AFK ON",Color3.fromRGB(42,70,135))
-antiButton.Size=UDim2.new(0.5,-4,1,0)
-local stopButton=uiButton(rockRow3,"STOP ALL",Color3.fromRGB(126,37,58))
-stopButton.Size=UDim2.new(0.5,-4,1,0)
-stopButton.Position=UDim2.new(0.5,4,0,0)
-
-lockButton.Activated:Connect(function()
-	local ok,result=tpInsideRock(selected)
-	setStatus(ok and("LOCK: "..selected.label)or("LOCK ERROR: "..tostring(result)))
-end)
-
-hitButton.Activated:Connect(function()
-	if hitting then
-		stopHit(setStatus)
-		hitButton.Text="BUG HIT"
-		hitButton.BackgroundColor3=Color3.fromRGB(31,117,77)
-		return
-	end
-	local ok,message=tpInsideRock(selected)
-	if not ok then setStatus("BUG ERROR: "..tostring(message))return end
-	startHit(selected,setStatus)
-	hitButton.Text="HITTING"
-	hitButton.BackgroundColor3=Color3.fromRGB(34,153,92)
-end)
-
-unlockButton.Activated:Connect(function()
-	stopLock()
-	setStatus("UNLOCK: свободно")
-end)
-
-ultraButton.Activated:Connect(function()
-	ultraOptEnabled=not ultraOptEnabled
-	ultraButton.Text=ultraOptEnabled and "ULTRA ON"or "ULTRA"
-	ultraButton.BackgroundColor3=ultraOptEnabled and Color3.fromRGB(122,62,174)or Color3.fromRGB(76,48,130)
-	if ultraOptEnabled then
-		local old=_G.RockBugLowMapTransparency
-		_G.RockBugLowMapTransparency=1
-		local info=getRock(selected)
-		setLowMap(true,info and info.model,setStatus)
-		_G.RockBugLowMapTransparency=old
-	else
-		setLowMap(false,nil,setStatus)
-	end
-end)
-
-antiButton.Activated:Connect(function()
-	antiAfkEnabled=not antiAfkEnabled
-	antiButton.Text=antiAfkEnabled and "ANTI-AFK ON"or "ANTI-AFK OFF"
-	antiButton.BackgroundColor3=antiAfkEnabled and Color3.fromRGB(42,70,135)or Color3.fromRGB(102,40,50)
-	setStatus("ANTI-AFK: "..(antiAfkEnabled and "ON"or "OFF"))
-end)
-
--- AUTO KILL page.
-local killHeader=uiCard(killPage)
-killHeader.Size=UDim2.new(1,0,0,39)
-local killTitle=uiText(killHeader,"ТРИ РЕЖИМА АВТОКИЛА",12,Enum.Font.GothamBlack,Color3.fromRGB(239,225,255))
-killTitle.Size=UDim2.new(1,-16,1,0)
-killTitle.Position=UDim2.new(0,9,0,0)
-
-local killModes=Instance.new("Frame")
-killModes.Parent=killPage
-killModes.Size=UDim2.new(1,0,0,48)
-killModes.Position=UDim2.new(0,0,0,46)
-killModes.BackgroundTransparency=1
-
-local killAllButton=uiButton(killModes,"ВСЕ",Color3.fromRGB(34,42,70))
-killAllButton.Size=UDim2.new(1/3,-4,1,0)
-local killWhiteButton=uiButton(killModes,"КРОМЕ БЕЛЫХ",Color3.fromRGB(34,42,70))
-killWhiteButton.Size=UDim2.new(1/3,-4,1,0)
-killWhiteButton.Position=UDim2.new(1/3,2,0,0)
-killWhiteButton.TextSize=9
-local killBlackButton=uiButton(killModes,"ТОЛЬКО ЦЕЛИ",Color3.fromRGB(34,42,70))
-killBlackButton.Size=UDim2.new(1/3,-4,1,0)
-killBlackButton.Position=UDim2.new(2/3,4,0,0)
-killBlackButton.TextSize=9
-
-local whiteCard=uiCard(killPage)
-whiteCard.Size=UDim2.new(1,0,0,78)
-whiteCard.Position=UDim2.new(0,0,0,102)
-local whiteTitle=uiText(whiteCard,"БЕЛЫЙ СПИСОК",11,Enum.Font.GothamBlack,TEXT)
-whiteTitle.Size=UDim2.new(1,-18,0,24)
-whiteTitle.Position=UDim2.new(0,9,0,5)
-local whiteInfo=uiText(whiteCard,"Выбранные игроки не атакуются",9,Enum.Font.GothamBold,MUTED)
-whiteInfo.Size=UDim2.new(1,-18,0,16)
-whiteInfo.Position=UDim2.new(0,9,0,26)
-local whitePickerButton=uiButton(whiteCard,"ВЫБРАТЬ ИГРОКОВ • 0",Color3.fromRGB(46,38,82))
-whitePickerButton.Size=UDim2.new(1,-18,0,27)
-whitePickerButton.Position=UDim2.new(0,9,0,45)
-
-local blackCard=uiCard(killPage)
-blackCard.Size=UDim2.new(1,0,0,78)
-blackCard.Position=UDim2.new(0,0,0,187)
-local blackTitle=uiText(blackCard,"ЧЁРНЫЙ СПИСОК / ЦЕЛИ",11,Enum.Font.GothamBlack,TEXT)
-blackTitle.Size=UDim2.new(1,-18,0,24)
-blackTitle.Position=UDim2.new(0,9,0,5)
-local blackInfo=uiText(blackCard,"Атакуются только выбранные игроки",9,Enum.Font.GothamBold,MUTED)
-blackInfo.Size=UDim2.new(1,-18,0,16)
-blackInfo.Position=UDim2.new(0,9,0,26)
-local blackPickerButton=uiButton(blackCard,"ВЫБРАТЬ ЦЕЛИ • 0",Color3.fromRGB(46,38,82))
-blackPickerButton.Size=UDim2.new(1,-18,0,27)
-blackPickerButton.Position=UDim2.new(0,9,0,45)
-
-local killHint=uiText(killPage,"Повторное нажатие активного режима выключает автокил.",9,Enum.Font.GothamBold,MUTED)
-killHint.Size=UDim2.new(1,0,0,35)
-killHint.Position=UDim2.new(0,0,0,273)
-killHint.TextXAlignment=Enum.TextXAlignment.Center
-
-killRefreshFn=function()
-	whitePickerButton.Text="ВЫБРАТЬ ИГРОКОВ • "..tableCount(killWhitelist)
-	blackPickerButton.Text="ВЫБРАТЬ ЦЕЛИ • "..tableCount(killBlacklist)
-	local mapping={all=killAllButton,whitelist=killWhiteButton,blacklist=killBlackButton}
-	for mode,button in pairs(mapping)do
-		local active=killMode==mode
-		button.BackgroundColor3=active and Color3.fromRGB(108,54,169)or Color3.fromRGB(34,42,70)
-		local s=button:FindFirstChildOfClass("UIStroke")
-		if s then s.Transparency=active and 0.05 or 0.66 end
-	end
-end
-
-local function toggleKillMode(mode)
-	setKillMode(killMode==mode and "off"or mode)
-end
-killAllButton.Activated:Connect(function()toggleKillMode("all")end)
-killWhiteButton.Activated:Connect(function()toggleKillMode("whitelist")end)
-killBlackButton.Activated:Connect(function()toggleKillMode("blacklist")end)
-
--- CRYSTALS page.
-local crystalHeader=uiCard(crystalPage)
-crystalHeader.Size=UDim2.new(1,0,0,39)
-local crystalTitle=uiText(crystalHeader,"АВТОПОКУПКА ИЗ ЛЮБОЙ ТОЧКИ",11,Enum.Font.GothamBlack,Color3.fromRGB(239,225,255))
-crystalTitle.Size=UDim2.new(1,-16,1,0)
-crystalTitle.Position=UDim2.new(0,9,0,0)
-
-local function createCrystalRow(y,label)
-	local card=uiCard(crystalPage)
-	card.Size=UDim2.new(1,0,0,75)
-	card.Position=UDim2.new(0,0,0,y)
-	local caption=uiText(card,label,10,Enum.Font.GothamBlack,MUTED)
-	caption.Size=UDim2.new(1,-18,0,18)
-	caption.Position=UDim2.new(0,9,0,4)
-	local pick=uiButton(card,"ВЫБРАТЬ",Color3.fromRGB(44,36,79))
-	pick.Size=UDim2.new(1,-92,0,39)
-	pick.Position=UDim2.new(0,8,0,28)
-	pick.TextXAlignment=Enum.TextXAlignment.Left
-	pick.TextTruncate=Enum.TextTruncate.AtEnd
-	local pad=Instance.new("UIPadding")
-	pad.Parent=pick
-	pad.PaddingLeft=UDim.new(0,10)
-	local toggle=uiButton(card,"СТАРТ",Color3.fromRGB(38,105,78))
-	toggle.Size=UDim2.new(0,76,0,39)
-	toggle.Position=UDim2.new(1,-84,0,28)
-	return pick,toggle
-end
-
-local crystalPickerButton,crystalToggle=createCrystalRow(46,"КРИСТАЛЛ")
-local petPickerButton,petToggle=createCrystalRow(128,"ПИТОМЕЦ — ОТКРЫВАТЬ ДО ПОЛУЧЕНИЯ")
-local auraPickerButton,auraToggle=createCrystalRow(210,"АУРА — ОТКРЫВАТЬ ДО ПОЛУЧЕНИЯ")
-
-local crystalHint=uiText(crystalPage,"Одновременно работает только один режим.",9,Enum.Font.GothamBold,MUTED)
-crystalHint.Size=UDim2.new(1,0,0,20)
-crystalHint.Position=UDim2.new(0,0,0,289)
-crystalHint.TextXAlignment=Enum.TextXAlignment.Center
-
-crystalRefreshFn=function()
-	crystalPickerButton.Text=tostring(selectedCrystal or "ВЫБРАТЬ КРИСТАЛЛ")
-	petPickerButton.Text=selectedPet and(selectedPet.name.."  •  "..selectedPet.crystal)or "ВЫБРАТЬ ПИТОМЦА"
-	auraPickerButton.Text=selectedAura and(selectedAura.name.."  •  "..selectedAura.crystal)or "ВЫБРАТЬ АУРУ"
-	local mapping={crystal=crystalToggle,pet=petToggle,aura=auraToggle}
-	for mode,button in pairs(mapping)do
-		local active=crystalMode==mode
-		button.Text=active and "СТОП"or "СТАРТ"
-		button.BackgroundColor3=active and Color3.fromRGB(137,42,67)or Color3.fromRGB(38,105,78)
-	end
-end
-
-crystalToggle.Activated:Connect(function()setCrystalMode(crystalMode=="crystal"and "off"or "crystal")end)
-petToggle.Activated:Connect(function()setCrystalMode(crystalMode=="pet"and "off"or "pet")end)
-auraToggle.Activated:Connect(function()setCrystalMode(crystalMode=="aura"and "off"or "aura")end)
-
--- Shared scrollable neon picker used by player, crystal, pet and aura selections.
+-- One modal picker for players, crystals, pets and auras. The list has search,
+-- touch scrolling and a persistent neon selection frame.
 local pickerShade=Instance.new("TextButton")
 pickerShade.Parent=main
 pickerShade.Size=UDim2.new(1,0,1,0)
-pickerShade.Position=UDim2.new(0,0,0,0)
-pickerShade.BackgroundColor3=Color3.fromRGB(2,2,7)
-pickerShade.BackgroundTransparency=0.18
+pickerShade.BackgroundColor3=Color3.fromRGB(3,5,12)
+pickerShade.BackgroundTransparency=0.16
 pickerShade.BorderSizePixel=0
 pickerShade.Text=""
 pickerShade.AutoButtonColor=false
 pickerShade.Visible=false
-pickerShade.ZIndex=50
+pickerShade.ZIndex=80
 
 local pickerPanel=Instance.new("Frame")
 pickerPanel.Parent=pickerShade
-pickerPanel.Size=UDim2.new(1,-26,0,402)
-pickerPanel.Position=UDim2.new(0,13,0,33)
-pickerPanel.BackgroundColor3=Color3.fromRGB(10,10,22)
-pickerPanel.BackgroundTransparency=0.01
+pickerPanel.Size=UDim2.new(1,-34,1,-46)
+pickerPanel.Position=UDim2.fromOffset(17,23)
+pickerPanel.BackgroundColor3=THEME.Bg
+pickerPanel.BackgroundTransparency=0.02
 pickerPanel.BorderSizePixel=0
-pickerPanel.ZIndex=51
-uiCorner(pickerPanel,18)
-uiStroke(pickerPanel,Color3.fromRGB(197,126,255),1.7,0.05)
+pickerPanel.ZIndex=81
+corner(pickerPanel,14)
+neonStroke(pickerPanel,2,0.04)
+gradient(pickerPanel,THEME.Panel,THEME.Bg,125)
 
-local pickerGlow=uiStroke(pickerPanel,Color3.fromRGB(104,56,230),4,0.70)
-pickerGlow.ApplyStrokeMode=Enum.ApplyStrokeMode.Border
+local pickerTitle=label(pickerPanel,"ВЫБОР",13,Enum.Font.GothamBlack,THEME.Text)
+pickerTitle.Size=UDim2.new(1,-54,0,36)
+pickerTitle.Position=UDim2.fromOffset(12,3)
+pickerTitle.ZIndex=82
 
-local pickerTitle=uiText(pickerPanel,"ВЫБОР",13,Enum.Font.GothamBlack,TEXT)
-pickerTitle.Size=UDim2.new(1,-54,0,37)
-pickerTitle.Position=UDim2.new(0,13,0,5)
-pickerTitle.ZIndex=52
-
-local pickerClose=uiButton(pickerPanel,"X",Color3.fromRGB(80,30,52))
-pickerClose.Size=UDim2.new(0,31,0,31)
-pickerClose.Position=UDim2.new(1,-39,0,8)
-pickerClose.ZIndex=53
+local pickerClose=button(pickerPanel,"×",THEME.SurfaceAlt)
+pickerClose.Size=UDim2.fromOffset(30,30)
+pickerClose.Position=UDim2.new(1,-38,0,7)
+pickerClose.TextColor3=THEME.Danger
+pickerClose.TextSize=18
+pickerClose.ZIndex=83
 
 local pickerSearch=Instance.new("TextBox")
 pickerSearch.Parent=pickerPanel
-pickerSearch.Size=UDim2.new(1,-20,0,34)
-pickerSearch.Position=UDim2.new(0,10,0,47)
-pickerSearch.BackgroundColor3=Color3.fromRGB(22,23,42)
-pickerSearch.BackgroundTransparency=0.03
+pickerSearch.Size=UDim2.new(1,-20,0,32)
+pickerSearch.Position=UDim2.fromOffset(10,43)
+pickerSearch.BackgroundColor3=THEME.SurfaceAlt
+pickerSearch.BackgroundTransparency=0.08
 pickerSearch.BorderSizePixel=0
 pickerSearch.ClearTextOnFocus=false
 pickerSearch.PlaceholderText="Поиск..."
-pickerSearch.PlaceholderColor3=Color3.fromRGB(117,122,151)
+pickerSearch.PlaceholderColor3=THEME.Muted
 pickerSearch.Text=""
-pickerSearch.TextColor3=TEXT
+pickerSearch.TextColor3=THEME.Text
 pickerSearch.Font=Enum.Font.GothamBold
 pickerSearch.TextSize=11
 pickerSearch.TextXAlignment=Enum.TextXAlignment.Left
-pickerSearch.ZIndex=52
-uiCorner(pickerSearch,11)
-uiStroke(pickerSearch,ACCENT,1,0.62)
-local searchPad=Instance.new("UIPadding")
-searchPad.Parent=pickerSearch
-searchPad.PaddingLeft=UDim.new(0,11)
-searchPad.PaddingRight=UDim.new(0,11)
+pickerSearch.ZIndex=82
+corner(pickerSearch,8)
+neonStroke(pickerSearch,1.2,0.48)
+local pickerSearchPad=Instance.new("UIPadding")
+pickerSearchPad.Parent=pickerSearch
+pickerSearchPad.PaddingLeft=UDim.new(0,10)
+pickerSearchPad.PaddingRight=UDim.new(0,10)
 
 local pickerList=Instance.new("ScrollingFrame")
 pickerList.Parent=pickerPanel
-pickerList.Size=UDim2.new(1,-20,0,258)
-pickerList.Position=UDim2.new(0,10,0,89)
-pickerList.BackgroundColor3=Color3.fromRGB(6,7,15)
-pickerList.BackgroundTransparency=0.04
+pickerList.Size=UDim2.new(1,-20,1,-132)
+pickerList.Position=UDim2.fromOffset(10,82)
+pickerList.BackgroundColor3=THEME.Bg
+pickerList.BackgroundTransparency=0.10
 pickerList.BorderSizePixel=0
 pickerList.ScrollBarThickness=4
-pickerList.ScrollBarImageColor3=Color3.fromRGB(179,111,255)
+pickerList.ScrollBarImageColor3=THEME.Accent
 pickerList.CanvasSize=UDim2.new(0,0,0,0)
+pickerList.ScrollingDirection=Enum.ScrollingDirection.Y
+pickerList.ZIndex=82
 pickerList.Active=true
-pickerList.ZIndex=52
-uiCorner(pickerList,12)
-uiStroke(pickerList,ACCENT,1,0.72)
+corner(pickerList,10)
+neonStroke(pickerList,1,0.68)
 
 local pickerPadding=Instance.new("UIPadding")
 pickerPadding.Parent=pickerList
-pickerPadding.PaddingTop=UDim.new(0,7)
-pickerPadding.PaddingBottom=UDim.new(0,7)
-pickerPadding.PaddingLeft=UDim.new(0,7)
-pickerPadding.PaddingRight=UDim.new(0,7)
+pickerPadding.PaddingTop=UDim.new(0,6)
+pickerPadding.PaddingBottom=UDim.new(0,6)
+pickerPadding.PaddingLeft=UDim.new(0,6)
+pickerPadding.PaddingRight=UDim.new(0,6)
 
 local pickerLayout=Instance.new("UIListLayout")
 pickerLayout.Parent=pickerList
 pickerLayout.SortOrder=Enum.SortOrder.LayoutOrder
-pickerLayout.Padding=UDim.new(0,6)
+pickerLayout.Padding=UDim.new(0,5)
 
-local pickerDone=uiButton(pickerPanel,"ГОТОВО",Color3.fromRGB(73,45,126))
-pickerDone.Size=UDim2.new(1,-20,0,37)
-pickerDone.Position=UDim2.new(0,10,0,355)
-pickerDone.ZIndex=53
+local pickerDone=button(pickerPanel,"ГОТОВО",THEME.SurfaceAlt)
+pickerDone.Size=UDim2.new(1,-20,0,34)
+pickerDone.Position=UDim2.new(0,10,1,-42)
+pickerDone.ZIndex=83
 
 local pickerState=nil
 local pickerItems={}
+local pickerItemConnections={}
+
+local function clearPickerItems()
+	for _,connection in ipairs(pickerItemConnections) do
+		safe(function() connection:Disconnect() end)
+	end
+	pickerItemConnections={}
+	for _,item in ipairs(pickerItems) do
+		if item.Parent then item:Destroy() end
+	end
+	pickerItems={}
+end
 
 local function closePicker()
 	pickerState=nil
 	pickerShade.Visible=false
 	pickerSearch.Text=""
+	clearPickerItems()
 end
 
 local function renderPicker(resetScroll)
 	local oldCanvas=pickerList.CanvasPosition
-	for _,button in ipairs(pickerItems)do if button.Parent then button:Destroy()end end
-	pickerItems={}
+	clearPickerItems()
 	if not pickerState then return end
-	local query=string.lower(pickerSearch.Text or "")
+
+	local query=string.lower(tostring(pickerSearch.Text or ""))
 	local visibleCount=0
-	for _,option in ipairs(pickerState.options)do
+	for _,option in ipairs(pickerState.options) do
 		local id=tostring(option.id or option.label)
 		local hay=string.lower(tostring(option.label or "").." "..tostring(option.sub or ""))
-		if query==""or string.find(hay,query,1,true)then
-			visibleCount+=1
-			local selectedNow=pickerState.selected[id]==true
-			local item=uiButton(pickerList,"",selectedNow and Color3.fromRGB(68,42,116)or Color3.fromRGB(19,21,38))
-			item.Size=UDim2.new(1,-2,0,48)
+		if query=="" or hay:find(query,1,true) then
+			visibleCount=visibleCount+1
+			local chosen=pickerState.selected[id]==true
+			local item=button(pickerList,"",chosen and THEME.SurfaceAlt or THEME.Surface)
+			item.Size=UDim2.new(1,-2,0,45)
 			item.LayoutOrder=visibleCount
-			item.ZIndex=53
-			local itemStroke=item:FindFirstChildOfClass("UIStroke")
+			item.ZIndex=83
+			item.BackgroundTransparency=chosen and 0.02 or 0.20
+			local itemStroke=item:FindFirstChild("NeonEdge")
 			if itemStroke then
-				itemStroke.Color=selectedNow and Color3.fromRGB(214,151,255)or ACCENT
-				itemStroke.Transparency=selectedNow and 0.04 or 0.72
-				itemStroke.Thickness=selectedNow and 1.4 or 1
+				itemStroke.Transparency=chosen and 0.02 or 0.66
+				itemStroke.Thickness=chosen and 2 or 1
 			end
 
-			local itemName=uiText(item,option.label,11,Enum.Font.GothamBlack,TEXT)
-			itemName.Size=UDim2.new(1,-50,0,21)
-			itemName.Position=UDim2.new(0,11,0,4)
-			itemName.ZIndex=54
-			local itemSub=uiText(item,option.sub or "",9,Enum.Font.GothamBold,MUTED)
-			itemSub.Size=UDim2.new(1,-50,0,17)
-			itemSub.Position=UDim2.new(0,11,0,25)
-			itemSub.ZIndex=54
-			local check=uiText(item,selectedNow and "ON"or ">",10,Enum.Font.GothamBlack,selectedNow and Color3.fromRGB(230,188,255)or MUTED)
-			check.Size=UDim2.new(0,32,1,0)
-			check.Position=UDim2.new(1,-40,0,0)
-			check.TextXAlignment=Enum.TextXAlignment.Center
-			check.ZIndex=54
+			local nameLabel=label(item,option.label,10,Enum.Font.GothamBlack,chosen and THEME.Accent2 or THEME.Text)
+			nameLabel.Size=UDim2.new(1,-48,0,20)
+			nameLabel.Position=UDim2.fromOffset(9,3)
+			nameLabel.ZIndex=84
+			local subLabel=label(item,option.sub or "",8,Enum.Font.Gotham,THEME.Muted)
+			subLabel.Size=UDim2.new(1,-48,0,16)
+			subLabel.Position=UDim2.fromOffset(9,23)
+			subLabel.ZIndex=84
+			local marker=label(item,chosen and "ON" or "›",9,Enum.Font.GothamBlack,chosen and THEME.Accent2 or THEME.Muted)
+			marker.Size=UDim2.fromOffset(34,45)
+			marker.Position=UDim2.new(1,-40,0,0)
+			marker.TextXAlignment=Enum.TextXAlignment.Center
+			marker.ZIndex=84
 
-			item.Activated:Connect(function()
+			local itemConnection=item.Activated:Connect(function()
 				if not pickerState then return end
 				if pickerState.multiple then
 					pickerState.selected[id]=not pickerState.selected[id]
 					renderPicker(false)
 				else
-					local callback=pickerState.onDone
+					local done=pickerState.onDone
 					closePicker()
-					if callback then callback(option)end
+					if done then done(option) end
 				end
 			end)
+			table.insert(pickerItemConnections,itemConnection)
 			table.insert(pickerItems,item)
 		end
 	end
-	pickerList.CanvasSize=UDim2.new(0,0,0,visibleCount*54+14)
+
+	if visibleCount==0 then
+		local empty=label(pickerList,"НИЧЕГО НЕ НАЙДЕНО",10,Enum.Font.GothamBold,THEME.Muted)
+		empty.Size=UDim2.new(1,-2,0,42)
+		empty.LayoutOrder=1
+		empty.TextXAlignment=Enum.TextXAlignment.Center
+		empty.ZIndex=83
+		table.insert(pickerItems,empty)
+	end
+
+	pickerList.CanvasSize=UDim2.new(0,0,0,math.max(54,visibleCount*50+12))
 	if resetScroll then
 		pickerList.CanvasPosition=Vector2.new(0,0)
 	else
@@ -1988,21 +3318,19 @@ local function renderPicker(resetScroll)
 			if pickerList.Parent then pickerList.CanvasPosition=oldCanvas end
 		end)
 	end
-	if pickerState.multiple then
-		pickerDone.Text="ГОТОВО • "..tableCount(pickerState.selected)
-	else
-		pickerDone.Text="ЗАКРЫТЬ"
-	end
+	pickerDone.Text=pickerState.multiple and ("ГОТОВО • "..selectedCount(pickerState.selected)) or "ЗАКРЫТЬ"
 end
 
 local function openPicker(titleText,options,config)
 	config=config or {}
-	local draft={}
-	for key,value in pairs(config.selected or {})do if value then draft[tostring(key)]=true end end
+	local selected={}
+	for id,enabled in pairs(config.selected or {}) do
+		if enabled then selected[tostring(id)]=true end
+	end
 	pickerState={
 		options=options or {},
 		multiple=config.multiple==true,
-		selected=draft,
+		selected=selected,
 		onDone=config.onDone,
 	}
 	pickerTitle.Text=titleText
@@ -2011,196 +3339,983 @@ local function openPicker(titleText,options,config)
 	renderPicker(true)
 end
 
-pickerClose.Activated:Connect(closePicker)
-pickerDone.Activated:Connect(function()
+addConn(pickerClose.Activated:Connect(closePicker))
+addConn(pickerDone.Activated:Connect(function()
 	if not pickerState then return end
 	local state=pickerState
-	if state.multiple and state.onDone then state.onDone(state.selected)end
+	if state.multiple and state.onDone then state.onDone(state.selected) end
 	closePicker()
+end))
+addConn(pickerSearch:GetPropertyChangedSignal("Text"):Connect(function()
+	if pickerState then renderPicker(true) end
+end))
+
+Runtime.closePicker=closePicker
+
+-- BUG PAGE
+
+local bugFeaturePanel,bugFeatureBody=makeFeaturePanel(bugPage,"КАМЕНЬ И УДАРЫ",86,3)
+bugFeaturePanel.LayoutOrder=1
+local bugSettingsPanel,bugSettingsBody=makeSettingsPanel(bugPage,"ПОДБОР КАМНЯ",141)
+bugSettingsPanel.LayoutOrder=2
+
+local selectCard=card(bugSettingsBody,66)
+selectCard.LayoutOrder=1
+local selectTitle=label(selectCard,"АВТОПОДБОР ПО РЕБЁРТАМ",8,Enum.Font.GothamBold,THEME.Accent2)
+selectTitle.Size=UDim2.new(1,-16,0,13)
+selectTitle.Position=UDim2.new(0,8,0,3)
+
+local selectName=label(selectCard,"-",10,Enum.Font.GothamBold,THEME.Warm)
+selectName.Size=UDim2.new(1,-16,0,17)
+selectName.Position=UDim2.new(0,8,0,16)
+
+local calcStats=label(selectCard,"Ребёрты: -  •  XP/удар: -  •  цель: -  •  ударов: -",8,Enum.Font.Gotham,THEME.Text)
+calcStats.Size=UDim2.new(1,-16,0,27)
+calcStats.Position=UDim2.new(0,8,0,34)
+calcStats.TextYAlignment=Enum.TextYAlignment.Top
+
+Runtime.ui.autoRockTitle=selectTitle
+Runtime.ui.autoRockName=selectName
+Runtime.ui.autoRockStats=calcStats
+
+local rockCard=card(bugSettingsBody,38)
+rockCard.LayoutOrder=2
+local currentRockLabel=label(rockCard,"камень не выбран",10,Enum.Font.GothamBold,THEME.Text)
+currentRockLabel.Size=UDim2.new(1,-16,0,14)
+currentRockLabel.Position=UDim2.fromOffset(8,2)
+currentRockLabel.TextXAlignment=Enum.TextXAlignment.Center
+
+local rockScale=Instance.new("TextButton")
+rockScale.Parent=rockCard
+rockScale.Size=UDim2.new(1,-16,0,17)
+rockScale.Position=UDim2.fromOffset(8,17)
+rockScale.Text=""
+rockScale.AutoButtonColor=false
+rockScale.BackgroundTransparency=1
+rockScale.BorderSizePixel=0
+rockScale.Active=true
+
+local rockTrack=Instance.new("Frame")
+rockTrack.Parent=rockScale
+rockTrack.Size=UDim2.new(1,0,0,4)
+rockTrack.Position=UDim2.new(0,0,0.5,-2)
+rockTrack.BackgroundColor3=THEME.Border
+rockTrack.BackgroundTransparency=0.34
+rockTrack.BorderSizePixel=0
+corner(rockTrack,3)
+
+local rockFill=Instance.new("Frame")
+rockFill.Parent=rockTrack
+rockFill.Size=UDim2.new(0,0,1,0)
+rockFill.BackgroundColor3=THEME.Accent
+rockFill.BorderSizePixel=0
+corner(rockFill,3)
+gradient(rockFill,THEME.Accent2,THEME.Neon,0)
+
+for i=1,#ROCKS do
+	local tick=Instance.new("Frame")
+	tick.Parent=rockTrack
+	tick.Size=UDim2.fromOffset(1,8)
+	tick.Position=UDim2.new((i-1)/(#ROCKS-1),0,0.5,-4)
+	tick.AnchorPoint=Vector2.new(0.5,0)
+	tick.BackgroundColor3=THEME.Text
+	tick.BackgroundTransparency=0.42
+	tick.BorderSizePixel=0
+end
+
+local rockKnob=Instance.new("Frame")
+rockKnob.Parent=rockTrack
+rockKnob.Size=UDim2.fromOffset(12,12)
+rockKnob.AnchorPoint=Vector2.new(0.5,0.5)
+rockKnob.Position=UDim2.new(0,0,0.5,0)
+rockKnob.BackgroundColor3=THEME.Text
+rockKnob.BorderSizePixel=0
+corner(rockKnob,6)
+neonStroke(rockKnob,2,0.04)
+
+local rockButtonConnections={}
+local rockScaleDragging=false
+
+local function disconnectRockButtonConnections()
+	for _,connection in ipairs(rockButtonConnections) do
+		safe(function() connection:Disconnect() end)
+	end
+
+	rockButtonConnections={}
+end
+
+local function currentRockIndex()
+	for i,row in ipairs(ROCKS) do
+		if Runtime.selectedRock and Runtime.selectedRock.id==row.id then return i end
+	end
+	return #ROCKS
+end
+
+local refreshRockList
+
+local function chooseManualRock(index)
+	index=math.clamp(math.floor(tonumber(index) or #ROCKS),1,#ROCKS)
+	local row=ROCKS[index]
+	Runtime.autoRockSelection=false
+	Runtime.selectedRock=row
+	selectTitle.Text="РУЧНАЯ НАСТРОЙКА"
+	selectName.Text=row.label.."  •  множитель "..tostring(row.mult)
+
+	local rebs=Runtime.autoRockCalc and Runtime.autoRockCalc.rebirths
+	if rebs then
+		local xp40=(rebs+20)*math.floor(row.mult*40+0.5)
+		calcStats.Text=("Ребёрты: %d  •  XP/удар: %s  •  ручной выбор"):format(rebs,compactXp(xp40))
+	else
+		calcStats.Text="Ребёрты не найдены  •  ручной выбор"
+	end
+
+	refreshRockList()
+	setStatus("Камень: "..row.label)
+end
+
+refreshRockList=function()
+	local row=Runtime.selectedRock
+	if not row then
+		currentRockLabel.Text="камень не выбран"
+		rockFill.Size=UDim2.new(0,0,1,0)
+		rockKnob.Position=UDim2.new(0,0,0.5,0)
+		return
+	end
+
+	local info=rockCache[row.req]
+	local index=currentRockIndex()
+	local ratio=(index-1)/(#ROCKS-1)
+	currentRockLabel.Text=row.label..(info and "  —  доступен" or "  —  не найден")
+	rockFill.Size=UDim2.new(ratio,0,1,0)
+	rockKnob.Position=UDim2.new(ratio,0,0.5,0)
+end
+
+local function rockIndexFromX(x)
+	local width=math.max(1,rockTrack.AbsoluteSize.X)
+	local ratio=math.clamp((x-rockTrack.AbsolutePosition.X)/width,0,1)
+	return math.clamp(math.floor(ratio*(#ROCKS-1)+1.5),1,#ROCKS)
+end
+
+local function selectRockFromInput(input)
+	if input and input.Position then chooseManualRock(rockIndexFromX(input.Position.X)) end
+end
+
+table.insert(rockButtonConnections,rockScale.InputBegan:Connect(function(input)
+	if input.UserInputType==Enum.UserInputType.MouseButton1 or input.UserInputType==Enum.UserInputType.Touch then
+		rockScaleDragging=true
+		selectRockFromInput(input)
+	end
+end))
+
+table.insert(rockButtonConnections,UserInputService.InputChanged:Connect(function(input)
+	if rockScaleDragging and (input.UserInputType==Enum.UserInputType.MouseMovement or input.UserInputType==Enum.UserInputType.Touch) then
+		selectRockFromInput(input)
+	end
+end))
+
+table.insert(rockButtonConnections,UserInputService.InputEnded:Connect(function(input)
+	if input.UserInputType==Enum.UserInputType.MouseButton1 or input.UserInputType==Enum.UserInputType.Touch then
+		rockScaleDragging=false
+	end
+end))
+
+Runtime.refreshRockList=refreshRockList
+
+local lockRockSlider
+local bugSlider
+
+lockRockSlider=makeFeatureToggle(bugFeatureBody,"◇","У КАМНЯ","не даёт отойти",false,function(on,api)
+	if on then
+		local ok,err=teleportInsideSelected()
+
+		if not ok then
+			setStatus("LOCK: "..tostring(err))
+			api.Set(false,true)
+			return
+		end
+
+		Runtime.lockRock=true
+		Runtime.nextLockTick=0
+		setStatus("ФИКСАЦИЯ: включена")
+	else
+		if Runtime.mode=="bug" then
+			stopMode("ФИКСАЦИЯ И АВТОУДАР: выключены")
+		else
+			Runtime.lockRock=false
+			Runtime.lockCF=nil
+			restoreCharacterLock()
+			setStatus("ФИКСАЦИЯ: выключена")
+		end
+	end
 end)
-pickerSearch:GetPropertyChangedSignal("Text"):Connect(function()
-	if pickerState then renderPicker(true)end
+
+bugSlider=makeFeatureToggle(bugFeatureBody,"▷","АВТОУДАР","бьёт автоматически",false,function(on,api)
+	if on then
+		if not startBug() then
+			api.Set(false,true)
+		end
+	else
+		stopMode("АВТОУДАР: выключен")
+	end
 end)
+
+Runtime.leverRefs.lockRock=lockRockSlider
+Runtime.leverRefs.bug=bugSlider
+
+local remoteSlider=makeFeatureToggle(bugFeatureBody,"◎","БЫСТРЫЙ УДАР","ускоряет команды",true,function(on)
+	Runtime.directRemoteEnabled=on
+	setStatus("УСКОРЕНИЕ: "..(on and "включено" or "выключено"))
+end)
+
+-- TRAIN PAGE
+
+local trainFeaturePanel,trainFeatureBody=makeFeaturePanel(trainPage,"ВИД ТРЕНИРОВКИ",139,3)
+trainFeaturePanel.LayoutOrder=1
+local trainSettingsPanel,trainSettingsBody=makeFeaturePanel(trainPage,"НАСТРОЙКИ ТРЕНИРОВКИ",86,3)
+trainSettingsPanel.LayoutOrder=2
+
+local lockPosSlider=makeFeatureToggle(trainSettingsBody,"◇","ЗАКРЕПИТЬСЯ","держит на месте",false,function(on,api)
+	if on then
+		local r=root()
+
+		if not r then
+			setStatus("LOCK POSITION: нет root")
+			api.Set(false,true)
+			return
+		end
+
+		Runtime.positionCF=r.CFrame
+		Runtime.lockPosition=true
+		Runtime.nextPosTick=0
+		disableKingLock()
+		if Runtime.leverRefs.kingLock then Runtime.leverRefs.kingLock.Set(false,true) end
+		setStatus("ПОЗИЦИЯ: зафиксирована")
+	else
+		Runtime.lockPosition=false
+		Runtime.positionCF=nil
+		setStatus("ПОЗИЦИЯ: свободна")
+	end
+end)
+
+Runtime.leverRefs.lockPosition=lockPosSlider
+
+local visualSlider=makeFeatureToggle(trainSettingsBody,"◫","ЛЁГКАЯ ГРАФИКА","снижает нагрузку",false,function(on)
+	setVisualLow(on)
+end)
+
+Runtime.leverRefs.visualLow=visualSlider
+
+local afkSlider,afkQuickRow=makePinnedToggle(quickBody,"АНТИ-AFK",true,function(on)
+	Runtime.antiAfkEnabled=on
+	setStatus("АНТИ-AFK: "..(on and "включён" or "выключен"))
+end)
+afkQuickRow.Size=UDim2.new(0.5,-3,1,0)
+afkQuickRow.Position=UDim2.fromOffset(0,0)
+
+local netGuardSlider,netQuickRow=makePinnedToggle(quickBody,"ЗАЩИТА СЕТИ",true,function(on)
+	Runtime.netGuardEnabled=on
+	if not on then
+		Runtime.manualNetworkHold=false
+		if Runtime.leverRefs.wifiHold then Runtime.leverRefs.wifiHold.Set(false,true) end
+		leaveNetworkHold(os.clock(),"OFF")
+		setStatus("ЗАЩИТА СЕТИ: выключена")
+	else
+		Runtime.networkBadSamples=0
+		Runtime.networkGoodSamples=0
+		setStatus("ЗАЩИТА СЕТИ: включена")
+	end
+end)
+netQuickRow.Size=UDim2.new(0.5,-3,1,0)
+netQuickRow.Position=UDim2.new(0.5,3,0,0)
+
+Runtime.leverRefs.netGuard=netGuardSlider
+
+local wifiHoldSlider=makeFeatureToggle(trainSettingsBody,"◌","РУЧНАЯ ПАУЗА","удерживает клиент",false,function(on)
+	Runtime.manualNetworkHold=on
+	if on then
+		Runtime.netGuardEnabled=true
+		if Runtime.leverRefs.netGuard then Runtime.leverRefs.netGuard.Set(true,true) end
+		enterNetworkHold("manual WiFi hold",os.clock())
+		Runtime.networkState="MANUAL HOLD"
+		setStatus("ПАУЗА СЕТИ: включена")
+	else
+		leaveNetworkHold(os.clock(),"MANUAL RELEASE")
+		setStatus("ПАУЗА СЕТИ: выключена")
+	end
+end)
+
+Runtime.leverRefs.wifiHold=wifiHoldSlider
+
+Runtime.leverRefs.train={}
+
+local trainIcons={
+	Punch="▷",
+	Weight="▣",
+	Push="▽",
+	Sit="⌁",
+	Hand="♢",
+	Tread="↗",
+}
+
+local trainNames={
+	Punch="УДАРЫ",
+	Weight="ГАНТЕЛИ",
+	Push="ОТЖИМАНИЯ",
+	Sit="ПРЕСС",
+	Hand="СТОЙКА",
+	Tread="БЕГ",
+}
+
+local trainDescs={
+	Punch="сила",
+	Weight="гантели и штанга",
+	Push="обычные отжимания",
+	Sit="упражнение на пресс",
+	Hand="стойка на руках",
+	Tread="скорость и ловкость",
+}
+
+local function turnOffOtherTrain(id)
+	for otherId,lever in pairs(Runtime.leverRefs.train) do
+		if otherId~=id and lever.Get() then
+			lever.Set(false,true)
+		end
+	end
+end
+
+for _,t in ipairs(TRAIN_TYPES) do
+	local slider
+	slider=makeFeatureToggle(trainFeatureBody,trainIcons[t.id] or "◈",trainNames[t.id] or t.label,trainDescs[t.id] or t.desc,false,function(on,api)
+		if on then
+			turnOffOtherTrain(t.id)
+			if not startTrain(t) then
+				api.Set(false,true)
+			end
+		else
+			if Runtime.mode=="train" and Runtime.selectedTrain and Runtime.selectedTrain.id==t.id then
+				stopMode(t.label..": OFF")
+			end
+		end
+	end)
+
+	Runtime.leverRefs.train[t.id]=slider
+end
+
+-- REBIRTH PAGE
+
+local rebFeaturePanel,rebFeatureBody=makeFeaturePanel(rebPage,"АВТОМАТИЗАЦИЯ",86,3)
+rebFeaturePanel.LayoutOrder=1
+local rebSettingsPanel,rebSettingsBody=makeSettingsPanel(rebPage,"ТОЧНЫЙ РАЗМЕР",78)
+rebSettingsPanel.LayoutOrder=2
+
+local rebInfo=card(rebPage,52)
+rebInfo.LayoutOrder=3
+local rebInfoTitle=label(rebInfo,"АВТОРЕБИРТ",12,Enum.Font.GothamBlack,THEME.Accent2)
+rebInfoTitle.Size=UDim2.new(1,-16,0,17)
+rebInfoTitle.Position=UDim2.new(0,8,0,4)
+
+local rebInfoText=label(rebInfo,"Rebirth каждые 1.2с • King Gym: -8626 / 17 / -5730",9,Enum.Font.GothamBold,THEME.Muted)
+rebInfoText.Size=UDim2.new(1,-16,0,22)
+rebInfoText.Position=UDim2.new(0,8,0,23)
+
+local autoRebSlider=makeFeatureToggle(rebFeatureBody,"↻","АВТОРЕБИРТ","срабатывает сам",false,function(on,api)
+	if on and not findRebirthRemote() then
+		api.Set(false,true)
+		setStatus("РЕБИРТ: функция игры не найдена")
+		return
+	end
+
+	Runtime.autoRebirth=on
+	Runtime.nextRebirth=0
+	setStatus("АВТО РЕБИРТ: "..(on and "включён" or "выключен"))
+end)
+
+Runtime.leverRefs.autoRebirth=autoRebSlider
+
+local sizeInput=makeNumberInput(rebSettingsBody,"РАЗМЕР ПЕРСОНАЖА","значение от 0.1 до 1000",1,function(value)
+	Runtime.sizeTarget=value
+	if Runtime.autoSize then Runtime.nextSize=0 end
+	setStatus("РАЗМЕР: "..tostring(value))
+end)
+
+local autoSizeSlider=makeFeatureToggle(rebFeatureBody,"◫","ФИКС. РАЗМЕР","держит значение",false,function(on,api)
+	if on and not findSizeRemote() then
+		api.Set(false,true)
+		setStatus("РАЗМЕР: функция игры не найдена")
+		return
+	end
+
+	Runtime.sizeTarget=sizeInput.Get()
+	Runtime.autoSize=on
+	Runtime.nextSize=0
+	setStatus(("АВТО РАЗМЕР: %s | %s"):format(on and "включён" or "выключен",tostring(Runtime.sizeTarget)))
+end)
+
+Runtime.leverRefs.autoSize=autoSizeSlider
+
+local kingLockSlider=makeFeatureToggle(rebFeatureBody,"♛","KING GYM","удерживает в зоне",false,function(on,api)
+	if on then
+		if Runtime.mode=="bug" then stopMode("BUG STOP / KING LOCK") end
+
+		Runtime.lockPosition=false
+		Runtime.positionCF=nil
+		if Runtime.leverRefs.lockPosition then Runtime.leverRefs.lockPosition.Set(false,true) end
+
+		local ok,err=enableKingLock()
+		if not ok then
+			api.Set(false,true)
+			setStatus("KING ЗОНА: "..tostring(err))
+			return
+		end
+
+		setStatus("KING ЗОНА: включена")
+	else
+		disableKingLock()
+		setStatus("KING ЗОНА: выключена")
+	end
+end)
+
+Runtime.leverRefs.kingLock=kingLockSlider
+
+-- AUTO KILL PAGE
+
+local killFeaturePanel,killFeatureBody=makeFeaturePanel(killPage,"РЕЖИМ АВТОКИЛА",86,3)
+killFeaturePanel.LayoutOrder=1
+local killSettingsPanel,killSettingsBody=makeSettingsPanel(killPage,"СПИСКИ ИГРОКОВ",141)
+killSettingsPanel.LayoutOrder=2
+
+Runtime.leverRefs.kill={}
+
+local function turnOffOtherKillLevers(activeMode)
+	if Runtime.mode then stopMode("ОСНОВНОЙ РЕЖИМ ОСТАНОВЛЕН / АВТОКИЛ") end
+	for mode,lever in pairs(Runtime.leverRefs.kill) do
+		if mode~=activeMode and lever then lever.Set(false,true) end
+	end
+end
+
+local killAllLever
+killAllLever=makeFeatureToggle(killFeatureBody,"✦","ВСЕ ИГРОКИ","без исключений",false,function(on,api)
+	if on then
+		turnOffOtherKillLevers("all")
+		startKillAutomation("all")
+	else
+		if Runtime.killMode=="all" then stopKillAutomation("АВТОКИЛ: выключен") end
+	end
+end)
+Runtime.leverRefs.kill.all=killAllLever
+
+local killWhiteLever
+killWhiteLever=makeFeatureToggle(killFeatureBody,"♢","КРОМЕ БЕЛЫХ","не трогает список",false,function(on,api)
+	if on then
+		turnOffOtherKillLevers("whitelist")
+		startKillAutomation("whitelist")
+	else
+		if Runtime.killMode=="whitelist" then stopKillAutomation("АВТОКИЛ: выключен") end
+	end
+end)
+Runtime.leverRefs.kill.whitelist=killWhiteLever
+
+local killBlackLever
+killBlackLever=makeFeatureToggle(killFeatureBody,"◎","ТОЛЬКО ЦЕЛИ","чёрный список",false,function(on,api)
+	if on then
+		turnOffOtherKillLevers("blacklist")
+		startKillAutomation("blacklist")
+	else
+		if Runtime.killMode=="blacklist" then stopKillAutomation("АВТОКИЛ: выключен") end
+	end
+end)
+Runtime.leverRefs.kill.blacklist=killBlackLever
 
 local function currentPlayerOptions()
 	local options={}
-	for _,player in ipairs(Players:GetPlayers())do
+	for _,player in ipairs(Players:GetPlayers()) do
 		if player~=lp then
 			table.insert(options,{
 				id=tostring(player.UserId),
 				label=player.DisplayName,
 				sub="@"..player.Name.."  •  ID "..tostring(player.UserId),
+				player=player,
 			})
 		end
 	end
-	table.sort(options,function(a,b)return string.lower(a.label)<string.lower(b.label)end)
+	table.sort(options,function(a,b) return string.lower(a.label)<string.lower(b.label) end)
 	return options
 end
 
-whitePickerButton.Activated:Connect(function()
+local whiteSelection
+whiteSelection=makeSelectionRow(killSettingsBody,"БЕЛЫЙ СПИСОК","0 игроков",function()
 	openPicker("БЕЛЫЙ СПИСОК",currentPlayerOptions(),{
 		multiple=true,
-		selected=killWhitelist,
-		onDone=function(draft)
-			killWhitelist={}
-			for id,value in pairs(draft)do if value then killWhitelist[tonumber(id)or id]=true end end
-			killRefreshFn()
-			setStatus("БЕЛЫЙ СПИСОК: "..tableCount(killWhitelist))
+		selected=Runtime.killWhitelist,
+		onDone=function(selected)
+			Runtime.killWhitelist={}
+			for id,enabled in pairs(selected) do
+				if enabled then Runtime.killWhitelist[tonumber(id) or id]=true end
+			end
+			refreshExtraUI()
+			setStatus("БЕЛЫЙ СПИСОК: "..selectedCount(Runtime.killWhitelist))
 		end,
 	})
 end)
 
-blackPickerButton.Activated:Connect(function()
+local blackSelection
+blackSelection=makeSelectionRow(killSettingsBody,"ЦЕЛИ","0 игроков",function()
 	openPicker("ЦЕЛИ АВТОКИЛА",currentPlayerOptions(),{
 		multiple=true,
-		selected=killBlacklist,
-		onDone=function(draft)
-			killBlacklist={}
-			for id,value in pairs(draft)do if value then killBlacklist[tonumber(id)or id]=true end end
-			killRefreshFn()
-			setStatus("ЦЕЛЕЙ: "..tableCount(killBlacklist))
+		selected=Runtime.killBlacklist,
+		onDone=function(selected)
+			Runtime.killBlacklist={}
+			for id,enabled in pairs(selected) do
+				if enabled then Runtime.killBlacklist[tonumber(id) or id]=true end
+			end
+			refreshExtraUI()
+			setStatus("ЦЕЛЕЙ АВТОКИЛА: "..selectedCount(Runtime.killBlacklist))
 		end,
 	})
 end)
 
-crystalPickerButton.Activated:Connect(function()
-	local options={}
-	for _,name in ipairs(getAvailableCrystalNames())do
-		table.insert(options,{id=name,label=name,sub="Доступен на текущей карте"})
+local killHint=label(killSettingsBody,"Белые — защищены. Цели — единственные атакуемые игроки.",8,Enum.Font.Gotham,THEME.Muted)
+killHint.Size=UDim2.new(1,0,0,32)
+killHint.TextXAlignment=Enum.TextXAlignment.Center
+
+-- CRYSTALS PAGE
+
+local crystalFeaturePanel,crystalFeatureBody=makeFeaturePanel(crystalPage,"АВТОПОКУПКА",86,3)
+crystalFeaturePanel.LayoutOrder=1
+local crystalSettingsPanel,crystalSettingsBody=makeSettingsPanel(crystalPage,"ЧТО ПОКУПАТЬ",141)
+crystalSettingsPanel.LayoutOrder=2
+
+Runtime.leverRefs.crystal={}
+
+local function turnOffOtherCrystalLevers(activeMode)
+	for mode,lever in pairs(Runtime.leverRefs.crystal) do
+		if mode~=activeMode and lever then lever.Set(false,true) end
 	end
-	openPicker("ВЫБОР КРИСТАЛЛА",options,{
-		selected={[selectedCrystal]=true},
-		onDone=function(option)
-			selectedCrystal=option.label
-			crystalRefreshFn()
-			setStatus("КРИСТАЛЛ: "..selectedCrystal)
-		end,
-	})
-end)
-
-petPickerButton.Activated:Connect(function()
-	local options={}
-	for index,target in ipairs(PET_TARGETS)do
-		table.insert(options,{id=tostring(index),label=target.name,sub="Кристалл: "..target.crystal,target=target})
-	end
-	openPicker("ВЫБОР ПИТОМЦА",options,{
-		selected=selectedPet and {[tostring(table.find(PET_TARGETS,selectedPet)or 0)]=true}or {},
-		onDone=function(option)
-			selectedPet=option.target
-			crystalRefreshFn()
-			setStatus("ПИТОМЕЦ: "..selectedPet.name)
-		end,
-	})
-end)
-
-auraPickerButton.Activated:Connect(function()
-	local options={}
-	for index,target in ipairs(AURA_TARGETS)do
-		table.insert(options,{id=tostring(index),label=target.name,sub="Кристалл: "..target.crystal,target=target})
-	end
-	openPicker("ВЫБОР АУРЫ",options,{
-		selected=selectedAura and {[tostring(table.find(AURA_TARGETS,selectedAura)or 0)]=true}or {},
-		onDone=function(option)
-			selectedAura=option.target
-			crystalRefreshFn()
-			setStatus("АУРА: "..selectedAura.name)
-		end,
-	})
-end)
-
-local function stopEverything()
-	stopHit()
-	stopLock()
-	ultraOptEnabled=false
-	setLowMap(false,nil,nil)
-	setKillMode("off")
-	setCrystalMode("off")
-	hitButton.Text="BUG HIT"
-	hitButton.BackgroundColor3=Color3.fromRGB(31,117,77)
-	ultraButton.Text="ULTRA"
-	ultraButton.BackgroundColor3=Color3.fromRGB(76,48,130)
-	setStatus("ВСЁ ОСТАНОВЛЕНО")
 end
 
-stopButton.Activated:Connect(stopEverything)
+local crystalLever
+crystalLever=makeFeatureToggle(crystalFeatureBody,"◇","КРИСТАЛЛ","выбранный тип",false,function(on,api)
+	if on then
+		turnOffOtherCrystalLevers("crystal")
+		if not startCrystalAutomation("crystal") then api.Set(false,true) end
+	else
+		if Runtime.crystalMode=="crystal" then stopCrystalAutomation("КРИСТАЛЛЫ: выключено") end
+	end
+end)
+Runtime.leverRefs.crystal.crystal=crystalLever
 
+local petLever
+petLever=makeFeatureToggle(crystalFeatureBody,"♢","ПИТОМЕЦ","до получения",false,function(on,api)
+	if on then
+		turnOffOtherCrystalLevers("pet")
+		if not startCrystalAutomation("pet") then api.Set(false,true) end
+	else
+		if Runtime.crystalMode=="pet" then stopCrystalAutomation("АВТОПИТОМЕЦ: выключен") end
+	end
+end)
+Runtime.leverRefs.crystal.pet=petLever
+
+local auraLever
+auraLever=makeFeatureToggle(crystalFeatureBody,"✧","АУРА","до получения",false,function(on,api)
+	if on then
+		turnOffOtherCrystalLevers("aura")
+		if not startCrystalAutomation("aura") then api.Set(false,true) end
+	else
+		if Runtime.crystalMode=="aura" then stopCrystalAutomation("АВТОАУРА: выключена") end
+	end
+end)
+Runtime.leverRefs.crystal.aura=auraLever
+
+local crystalSelection
+crystalSelection=makeSelectionRow(crystalSettingsBody,"КРИСТАЛЛ",Runtime.selectedCrystal,function()
+	local options={}
+	for _,name in ipairs(availableCrystalNames()) do
+		table.insert(options,{id=name,label=name,sub="найден на текущей карте"})
+	end
+	openPicker("ВЫБОР КРИСТАЛЛА",options,{
+		selected={[Runtime.selectedCrystal]=true},
+		onDone=function(option)
+			stopCrystalAutomation(nil)
+			Runtime.selectedCrystal=option.label
+			refreshExtraUI()
+			setStatus("КРИСТАЛЛ: "..Runtime.selectedCrystal)
+		end,
+	})
+end)
+
+local petSelection
+petSelection=makeSelectionRow(crystalSettingsBody,"ПИТОМЕЦ",Runtime.selectedPet.name,function()
+	local options={}
+	for index,target in ipairs(PET_TARGETS) do
+		table.insert(options,{
+			id=tostring(index),
+			label=target.name,
+			sub="Кристалл: "..target.crystal,
+			target=target,
+		})
+	end
+	openPicker("ВЫБОР ПИТОМЦА",options,{
+		selected={[tostring(table.find(PET_TARGETS,Runtime.selectedPet) or 0)]=true},
+		onDone=function(option)
+			stopCrystalAutomation(nil)
+			Runtime.selectedPet=option.target
+			refreshExtraUI()
+			setStatus("ПИТОМЕЦ: "..Runtime.selectedPet.name)
+		end,
+	})
+end)
+
+local auraSelection
+auraSelection=makeSelectionRow(crystalSettingsBody,"АУРА",Runtime.selectedAura.name,function()
+	local options={}
+	for index,target in ipairs(AURA_TARGETS) do
+		table.insert(options,{
+			id=tostring(index),
+			label=target.name,
+			sub="Кристалл: "..target.crystal,
+			target=target,
+		})
+	end
+	openPicker("ВЫБОР АУРЫ",options,{
+		selected={[tostring(table.find(AURA_TARGETS,Runtime.selectedAura) or 0)]=true},
+		onDone=function(option)
+			stopCrystalAutomation(nil)
+			Runtime.selectedAura=option.target
+			refreshExtraUI()
+			setStatus("АУРА: "..Runtime.selectedAura.name)
+		end,
+	})
+end)
+
+Runtime.refreshExtraUI=function()
+	whiteSelection.Set(selectedCount(Runtime.killWhitelist).." игроков")
+	blackSelection.Set(selectedCount(Runtime.killBlacklist).." игроков")
+	crystalSelection.Set(Runtime.selectedCrystal)
+	petSelection.Set(Runtime.selectedPet and Runtime.selectedPet.name or "ВЫБРАТЬ")
+	auraSelection.Set(Runtime.selectedAura and Runtime.selectedAura.name or "ВЫБРАТЬ")
+end
+refreshExtraUI()
+
+local activeTab="bug"
+local minimized=false
+local expandedSize=main.Size
+
+local function paintTab(tab,active)
+	tab.BackgroundColor3=active and THEME.SurfaceAlt or THEME.Surface
+	tab.BackgroundTransparency=active and 0.18 or 0.52
+	tab.TextColor3=active and THEME.Accent or THEME.Muted
+	local mark=tab:FindFirstChild("ActiveMark")
+	if mark then mark.Visible=active end
+	local tabStroke=tab:FindFirstChild("TabStroke")
+	if tabStroke then
+		tabStroke.Color=active and THEME.Accent or THEME.Border
+		tabStroke.Transparency=active and 0.28 or 0.72
+	end
+end
+
+local function showTab(name)
+	activeTab=name
+	local bug=name=="bug"
+	local train=name=="train"
+	local reb=name=="reb"
+	local kill=name=="kill"
+	local crystal=name=="crystal"
+	bugPage.Visible=(not minimized) and bug
+	trainPage.Visible=(not minimized) and train
+	rebPage.Visible=(not minimized) and reb
+	killPage.Visible=(not minimized) and kill
+	crystalPage.Visible=(not minimized) and crystal
+	paintTab(bugTab,bug)
+	paintTab(trainTab,train)
+	paintTab(rebTab,reb)
+	paintTab(killTab,kill)
+	paintTab(crystalTab,crystal)
+end
+
+local function clampOffsetPosition(position,size)
+	local viewport=viewportSize()
+	local width=size.X.Offset
+	local height=size.Y.Offset
+	local maxX=math.max(4,viewport.X-width-4)
+	local maxY=math.max(4,viewport.Y-height-4)
+	return UDim2.fromOffset(
+		math.clamp(position.X.Offset,4,maxX),
+		math.clamp(position.Y.Offset,4,maxY)
+	)
+end
+
+local function setMinimized(on)
+	minimized=on and true or false
+	if minimized then
+		expandedSize=main.Size
+		miniButton.Position=clampOffsetPosition(main.Position,miniButton.Size)
+		main.Visible=false
+		miniButton.Visible=true
+		bugPage.Visible=false
+		trainPage.Visible=false
+		rebPage.Visible=false
+		killPage.Visible=false
+		crystalPage.Visible=false
+	else
+		main.Size=expandedSize
+		main.Position=clampOffsetPosition(miniButton.Position,expandedSize)
+		miniButton.Visible=false
+		main.Visible=true
+		showTab(activeTab)
+	end
+end
+
+addConn(bugTab.Activated:Connect(function() showTab("bug") end))
+addConn(trainTab.Activated:Connect(function() showTab("train") end))
+addConn(rebTab.Activated:Connect(function() showTab("reb") end))
+addConn(killTab.Activated:Connect(function() showTab("kill") end))
+addConn(crystalTab.Activated:Connect(function() showTab("crystal") end))
+addConn(minimizeBtn.Activated:Connect(function()
+	if Runtime.closePicker then Runtime.closePicker() end
+	setMinimized(true)
+end))
+
+addConn(rescanBtn.Activated:Connect(function()
+	setStatus("ОБНОВЛЯЮ КАМНИ...")
+	scanRocks()
+	Runtime.autoRockSelection=true
+	Runtime.lastAutoRockRebs=nil
+	applyAutoRockSelection(true)
+	setStatus("КАМЕНЬ: "..tostring(Runtime.selectedRock and Runtime.selectedRock.label or "не найден"))
+end))
+
+addConn(panicBtn.Activated:Connect(function()
+	panicStop()
+end))
+
+local draggingMain=false
+local draggingMini=false
+local resizing=false
 local miniMoved=false
-
-minButton.Activated:Connect(function()
-	closePicker()
-	main.Visible=false
-	mini.Position=main.Position
-	mini.Visible=true
-end)
-mini.Activated:Connect(function()
-	if miniMoved then return end
-	main.Visible=true
-	mini.Visible=false
-end)
-
-closeButton.Activated:Connect(function()
-	stopHit()
-	stopLock()
-	setLowMap(false,nil,nil)
-	setKillMode("off")
-	setCrystalMode("off")
-	if antiAfkConn then antiAfkConn:Disconnect()antiAfkConn=nil end
-	gui:Destroy()
-end)
-
--- Drag full window by its header.
-local dragging=false
 local dragStart=nil
-local startPosition=nil
-top.InputBegan:Connect(function(input)
-	if input.UserInputType==Enum.UserInputType.MouseButton1 or input.UserInputType==Enum.UserInputType.Touch then
-		dragging=true
-		dragStart=input.Position
-		startPosition=main.Position
-	end
-end)
-UserInputService.InputEnded:Connect(function(input)
-	if input.UserInputType==Enum.UserInputType.MouseButton1 or input.UserInputType==Enum.UserInputType.Touch then dragging=false end
-end)
-UserInputService.InputChanged:Connect(function(input)
-	if dragging and(input.UserInputType==Enum.UserInputType.MouseMovement or input.UserInputType==Enum.UserInputType.Touch)then
-		local delta=input.Position-dragStart
-		main.Position=UDim2.new(startPosition.X.Scale,startPosition.X.Offset+delta.X,startPosition.Y.Scale,startPosition.Y.Offset+delta.Y)
-	end
-end)
+local startPos=nil
+local resizeStartSize=nil
 
--- The minimized square is independently draggable on touch and mouse.
-local miniDragging=false
-local miniDragStart=nil
-local miniStart=nil
-miniMoved=false
-mini.InputBegan:Connect(function(input)
-	if input.UserInputType==Enum.UserInputType.MouseButton1 or input.UserInputType==Enum.UserInputType.Touch then
-		miniDragging=true
+local function pointerInput(input)
+	return input.UserInputType==Enum.UserInputType.MouseButton1 or input.UserInputType==Enum.UserInputType.Touch
+end
+
+addConn(topBar.InputBegan:Connect(function(input)
+	if pointerInput(input) then
+		local localX=input.Position.X-main.AbsolutePosition.X
+		if localX<main.AbsoluteSize.X-82 then
+			draggingMain=true
+			dragStart=input.Position
+			startPos=main.Position
+		end
+	end
+end))
+
+addConn(miniButton.InputBegan:Connect(function(input)
+	if pointerInput(input) then
+		draggingMini=true
 		miniMoved=false
-		miniDragStart=input.Position
-		miniStart=mini.Position
+		dragStart=input.Position
+		startPos=miniButton.Position
 	end
-end)
-UserInputService.InputChanged:Connect(function(input)
-	if miniDragging and(input.UserInputType==Enum.UserInputType.MouseMovement or input.UserInputType==Enum.UserInputType.Touch)then
-		local delta=input.Position-miniDragStart
-		if delta.Magnitude>5 then miniMoved=true end
-		mini.Position=UDim2.new(miniStart.X.Scale,miniStart.X.Offset+delta.X,miniStart.Y.Scale,miniStart.Y.Offset+delta.Y)
+end))
+
+addConn(resizeHandle.InputBegan:Connect(function(input)
+	if pointerInput(input) then
+		resizing=true
+		dragStart=input.Position
+		resizeStartSize=main.Size
 	end
-end)
-UserInputService.InputEnded:Connect(function(input)
-	if miniDragging and(input.UserInputType==Enum.UserInputType.MouseButton1 or input.UserInputType==Enum.UserInputType.Touch)then
-		miniDragging=false
-		if miniMoved then main.Position=mini.Position end
+end))
+
+addConn(UserInputService.InputEnded:Connect(function(input)
+	if pointerInput(input) then
+		draggingMain=false
+		draggingMini=false
+		resizing=false
 	end
+end))
+
+addConn(UserInputService.InputChanged:Connect(function(input)
+	if dragStart and (input.UserInputType==Enum.UserInputType.MouseMovement or input.UserInputType==Enum.UserInputType.Touch) then
+		local delta=input.Position-dragStart
+		if draggingMain and startPos then
+			local wanted=UDim2.fromOffset(startPos.X.Offset+delta.X,startPos.Y.Offset+delta.Y)
+			main.Position=clampOffsetPosition(wanted,main.Size)
+		elseif draggingMini and startPos then
+			if delta.Magnitude>5 then miniMoved=true end
+			local wanted=UDim2.fromOffset(startPos.X.Offset+delta.X,startPos.Y.Offset+delta.Y)
+			miniButton.Position=clampOffsetPosition(wanted,miniButton.Size)
+		elseif resizing and resizeStartSize then
+			local viewport=viewportSize()
+			local dynamicMinWidth=math.max(280,math.min(320,viewport.X-12))
+			local dynamicMinHeight=math.max(360,math.min(410,viewport.Y-12))
+			local maxWidth=math.max(dynamicMinWidth,viewport.X-main.Position.X.Offset-4)
+			local maxHeight=math.max(dynamicMinHeight,viewport.Y-main.Position.Y.Offset-4)
+			local width=math.clamp(resizeStartSize.X.Offset+delta.X,dynamicMinWidth,maxWidth)
+			local height=math.clamp(resizeStartSize.Y.Offset+delta.Y,dynamicMinHeight,maxHeight)
+			main.Size=UDim2.fromOffset(width,height)
+			expandedSize=main.Size
+		end
+	end
+end))
+
+addConn(miniButton.Activated:Connect(function()
+	if miniMoved then
+		miniMoved=false
+		return
+	end
+	setMinimized(false)
+end))
+
+function Runtime:Stop(reason)
+	if not self.alive then return end
+
+	self.alive=false
+	self.manualNetworkHold=false
+	leaveNetworkHold(os.clock(),"STOP")
+	panicStop()
+	disconnectRockButtonConnections()
+	disconnectAll()
+
+	if gui and gui.Parent then
+		gui:Destroy()
+	end
+
+	if ENV.RockBugRuntime==self then
+		ENV.RockBugRuntime=nil
+	end
+end
+
+addConn(closeBtn.Activated:Connect(function()
+	Runtime:Stop("closed")
+end))
+
+addConn(lp.CharacterAdded:Connect(function(newCharacter)
+	local resumeMode=Runtime.mode
+	local resumeTrain=Runtime.selectedTrain
+	local resumePositionLock=Runtime.lockPosition
+	local resumePositionCF=Runtime.positionCF
+
+	Runtime.respawnGeneration=Runtime.respawnGeneration+1
+	local generation=Runtime.respawnGeneration
+	Runtime.activeTool=nil
+	Runtime.lockCF=nil
+	Runtime.positionCF=nil
+	Runtime.lockRock=false
+	Runtime.lockPosition=false
+	stopMode(resumeMode and "RESPAWN: жду персонажа для восстановления" or "RESPAWN: режимы остановлены")
+	local resumeToken=Runtime.modeToken
+
+	if Runtime.leverRefs.lockPosition then Runtime.leverRefs.lockPosition.Set(false,true) end
+	if not Runtime.autoResumeAfterRespawn or not resumeMode then return end
+
+	task.spawn(function()
+		local deadline=os.clock()+15
+		local readyRoot=nil
+		local readyHum=nil
+
+		repeat
+			if not Runtime.alive or Runtime.respawnGeneration~=generation or Runtime.modeToken~=resumeToken then return end
+			readyRoot=newCharacter and newCharacter:FindFirstChild("HumanoidRootPart")
+			readyHum=newCharacter and newCharacter:FindFirstChildWhichIsA("Humanoid")
+			if readyRoot and readyHum then break end
+			task.wait(0.2)
+		until os.clock()>=deadline
+
+		if not readyRoot or not readyHum then
+			setStatus("RESPAWN RECOVERY: персонаж не загрузился за 15с")
+			return
+		end
+
+		-- Allow Backpack/tools to replicate before one bounded restart attempt.
+		task.wait(0.8)
+		if not Runtime.alive or Runtime.respawnGeneration~=generation or Runtime.modeToken~=resumeToken then return end
+
+		local resumed=false
+		if resumeMode=="bug" then
+			resumed=startBug()
+		elseif resumeMode=="train" and resumeTrain then
+			resumed=startTrain(resumeTrain)
+		end
+
+		if resumed and resumePositionLock and resumePositionCF then
+			Runtime.lockPosition=true
+			Runtime.positionCF=resumePositionCF
+			Runtime.nextPosTick=0
+			if Runtime.leverRefs.lockPosition then Runtime.leverRefs.lockPosition.Set(true,true) end
+		end
+
+		if resumed then
+			setStatus("RESPAWN RECOVERY: режим восстановлен")
+		else
+			setStatus("RESPAWN RECOVERY: не удалось восстановить предмет")
+		end
+	end)
+end))
+
+-- Initial scan / exact rebirth calculator.
+scanRocks()
+applyAutoRockSelection(true)
+showTab("bug")
+updateCanvas()
+setStatus("ГОТОВО • "..tostring(Runtime.selectedRock and Runtime.selectedRock.label or "камень не найден"))
+
+end
+
+local uiOk,uiErr=xpcall(buildUI,function(err)
+	local trace=""
+	if debug and type(debug.traceback)=="function" then trace="\n"..tostring(debug.traceback()) end
+	return tostring(err)..trace
 end)
 
-local found=scanRocks()
-refreshRockButtons()
-killRefreshFn()
-crystalRefreshFn()
-showTab("rock")
-local foundCount=0
-for _,row in ipairs(ROCKS)do if found[row.req]then foundCount+=1 end end
-setStatus("ГОТОВО • КАМНИ "..foundCount.."/"..#ROCKS.." • "..HUB_VERSION)
+if not uiOk then
+	Runtime.alive=false
+	if Runtime.uiRoot and Runtime.uiRoot.Parent then safe(function() Runtime.uiRoot:Destroy() end) end
+	warn("[RockBugHub] UI startup failed: "..tostring(uiErr))
+	pcall(function()
+		StarterGui:SetCore("SendNotification",{
+			Title="RockBugHub",
+			Text="UI error: "..tostring(uiErr):sub(1,120),
+			Duration=10,
+		})
+	end)
+	return
+end
+
+task.spawn(function()
+	local recentFailures={}
+	while Runtime.alive do
+		local ok,err=xpcall(scheduler,function(e)
+			local trace=""
+			if debug and type(debug.traceback)=="function" then
+				trace="\n"..tostring(debug.traceback())
+			end
+			return tostring(e)..trace
+		end)
+
+		if ok or not Runtime.alive then return end
+
+		Runtime.lastError=err
+		Runtime.schedulerRestarts=Runtime.schedulerRestarts+1
+		local now=os.clock()
+		local kept={}
+		for _,stamp in ipairs(recentFailures) do
+			if now-stamp<=30 then table.insert(kept,stamp) end
+		end
+		table.insert(kept,now)
+		recentFailures=kept
+
+		-- Preserve every mode/lever on isolated failures. A hard stop remains for
+		-- a genuine crash loop so the client cannot spin forever at full CPU.
+		if #recentFailures>=4 then
+			warn("RockBugHub scheduler stopped: "..tostring(err))
+			Runtime:Stop("scheduler repeatedly failed")
+			return
+		end
+
+		enterNetworkHold("scheduler recovery",now)
+		setStatus(("SCHEDULER RECOVERY %d/3 | state preserved | %s"):format(#recentFailures,tostring(err):sub(1,70)))
+		task.wait(math.min(0.5*#recentFailures,1.5))
+	end
+end)
