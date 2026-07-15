@@ -150,6 +150,7 @@ local Runtime={
 	killBlacklist={},
 	crystalMode="off",
 	crystalToken=0,
+	purchaseAttempts=0,
 	selectedCrystal="Blue Crystal",
 	selectedPet=nil,
 	selectedAura=nil,
@@ -164,59 +165,26 @@ local Runtime={
 
 ENV.RockBugRuntime=Runtime
 
--- Current permanent crystal rewards. Event crystals are still discovered
--- dynamically from workspace.mapCrystalsFolder when they are present.
-local PET_TARGETS={
-	{name="Orange Hedgehog",crystal="Blue Crystal"},
-	{name="Blue Birdie",crystal="Blue Crystal"},
-	{name="Red Kitty",crystal="Blue Crystal"},
-	{name="Blue Bunny",crystal="Blue Crystal"},
-	{name="Dark Vampy",crystal="Blue Crystal"},
-	{name="Silver Dog",crystal="Green Crystal"},
-	{name="Dark Golem",crystal="Green Crystal"},
-	{name="Green Butterfly",crystal="Green Crystal"},
-	{name="Crimson Falcon",crystal="Green Crystal"},
-	{name="Yellow Butterfly",crystal="Frost Crystal"},
-	{name="Purple Dragon",crystal="Frost Crystal"},
-	{name="Orange Pegasus",crystal="Frost Crystal"},
-	{name="Blue Pheonix",crystal="Frost Crystal"},
-	{name="Red Dragon",crystal="Mythical Crystal"},
-	{name="Purple Falcon",crystal="Mythical Crystal"},
-	{name="Blue Firecaster",crystal="Mythical Crystal"},
-	{name="Golden Pheonix",crystal="Mythical Crystal"},
-	{name="Red Firecaster",crystal="Inferno Crystal"},
-	{name="White Pegasus",crystal="Inferno Crystal"},
-	{name="Infernal Dragon",crystal="Inferno Crystal"},
-	{name="Green Firecaster",crystal="Legends Crystal"},
-	{name="White Pheonix",crystal="Legends Crystal"},
-	{name="Magic Butterfly",crystal="Legends Crystal"},
-	{name="Ultra Birdie",crystal="Legends Crystal"},
-	{name="Frostwave Legends Penguin",crystal="Muscle Elite Crystal"},
-	{name="Phantom Genesis Dragon",crystal="Muscle Elite Crystal"},
-	{name="Dark Legends Manticore",crystal="Muscle Elite Crystal"},
-	{name="Ultimate Supernova Pegasus",crystal="Muscle Elite Crystal"},
-	{name="Aether Spirit Bunny",crystal="Muscle Elite Crystal"},
-	{name="Cybernetic Showdown Dragon",crystal="Muscle Elite Crystal"},
-	{name="Eternal Strike Leviathan",crystal="Galaxy Oracle Crystal"},
-	{name="Lighting Strike Phantom",crystal="Galaxy Oracle Crystal"},
-	{name="Darkstar Hunter",crystal="Galaxy Oracle Crystal"},
-	{name="Golden Viking",crystal="Jungle Crystal"},
-	{name="Muscle Sensei",crystal="Jungle Crystal"},
-	{name="Neon Guardian",crystal="Jungle Crystal"},
+-- Fallbacks are only used if the live shop has not replicated yet. Normally
+-- the selectors are populated from ReplicatedStorage.cPetShopFolder, so new
+-- shop items appear automatically without updating this file.
+local FALLBACK_SHOP_PETS={
+	"Orange Hedgehog","Blue Birdie","Red Kitty","Blue Bunny","Dark Vampy",
+	"Silver Dog","Dark Golem","Green Butterfly","Crimson Falcon",
+	"Yellow Butterfly","Purple Dragon","Orange Pegasus","Blue Pheonix",
+	"Red Dragon","Purple Falcon","Blue Firecaster","Golden Pheonix",
+	"Red Firecaster","White Pegasus","Infernal Dragon","Green Firecaster",
+	"White Pheonix","Magic Butterfly","Ultra Birdie","Frostwave Legends Penguin",
+	"Phantom Genesis Dragon","Dark Legends Manticore","Ultimate Supernova Pegasus",
+	"Aether Spirit Bunny","Cybernetic Showdown Dragon","Eternal Strike Leviathan",
+	"Lighting Strike Phantom","Darkstar Hunter","Golden Viking","Muscle Sensei",
+	"Neon Guardian","Muscle King",
 }
 
-local AURA_TARGETS={
-	{name="Basic Aura",crystal="Blue Crystal"},
-	{name="Advanced Aura",crystal="Green Crystal"},
-	{name="Rare Aura",crystal="Frost Crystal"},
-	{name="Epic Aura",crystal="Mythical Crystal"},
-	{name="Unique Aura",crystal="Inferno Crystal"},
-	{name="Ultra Inferno Aura",crystal="Galaxy Oracle Crystal"},
-	{name="Azure Tundra Aura",crystal="Galaxy Oracle Crystal"},
-	{name="Muscle King Aura",crystal="Galaxy Oracle Crystal"},
-	{name="Grand SuperNova Aura",crystal="Jungle Crystal"},
-	{name="Eternal Megastrike Aura",crystal="Jungle Crystal"},
-	{name="Entropic Blast Aura",crystal="Jungle Crystal"},
+local FALLBACK_SHOP_AURAS={
+	"Basic Aura","Advanced Aura","Rare Aura","Epic Aura","Unique Aura",
+	"Ultra Inferno Aura","Azure Tundra Aura","Muscle King Aura",
+	"Grand SuperNova Aura","Eternal Megastrike Aura","Entropic Blast Aura",
 }
 
 local FALLBACK_CRYSTALS={
@@ -225,12 +193,93 @@ local FALLBACK_CRYSTALS={
 	"Galaxy Oracle Crystal","Dark Nebula Crystal","Sky Eclipse Crystal","Jungle Crystal",
 }
 
-Runtime.selectedPet=PET_TARGETS[1]
-Runtime.selectedAura=AURA_TARGETS[1]
+Runtime.selectedPet="Muscle King"
+Runtime.selectedAura="Muscle King Aura"
 
 local function safe(fn)
 	local ok,res=pcall(fn)
 	return ok,res
+end
+
+local function shopPrice(item)
+	if not item then return nil end
+	local value=item:FindFirstChild("priceValue",true)
+	if not value then return nil end
+	local ok,price=safe(function() return tonumber(value.Value) end)
+	return ok and price or nil
+end
+
+local function isAuraShopItem(item)
+	if not item then return false end
+	local name=string.lower(tostring(item.Name))
+	if string.find(name,"aura",1,true) or string.find(name,"trail",1,true) then
+		return true
+	end
+	if item:IsA("Trail") or item:FindFirstChildWhichIsA("Trail",true) then
+		return true
+	end
+	for _,attributeName in ipairs({"Type","ItemType","Category"}) do
+		local ok,value=safe(function() return item:GetAttribute(attributeName) end)
+		if ok and type(value)=="string" then
+			local lower=string.lower(value)
+			if string.find(lower,"aura",1,true) or string.find(lower,"trail",1,true) then
+				return true
+			end
+		end
+	end
+	return false
+end
+
+local function shopCatalog(kind)
+	local result={}
+	local seen={}
+	local folder=ReplicatedStorage:FindFirstChild("cPetShopFolder")
+
+	if folder then
+		for _,item in ipairs(folder:GetChildren()) do
+			local aura=isAuraShopItem(item)
+			if (kind=="aura" and aura) or (kind=="pet" and not aura) then
+				local name=tostring(item.Name)
+				if name~="" and not seen[name] then
+					seen[name]=true
+					table.insert(result,{name=name,price=shopPrice(item)})
+				end
+			end
+		end
+	end
+
+	if #result==0 then
+		local fallback=kind=="aura" and FALLBACK_SHOP_AURAS or FALLBACK_SHOP_PETS
+		for _,name in ipairs(fallback) do
+			table.insert(result,{name=name,price=nil})
+		end
+	end
+
+	table.sort(result,function(a,b)
+		local ap=a.price or math.huge
+		local bp=b.price or math.huge
+		if ap==bp then return string.lower(a.name)<string.lower(b.name) end
+		return ap<bp
+	end)
+	return result
+end
+
+local function formatShopPrice(price)
+	if not price then return "цена из игры" end
+	local text=tostring(math.floor(price+0.5))
+	local formatted=text:reverse():gsub("(%d%d%d)","%1 "):reverse():gsub("^ ","")
+	return formatted.." гемов"
+end
+
+local function normalizeShopSelection(kind)
+	local key=kind=="aura" and "selectedAura" or "selectedPet"
+	local current=Runtime[key]
+	local catalog=shopCatalog(kind)
+	for _,entry in ipairs(catalog) do
+		if entry.name==current then return current end
+	end
+	Runtime[key]=catalog[1] and catalog[1].name or nil
+	return Runtime[key]
 end
 
 local function addConn(c)
@@ -1583,11 +1632,32 @@ local function openCrystalOnce(name)
 	return ok,err,resolved
 end
 
-local function crystalTarget(mode)
-	if mode=="crystal" then return Runtime.selectedCrystal,Runtime.selectedCrystal end
-	if mode=="pet" and Runtime.selectedPet then return Runtime.selectedPet.crystal,Runtime.selectedPet.name end
-	if mode=="aura" and Runtime.selectedAura then return Runtime.selectedAura.crystal,Runtime.selectedAura.name end
-	return nil,nil
+local function buyShopItemOnce(name)
+	local folder=ReplicatedStorage:FindFirstChild("cPetShopFolder")
+	local remote=ReplicatedStorage:FindFirstChild("cPetShopRemote")
+	if not folder then return false,"cPetShopFolder не найден" end
+	if not remote then return false,"cPetShopRemote не найден" end
+
+	-- Resolve the exact selected object again on every attempt. Keeping an old
+	-- instance here caused mismatched purchases after the shop refreshed.
+	local item=folder:FindFirstChild(tostring(name or ""))
+	if not item then return false,"товар не найден: "..tostring(name) end
+
+	local ok,err=safe(function()
+		if remote:IsA("RemoteFunction") then
+			remote:InvokeServer(item)
+		else
+			remote:FireServer(item)
+		end
+	end)
+	return ok,err,item.Name
+end
+
+local function purchaseTarget(mode)
+	if mode=="crystal" then return Runtime.selectedCrystal end
+	if mode=="pet" then return Runtime.selectedPet end
+	if mode=="aura" then return Runtime.selectedAura end
+	return nil
 end
 
 local function stopCrystalAutomation(message)
@@ -1601,38 +1671,46 @@ local function stopCrystalAutomation(message)
 end
 
 local function startCrystalAutomation(mode)
-	local crystalName,targetName=crystalTarget(mode)
-	if not crystalName then
+	if mode=="pet" then normalizeShopSelection("pet") end
+	if mode=="aura" then normalizeShopSelection("aura") end
+	local targetName=purchaseTarget(mode)
+	if not targetName then
 		setStatus("СНАЧАЛА ВЫБЕРИ ЦЕЛЬ")
 		return false
+	end
+	if mode~="crystal" then
+		local folder=ReplicatedStorage:FindFirstChild("cPetShopFolder")
+		if not folder or not folder:FindFirstChild(targetName) then
+			setStatus("ТОВАР НЕ НАЙДЕН В МАГАЗИНЕ: "..tostring(targetName))
+			return false
+		end
 	end
 
 	Runtime.crystalToken=Runtime.crystalToken+1
 	Runtime.crystalMode=mode
+	Runtime.purchaseAttempts=0
 	local token=Runtime.crystalToken
 	refreshExtraUI()
-	setStatus("АВТОПОКУПКА: "..targetName)
+	setStatus((mode=="crystal" and "ОТКРЫТИЕ: " or "ПРЯМАЯ ПОКУПКА: ")..targetName)
 
 	task.spawn(function()
 		while Runtime.alive and Runtime.crystalMode==mode and Runtime.crystalToken==token do
-			if mode=="pet" and ownsPet(targetName) then
-				stopCrystalAutomation("ПОЛУЧЕН: "..targetName)
-				break
-			elseif mode=="aura" and ownsAura(targetName) then
-				stopCrystalAutomation("ПОЛУЧЕНА: "..targetName)
-				break
-			end
-
 			if not Runtime.networkPaused then
-				local ok,err,resolved=openCrystalOnce(crystalName)
-				if ok then
-					setStatus("ОТКРЫВАЮ: "..tostring(resolved))
+				local ok,err,resolved
+				if mode=="crystal" then
+					ok,err,resolved=openCrystalOnce(targetName)
 				else
-					setStatus("КРИСТАЛЛ: "..tostring(err))
-					task.wait(0.8)
+					ok,err,resolved=buyShopItemOnce(targetName)
+				end
+				if ok then
+					Runtime.purchaseAttempts=Runtime.purchaseAttempts+1
+					local action=mode=="crystal" and "ОТКРЫТИЕ" or "ПОКУПКА"
+					setStatus(action.." #"..Runtime.purchaseAttempts..": "..tostring(resolved))
+				else
+					setStatus("ОШИБКА ПОКУПКИ: "..tostring(err))
 				end
 			end
-			task.wait(0.38)
+			task.wait(0.5)
 		end
 	end)
 	return true
@@ -2611,19 +2689,19 @@ local function styleTab(tab,y)
 	corner(mark,2)
 end
 
-local bugTab=button(rail,"◈\nКАМНИ",THEME.Accent)
+local bugTab=button(rail,"КАМНИ\nАВТОФАРМ",THEME.Accent)
 styleTab(bugTab,6)
 
-local trainTab=button(rail,"▤\nТРЕНИРОВКА",THEME.Surface)
+local trainTab=button(rail,"КАЧ\nТРЕНИРОВКА",THEME.Surface)
 styleTab(trainTab,62)
 
-local rebTab=button(rail,"↻\nРЕБИРТЫ",THEME.Surface)
+local rebTab=button(rail,"РЕБИРТ\nИ КИНГ",THEME.Surface)
 styleTab(rebTab,118)
 
-local killTab=button(rail,"✦\nАВТОКИЛ",THEME.Surface)
+local killTab=button(rail,"PVP\nАВТОКИЛ",THEME.Surface)
 styleTab(killTab,174)
 
-local crystalTab=button(rail,"◇\nКРИСТАЛЛЫ",THEME.Surface)
+local crystalTab=button(rail,"SHOP\nГЕМЫ",THEME.Surface)
 styleTab(crystalTab,230)
 
 local rescanBtn=button(rail,"ПЕРЕСЧИТАТЬ",THEME.SurfaceAlt)
@@ -3878,11 +3956,14 @@ local killHint=label(killSettingsBody,"Белые — защищены. Цели
 killHint.Size=UDim2.new(1,0,0,32)
 killHint.TextXAlignment=Enum.TextXAlignment.Center
 
--- CRYSTALS PAGE
+-- CRYSTALS AND DIRECT GEM SHOP PAGE
 
-local crystalFeaturePanel,crystalFeatureBody=makeFeaturePanel(crystalPage,"АВТОПОКУПКА",86,3)
+normalizeShopSelection("pet")
+normalizeShopSelection("aura")
+
+local crystalFeaturePanel,crystalFeatureBody=makeFeaturePanel(crystalPage,"ПОКУПКА КАЖДЫЕ 0.5 СЕК",86,3)
 crystalFeaturePanel.LayoutOrder=1
-local crystalSettingsPanel,crystalSettingsBody=makeSettingsPanel(crystalPage,"ЧТО ПОКУПАТЬ",141)
+local crystalSettingsPanel,crystalSettingsBody=makeSettingsPanel(crystalPage,"ТОЧНЫЙ ВЫБОР ТОВАРА",141)
 crystalSettingsPanel.LayoutOrder=2
 
 Runtime.leverRefs.crystal={}
@@ -3894,7 +3975,7 @@ local function turnOffOtherCrystalLevers(activeMode)
 end
 
 local crystalLever
-crystalLever=makeFeatureToggle(crystalFeatureBody,"◇","КРИСТАЛЛ","выбранный тип",false,function(on,api)
+crystalLever=makeFeatureToggle(crystalFeatureBody,"C","КРИСТАЛЛЫ","открывать • 0.5 сек",false,function(on,api)
 	if on then
 		turnOffOtherCrystalLevers("crystal")
 		if not startCrystalAutomation("crystal") then api.Set(false,true) end
@@ -3905,7 +3986,7 @@ end)
 Runtime.leverRefs.crystal.crystal=crystalLever
 
 local petLever
-petLever=makeFeatureToggle(crystalFeatureBody,"♢","ПИТОМЕЦ","до получения",false,function(on,api)
+petLever=makeFeatureToggle(crystalFeatureBody,"P","ПЕТ ЗА ГЕМЫ","точная покупка • 0.5 сек",false,function(on,api)
 	if on then
 		turnOffOtherCrystalLevers("pet")
 		if not startCrystalAutomation("pet") then api.Set(false,true) end
@@ -3916,7 +3997,7 @@ end)
 Runtime.leverRefs.crystal.pet=petLever
 
 local auraLever
-auraLever=makeFeatureToggle(crystalFeatureBody,"✧","АУРА","до получения",false,function(on,api)
+auraLever=makeFeatureToggle(crystalFeatureBody,"A","АУРА ЗА ГЕМЫ","точная покупка • 0.5 сек",false,function(on,api)
 	if on then
 		turnOffOtherCrystalLevers("aura")
 		if not startCrystalAutomation("aura") then api.Set(false,true) end
@@ -3927,10 +4008,10 @@ end)
 Runtime.leverRefs.crystal.aura=auraLever
 
 local crystalSelection
-crystalSelection=makeSelectionRow(crystalSettingsBody,"КРИСТАЛЛ",Runtime.selectedCrystal,function()
+crystalSelection=makeSelectionRow(crystalSettingsBody,"КРИСТАЛЛ ДЛЯ ОТКРЫТИЯ",Runtime.selectedCrystal,function()
 	local options={}
 	for _,name in ipairs(availableCrystalNames()) do
-		table.insert(options,{id=name,label=name,sub="найден на текущей карте"})
+		table.insert(options,{id=name,label=name,sub="рулетка • открытие каждые 0.5 сек"})
 	end
 	openPicker("ВЫБОР КРИСТАЛЛА",options,{
 		selected={[Runtime.selectedCrystal]=true},
@@ -3944,45 +4025,43 @@ crystalSelection=makeSelectionRow(crystalSettingsBody,"КРИСТАЛЛ",Runtime
 end)
 
 local petSelection
-petSelection=makeSelectionRow(crystalSettingsBody,"ПИТОМЕЦ",Runtime.selectedPet.name,function()
+petSelection=makeSelectionRow(crystalSettingsBody,"ПЕТ ИЗ МАГАЗИНА",Runtime.selectedPet or "ВЫБРАТЬ",function()
 	local options={}
-	for index,target in ipairs(PET_TARGETS) do
+	for _,entry in ipairs(shopCatalog("pet")) do
 		table.insert(options,{
-			id=tostring(index),
-			label=target.name,
-			sub="Кристалл: "..target.crystal,
-			target=target,
+			id=entry.name,
+			label=entry.name,
+			sub="Прямая покупка • "..formatShopPrice(entry.price),
 		})
 	end
-	openPicker("ВЫБОР ПИТОМЦА",options,{
-		selected={[tostring(table.find(PET_TARGETS,Runtime.selectedPet) or 0)]=true},
+	openPicker("ПЕТ ЗА ГЕМЫ • БЕЗ РУЛЕТКИ",options,{
+		selected={[tostring(Runtime.selectedPet or "")]=true},
 		onDone=function(option)
 			stopCrystalAutomation(nil)
-			Runtime.selectedPet=option.target
+			Runtime.selectedPet=option.label
 			refreshExtraUI()
-			setStatus("ПИТОМЕЦ: "..Runtime.selectedPet.name)
+			setStatus("ПЕТ ИЗ МАГАЗИНА: "..Runtime.selectedPet)
 		end,
 	})
 end)
 
 local auraSelection
-auraSelection=makeSelectionRow(crystalSettingsBody,"АУРА",Runtime.selectedAura.name,function()
+auraSelection=makeSelectionRow(crystalSettingsBody,"АУРА ИЗ МАГАЗИНА",Runtime.selectedAura or "ВЫБРАТЬ",function()
 	local options={}
-	for index,target in ipairs(AURA_TARGETS) do
+	for _,entry in ipairs(shopCatalog("aura")) do
 		table.insert(options,{
-			id=tostring(index),
-			label=target.name,
-			sub="Кристалл: "..target.crystal,
-			target=target,
+			id=entry.name,
+			label=entry.name,
+			sub="Прямая покупка • "..formatShopPrice(entry.price),
 		})
 	end
-	openPicker("ВЫБОР АУРЫ",options,{
-		selected={[tostring(table.find(AURA_TARGETS,Runtime.selectedAura) or 0)]=true},
+	openPicker("АУРА ЗА ГЕМЫ • БЕЗ РУЛЕТКИ",options,{
+		selected={[tostring(Runtime.selectedAura or "")]=true},
 		onDone=function(option)
 			stopCrystalAutomation(nil)
-			Runtime.selectedAura=option.target
+			Runtime.selectedAura=option.label
 			refreshExtraUI()
-			setStatus("АУРА: "..Runtime.selectedAura.name)
+			setStatus("АУРА ИЗ МАГАЗИНА: "..Runtime.selectedAura)
 		end,
 	})
 end)
@@ -3991,8 +4070,8 @@ Runtime.refreshExtraUI=function()
 	whiteSelection.Set(selectedCount(Runtime.killWhitelist).." игроков")
 	blackSelection.Set(selectedCount(Runtime.killBlacklist).." игроков")
 	crystalSelection.Set(Runtime.selectedCrystal)
-	petSelection.Set(Runtime.selectedPet and Runtime.selectedPet.name or "ВЫБРАТЬ")
-	auraSelection.Set(Runtime.selectedAura and Runtime.selectedAura.name or "ВЫБРАТЬ")
+	petSelection.Set(Runtime.selectedPet or "ВЫБРАТЬ")
+	auraSelection.Set(Runtime.selectedAura or "ВЫБРАТЬ")
 end
 refreshExtraUI()
 
