@@ -1,4 +1,4 @@
--- RockBugHub v20 Validated Compact
+-- RockBugHub v20 Validated Compact + AutoKill/Shop + Mobile patch
 -- Clean rebuild: single scheduler, hard stop, adaptive network throttle.
 -- No getgc patching, no full workspace scans inside fast loops, no unknown train remote spam.
 
@@ -144,6 +144,16 @@ local Runtime={
 	antiAfkEnabled=true,
 	visualLow=false,
 	visualSaved={},
+	killMode="off",
+	killToken=0,
+	killWhitelist={},
+	killBlacklist={},
+	crystalMode="off",
+	crystalToken=0,
+	purchaseAttempts=0,
+	selectedCrystal="Blue Crystal",
+	selectedPet=nil,
+	selectedAura=nil,
 	characterCollisionSaved={},
 	characterLockSaved=nil,
 	lastSchedulerTick=0,
@@ -155,9 +165,121 @@ local Runtime={
 
 ENV.RockBugRuntime=Runtime
 
+-- Fallbacks are only used if the live shop has not replicated yet. Normally
+-- the selectors are populated from ReplicatedStorage.cPetShopFolder, so new
+-- shop items appear automatically without updating this file.
+local FALLBACK_SHOP_PETS={
+	"Orange Hedgehog","Blue Birdie","Red Kitty","Blue Bunny","Dark Vampy",
+	"Silver Dog","Dark Golem","Green Butterfly","Crimson Falcon",
+	"Yellow Butterfly","Purple Dragon","Orange Pegasus","Blue Pheonix",
+	"Red Dragon","Purple Falcon","Blue Firecaster","Golden Pheonix",
+	"Red Firecaster","White Pegasus","Infernal Dragon","Green Firecaster",
+	"White Pheonix","Magic Butterfly","Ultra Birdie","Frostwave Legends Penguin",
+	"Phantom Genesis Dragon","Dark Legends Manticore","Ultimate Supernova Pegasus",
+	"Aether Spirit Bunny","Cybernetic Showdown Dragon","Eternal Strike Leviathan",
+	"Lighting Strike Phantom","Darkstar Hunter","Golden Viking","Muscle Sensei",
+	"Neon Guardian","Muscle King",
+}
+
+local FALLBACK_SHOP_AURAS={
+	"Basic Aura","Advanced Aura","Rare Aura","Epic Aura","Unique Aura",
+	"Ultra Inferno Aura","Azure Tundra Aura","Muscle King Aura",
+	"Grand SuperNova Aura","Eternal Megastrike Aura","Entropic Blast Aura",
+}
+
+local FALLBACK_CRYSTALS={
+	"Blue Crystal","Green Crystal","Frost Crystal","Mythical Crystal",
+	"Inferno Crystal","Legends Crystal","Muscle Elite Crystal",
+	"Galaxy Oracle Crystal","Dark Nebula Crystal","Sky Eclipse Crystal","Jungle Crystal",
+}
+
+Runtime.selectedPet="Muscle King"
+Runtime.selectedAura="Muscle King Aura"
+
 local function safe(fn)
 	local ok,res=pcall(fn)
 	return ok,res
+end
+
+local function shopPrice(item)
+	if not item then return nil end
+	local value=item:FindFirstChild("priceValue",true)
+	if not value then return nil end
+	local ok,price=safe(function() return tonumber(value.Value) end)
+	return ok and price or nil
+end
+
+local function isAuraShopItem(item)
+	if not item then return false end
+	local name=string.lower(tostring(item.Name))
+	if string.find(name,"aura",1,true) or string.find(name,"trail",1,true) then
+		return true
+	end
+	if item:IsA("Trail") or item:FindFirstChildWhichIsA("Trail",true) then
+		return true
+	end
+	for _,attributeName in ipairs({"Type","ItemType","Category"}) do
+		local ok,value=safe(function() return item:GetAttribute(attributeName) end)
+		if ok and type(value)=="string" then
+			local lower=string.lower(value)
+			if string.find(lower,"aura",1,true) or string.find(lower,"trail",1,true) then
+				return true
+			end
+		end
+	end
+	return false
+end
+
+local function shopCatalog(kind)
+	local result={}
+	local seen={}
+	local folder=ReplicatedStorage:FindFirstChild("cPetShopFolder")
+
+	if folder then
+		for _,item in ipairs(folder:GetChildren()) do
+			local aura=isAuraShopItem(item)
+			if (kind=="aura" and aura) or (kind=="pet" and not aura) then
+				local name=tostring(item.Name)
+				if name~="" and not seen[name] then
+					seen[name]=true
+					table.insert(result,{name=name,price=shopPrice(item)})
+				end
+			end
+		end
+	end
+
+	if #result==0 then
+		local fallback=kind=="aura" and FALLBACK_SHOP_AURAS or FALLBACK_SHOP_PETS
+		for _,name in ipairs(fallback) do
+			table.insert(result,{name=name,price=nil})
+		end
+	end
+
+	table.sort(result,function(a,b)
+		local ap=a.price or math.huge
+		local bp=b.price or math.huge
+		if ap==bp then return string.lower(a.name)<string.lower(b.name) end
+		return ap<bp
+	end)
+	return result
+end
+
+local function formatShopPrice(price)
+	if not price then return "цена из игры" end
+	local text=tostring(math.floor(price+0.5))
+	local formatted=text:reverse():gsub("(%d%d%d)","%1 "):reverse():gsub("^ ","")
+	return formatted.." гемов"
+end
+
+local function normalizeShopSelection(kind)
+	local key=kind=="aura" and "selectedAura" or "selectedPet"
+	local current=Runtime[key]
+	local catalog=shopCatalog(kind)
+	for _,entry in ipairs(catalog) do
+		if entry.name==current then return current end
+	end
+	Runtime[key]=catalog[1] and catalog[1].name or nil
+	return Runtime[key]
 end
 
 local function addConn(c)
@@ -1339,6 +1461,267 @@ local function tryTrainRemote()
 	return false
 end
 
+-- ---------- AUTO KILL / CRYSTALS ----------
+
+local function selectedCount(values)
+	local count=0
+	for _,enabled in pairs(values or {}) do
+		if enabled then count=count+1 end
+	end
+	return count
+end
+
+local function refreshExtraUI()
+	if type(Runtime.refreshExtraUI)=="function" then
+		safe(Runtime.refreshExtraUI)
+	end
+end
+
+local function availableCrystalNames()
+	local names={}
+	local seen={}
+	local folder=workspace:FindFirstChild("mapCrystalsFolder")
+
+	if folder then
+		for _,item in ipairs(folder:GetChildren()) do
+			local name=tostring(item.Name)
+			local key=string.lower(name)
+			if key:find("crystal",1,true) and not seen[key] then
+				seen[key]=true
+				table.insert(names,name)
+			end
+		end
+	end
+
+	if #names==0 then
+		for _,name in ipairs(FALLBACK_CRYSTALS) do
+			table.insert(names,name)
+		end
+	end
+
+	table.sort(names,function(a,b)
+		return string.lower(a)<string.lower(b)
+	end)
+	return names
+end
+
+local function resolveCrystalName(wanted)
+	local wantedLower=string.lower(tostring(wanted or ""))
+	local names=availableCrystalNames()
+
+	for _,name in ipairs(names) do
+		if string.lower(name)==wantedLower then return name end
+	end
+
+	local alias=wantedLower=="frost crystal" and "frozen crystal"
+		or (wantedLower=="frozen crystal" and "frost crystal")
+	if alias then
+		for _,name in ipairs(names) do
+			if string.lower(name)==alias then return name end
+		end
+	end
+
+	return wanted
+end
+
+local function folderOwnsNamed(folderName,targetName)
+	local folder=lp:FindFirstChild(folderName)
+	if not folder then return false end
+	local target=string.lower(tostring(targetName or ""))
+
+	for _,item in ipairs(folder:GetDescendants()) do
+		if string.lower(tostring(item.Name))==target then return true end
+		if item:IsA("StringValue") then
+			local ok,value=safe(function() return string.lower(tostring(item.Value)) end)
+			if ok and value==target then return true end
+		end
+	end
+
+	return false
+end
+
+local function ownsPet(name)
+	return folderOwnsNamed("petsFolder",name)
+end
+
+local function ownsAura(name)
+	return folderOwnsNamed("trailsFolder",name) or folderOwnsNamed("aurasFolder",name)
+end
+
+local function shouldKillPlayer(player,mode)
+	if not player or player==lp then return false end
+	if mode=="all" then return true end
+	if mode=="whitelist" then return Runtime.killWhitelist[player.UserId]~=true end
+	if mode=="blacklist" then return Runtime.killBlacklist[player.UserId]==true end
+	return false
+end
+
+local function touchKillTarget(player,tool)
+	local localCharacter=char()
+	local targetCharacter=player and player.Character
+	local targetHumanoid=targetCharacter and targetCharacter:FindFirstChildWhichIsA("Humanoid")
+	local targetRoot=targetCharacter and targetCharacter:FindFirstChild("HumanoidRootPart")
+
+	if not localCharacter or not targetRoot or not targetHumanoid or targetHumanoid.Health<=0 then return end
+
+	if tool and tool.Parent then
+		clearCooldownsOnce(tool)
+		safe(function() tool:Activate() end)
+	end
+	tryPunchRemote()
+
+	if type(firetouchinterest)=="function" then
+		for _,handName in ipairs({"RightHand","LeftHand","Right Arm","Left Arm"}) do
+			local hand=localCharacter:FindFirstChild(handName,true)
+			if hand and hand:IsA("BasePart") then
+				safe(function()
+					firetouchinterest(hand,targetRoot,0)
+					firetouchinterest(hand,targetRoot,1)
+				end)
+			end
+		end
+	end
+end
+
+local function stopKillAutomation(message)
+	Runtime.killToken=Runtime.killToken+1
+	Runtime.killMode="off"
+	for _,lever in pairs(Runtime.leverRefs.kill or {}) do
+		if lever then lever.Set(false,true) end
+	end
+	refreshExtraUI()
+	if message then setStatus(message) end
+end
+
+local function startKillAutomation(mode)
+	Runtime.killToken=Runtime.killToken+1
+	Runtime.killMode=mode
+	local token=Runtime.killToken
+	refreshExtraUI()
+	setStatus("АВТОКИЛ: "..string.upper(mode))
+
+	task.spawn(function()
+		while Runtime.alive and Runtime.killMode==mode and Runtime.killToken==token do
+			if not Runtime.networkPaused then
+				local tool=ensurePunchTool()
+				for _,player in ipairs(Players:GetPlayers()) do
+					if Runtime.killToken~=token then break end
+					if shouldKillPlayer(player,mode) then
+						touchKillTarget(player,tool)
+					end
+				end
+			end
+			task.wait(0.10)
+		end
+	end)
+end
+
+local function openCrystalOnce(name)
+	local events=ReplicatedStorage:FindFirstChild("rEvents")
+	local remote=events and events:FindFirstChild("openCrystalRemote")
+	if not remote then return false,"openCrystalRemote не найден" end
+	local resolved=resolveCrystalName(name)
+
+	local ok,err=safe(function()
+		if remote:IsA("RemoteFunction") then
+			remote:InvokeServer("openCrystal",resolved)
+		else
+			remote:FireServer("openCrystal",resolved)
+		end
+	end)
+	return ok,err,resolved
+end
+
+local function buyShopItemOnce(name)
+	local folder=ReplicatedStorage:FindFirstChild("cPetShopFolder")
+	local remote=ReplicatedStorage:FindFirstChild("cPetShopRemote")
+	if not folder then return false,"cPetShopFolder не найден" end
+	if not remote then return false,"cPetShopRemote не найден" end
+
+	-- Resolve the exact selected object again on every attempt. Keeping an old
+	-- instance here caused mismatched purchases after the shop refreshed.
+	local item=folder:FindFirstChild(tostring(name or ""))
+	if not item then return false,"товар не найден: "..tostring(name) end
+
+	local ok,err=safe(function()
+		if remote:IsA("RemoteFunction") then
+			remote:InvokeServer(item)
+		else
+			remote:FireServer(item)
+		end
+	end)
+	return ok,err,item.Name
+end
+
+local function purchaseTarget(mode)
+	if mode=="crystal" then return Runtime.selectedCrystal end
+	if mode=="pet" then return Runtime.selectedPet end
+	if mode=="aura" then return Runtime.selectedAura end
+	return nil
+end
+
+local function stopCrystalAutomation(message)
+	Runtime.crystalToken=Runtime.crystalToken+1
+	Runtime.crystalMode="off"
+	for _,lever in pairs(Runtime.leverRefs.crystal or {}) do
+		if lever then lever.Set(false,true) end
+	end
+	refreshExtraUI()
+	if message then setStatus(message) end
+end
+
+local function startCrystalAutomation(mode)
+	if mode=="pet" then normalizeShopSelection("pet") end
+	if mode=="aura" then normalizeShopSelection("aura") end
+	local targetName=purchaseTarget(mode)
+	if not targetName then
+		setStatus("СНАЧАЛА ВЫБЕРИ ЦЕЛЬ")
+		return false
+	end
+	if mode~="crystal" then
+		local folder=ReplicatedStorage:FindFirstChild("cPetShopFolder")
+		if not folder or not folder:FindFirstChild(targetName) then
+			setStatus("ТОВАР НЕ НАЙДЕН В МАГАЗИНЕ: "..tostring(targetName))
+			return false
+		end
+	end
+
+	Runtime.crystalToken=Runtime.crystalToken+1
+	Runtime.crystalMode=mode
+	Runtime.purchaseAttempts=0
+	local token=Runtime.crystalToken
+	refreshExtraUI()
+	setStatus((mode=="crystal" and "ОТКРЫТИЕ: " or "ПРЯМАЯ ПОКУПКА: ")..targetName)
+
+	task.spawn(function()
+		while Runtime.alive and Runtime.crystalMode==mode and Runtime.crystalToken==token do
+			if not Runtime.networkPaused then
+				local ok,err,resolved
+				if mode=="crystal" then
+					ok,err,resolved=openCrystalOnce(targetName)
+				else
+					ok,err,resolved=buyShopItemOnce(targetName)
+				end
+				if ok then
+					Runtime.purchaseAttempts=Runtime.purchaseAttempts+1
+					local action=mode=="crystal" and "ОТКРЫТИЕ" or "ПОКУПКА"
+					setStatus(action.." #"..Runtime.purchaseAttempts..": "..tostring(resolved))
+				else
+					setStatus("ОШИБКА ПОКУПКИ: "..tostring(err))
+				end
+			end
+			task.wait(0.5)
+		end
+	end)
+	return true
+end
+
+local function stopExtraAutomation(message)
+	stopKillAutomation(nil)
+	stopCrystalAutomation(nil)
+	if message then setStatus(message) end
+end
+
 -- ---------- REBIRTH / MUSCLE KING ----------
 
 local DEFAULT_KING_CF=CFrame.new(
@@ -1813,6 +2196,7 @@ end
 
 local function panicStop()
 	clearModeState("ВСЁ ОСТАНОВЛЕНО",true)
+	stopExtraAutomation(nil)
 	Runtime.lockPosition=false
 	Runtime.positionCF=nil
 	Runtime.autoRebirth=false
@@ -1830,6 +2214,7 @@ local function panicStop()
 end
 
 local function startBug()
+	stopKillAutomation(nil)
 	-- Reset the previous mode and all of its UI levers before enabling BUG.
 	clearModeState(nil,true)
 
@@ -1885,6 +2270,7 @@ local function startBug()
 end
 
 local function startTrain(t)
+	stopKillAutomation(nil)
 	-- Clear BUG/TP LOCK and stale TRAIN levers before enabling this one.
 	clearModeState(nil,true)
 
@@ -2202,11 +2588,21 @@ local function viewportSize()
 	return camera and camera.ViewportSize or Vector2.new(800,600)
 end
 
+local function windowMetrics(viewport)
+	local availableWidth=math.max(220,math.floor(viewport.X)-8)
+	local availableHeight=math.max(240,math.floor(viewport.Y)-8)
+	local mobile=viewport.X<=700 or viewport.Y<=500
+	local minWidth=math.min(300,availableWidth)
+	local minHeight=math.min(280,availableHeight)
+	local widthRatio=mobile and 0.96 or 0.62
+	local heightRatio=mobile and 0.96 or 0.68
+	local defaultWidth=math.min(560,math.max(minWidth,math.floor(viewport.X*widthRatio)))
+	local defaultHeight=math.min(410,math.max(minHeight,math.floor(viewport.Y*heightRatio)))
+	return minWidth,minHeight,availableWidth,availableHeight,defaultWidth,defaultHeight
+end
+
 local initialViewport=viewportSize()
-local minWindowWidth=math.max(280,math.min(320,initialViewport.X-12))
-local minWindowHeight=math.max(360,math.min(410,initialViewport.Y-12))
-local defaultWidth=math.min(560,math.max(minWindowWidth,math.floor(initialViewport.X*0.62)))
-local defaultHeight=math.min(410,math.max(minWindowHeight,math.floor(initialViewport.Y*0.60)))
+local minWindowWidth,minWindowHeight,maxWindowWidth,maxWindowHeight,defaultWidth,defaultHeight=windowMetrics(initialViewport)
 
 local main=Instance.new("Frame")
 main.Parent=gui
@@ -2274,6 +2670,22 @@ rail.Position=UDim2.fromOffset(0,48)
 rail.BackgroundColor3=THEME.Panel
 rail.BackgroundTransparency=0.20
 rail.BorderSizePixel=0
+rail.ClipsDescendants=true
+
+local railScroll=Instance.new("ScrollingFrame")
+railScroll.Parent=rail
+railScroll.Size=UDim2.new(1,0,1,-40)
+railScroll.Position=UDim2.fromOffset(0,0)
+railScroll.BackgroundTransparency=1
+railScroll.BorderSizePixel=0
+railScroll.Active=true
+railScroll.ScrollingEnabled=true
+railScroll.ScrollingDirection=Enum.ScrollingDirection.Y
+railScroll.CanvasSize=UDim2.fromOffset(0,322)
+railScroll.ScrollBarThickness=2
+railScroll.ScrollBarImageColor3=THEME.Accent
+railScroll.ScrollBarImageTransparency=0.18
+railScroll.ElasticBehavior=Enum.ElasticBehavior.WhenScrollable
 
 local railLine=Instance.new("Frame")
 railLine.Parent=rail
@@ -2303,18 +2715,24 @@ local function styleTab(tab,y)
 	corner(mark,2)
 end
 
-local bugTab=button(rail,"◈\nКАМНИ",THEME.Accent)
+local bugTab=button(railScroll,"КАМНИ\nАВТОФАРМ",THEME.Accent)
 styleTab(bugTab,6)
 
-local trainTab=button(rail,"▤\nТРЕНИРОВКА",THEME.Surface)
+local trainTab=button(railScroll,"КАЧ\nТРЕНИРОВКА",THEME.Surface)
 styleTab(trainTab,62)
 
-local rebTab=button(rail,"↻\nРЕБИРТЫ",THEME.Surface)
+local rebTab=button(railScroll,"РЕБИРТ\nИ КИНГ",THEME.Surface)
 styleTab(rebTab,118)
 
-local rescanBtn=button(rail,"ПЕРЕСЧИТАТЬ",THEME.SurfaceAlt)
+local killTab=button(railScroll,"PVP\nАВТОКИЛ",THEME.Surface)
+styleTab(killTab,174)
+
+local crystalTab=button(railScroll,"SHOP\nГЕМЫ",THEME.Surface)
+styleTab(crystalTab,230)
+
+local rescanBtn=button(railScroll,"ПЕРЕСЧИТАТЬ",THEME.SurfaceAlt)
 rescanBtn.Size=UDim2.new(1,-12,0,28)
-rescanBtn.Position=UDim2.fromOffset(6,176)
+rescanBtn.Position=UDim2.fromOffset(6,286)
 rescanBtn.TextSize=9
 
 local panicBtn=button(rail,"СТОП",THEME.Danger)
@@ -2399,11 +2817,15 @@ local function makePage(color)
 	page.Position=UDim2.fromOffset(6,75)
 	page.BackgroundTransparency=1
 	page.BorderSizePixel=0
-	page.ScrollBarThickness=0
+	page.ScrollBarThickness=3
 	page.ScrollBarImageColor3=color
+	page.ScrollBarImageTransparency=0.12
 	page.CanvasSize=UDim2.new(0,0,0,0)
 	page.ScrollingDirection=Enum.ScrollingDirection.Y
-	page.ScrollingEnabled=false
+	page.ScrollingEnabled=true
+	page.Active=true
+	page.ElasticBehavior=Enum.ElasticBehavior.WhenScrollable
+	page.VerticalScrollBarInset=Enum.ScrollBarInset.ScrollBar
 	return page
 end
 
@@ -2412,6 +2834,10 @@ local trainPage=makePage(THEME.Success)
 trainPage.Visible=false
 local rebPage=makePage(THEME.Accent2)
 rebPage.Visible=false
+local killPage=makePage(THEME.Danger)
+killPage.Visible=false
+local crystalPage=makePage(THEME.Neon)
+crystalPage.Visible=false
 
 local resizeHandle=button(main,"◢",THEME.SurfaceAlt)
 resizeHandle.Size=UDim2.fromOffset(18,18)
@@ -2449,18 +2875,24 @@ end
 local bugList=listLayout(bugPage)
 local trainList=listLayout(trainPage)
 local rebList=listLayout(rebPage)
+local killList=listLayout(killPage)
+local crystalList=listLayout(crystalPage)
 
 local function updateCanvas()
 	task.defer(function()
 		bugPage.CanvasSize=UDim2.new(0,0,0,bugList.AbsoluteContentSize.Y+20)
 		trainPage.CanvasSize=UDim2.new(0,0,0,trainList.AbsoluteContentSize.Y+20)
 		rebPage.CanvasSize=UDim2.new(0,0,0,rebList.AbsoluteContentSize.Y+20)
+		killPage.CanvasSize=UDim2.new(0,0,0,killList.AbsoluteContentSize.Y+20)
+		crystalPage.CanvasSize=UDim2.new(0,0,0,crystalList.AbsoluteContentSize.Y+20)
 	end)
 end
 
 addConn(bugList:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(updateCanvas))
 addConn(trainList:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(updateCanvas))
 addConn(rebList:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(updateCanvas))
+addConn(killList:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(updateCanvas))
+addConn(crystalList:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(updateCanvas))
 
 local function card(parent,height)
 	local f=Instance.new("Frame")
@@ -2766,6 +3198,267 @@ local function makeNumberInput(parent,name,desc,initial,callback)
 	addConn(box.FocusLost:Connect(commit))
 	return api,row
 end
+
+local function makeSelectionRow(parent,titleText,initialText,callback)
+	local row=Instance.new("TextButton")
+	row.Parent=parent
+	row.Size=UDim2.new(1,0,0,32)
+	row.Text=""
+	row.AutoButtonColor=true
+	row.BackgroundColor3=THEME.Surface
+	row.BackgroundTransparency=0.20
+	row.BorderSizePixel=0
+	corner(row,7)
+	local edge=neonStroke(row,1,0.66)
+
+	local titleLabel=label(row,titleText,8,Enum.Font.GothamBlack,THEME.Accent2)
+	titleLabel.Size=UDim2.new(0.30,-7,1,0)
+	titleLabel.Position=UDim2.fromOffset(7,0)
+
+	local valueLabel=label(row,initialText or "ВЫБРАТЬ",9,Enum.Font.GothamBold,THEME.Text)
+	valueLabel.Size=UDim2.new(0.70,-28,1,0)
+	valueLabel.Position=UDim2.new(0.30,0,0,0)
+	valueLabel.TextXAlignment=Enum.TextXAlignment.Right
+	valueLabel.TextWrapped=false
+	valueLabel.TextTruncate=Enum.TextTruncate.AtEnd
+
+	local arrow=label(row,"›",16,Enum.Font.GothamBlack,THEME.Accent)
+	arrow.Size=UDim2.fromOffset(20,32)
+	arrow.Position=UDim2.new(1,-22,0,0)
+	arrow.TextXAlignment=Enum.TextXAlignment.Center
+
+	addConn(row.Activated:Connect(function()
+		edge.Transparency=0.08
+		task.defer(function() if edge.Parent then edge.Transparency=0.66 end end)
+		if callback then callback() end
+	end))
+
+	return {
+		Row=row,
+		Set=function(value) valueLabel.Text=tostring(value or "ВЫБРАТЬ") end,
+		Get=function() return valueLabel.Text end,
+	}
+end
+
+-- One modal picker for players, crystals, pets and auras. The list has search,
+-- touch scrolling and a persistent neon selection frame.
+local pickerShade=Instance.new("TextButton")
+pickerShade.Parent=main
+pickerShade.Size=UDim2.new(1,0,1,0)
+pickerShade.BackgroundColor3=Color3.fromRGB(3,5,12)
+pickerShade.BackgroundTransparency=0.16
+pickerShade.BorderSizePixel=0
+pickerShade.Text=""
+pickerShade.AutoButtonColor=false
+pickerShade.Visible=false
+pickerShade.ZIndex=80
+
+local pickerPanel=Instance.new("Frame")
+pickerPanel.Parent=pickerShade
+pickerPanel.Size=UDim2.new(1,-34,1,-46)
+pickerPanel.Position=UDim2.fromOffset(17,23)
+pickerPanel.BackgroundColor3=THEME.Bg
+pickerPanel.BackgroundTransparency=0.02
+pickerPanel.BorderSizePixel=0
+pickerPanel.ZIndex=81
+corner(pickerPanel,14)
+neonStroke(pickerPanel,2,0.04)
+gradient(pickerPanel,THEME.Panel,THEME.Bg,125)
+
+local pickerTitle=label(pickerPanel,"ВЫБОР",13,Enum.Font.GothamBlack,THEME.Text)
+pickerTitle.Size=UDim2.new(1,-54,0,36)
+pickerTitle.Position=UDim2.fromOffset(12,3)
+pickerTitle.ZIndex=82
+
+local pickerClose=button(pickerPanel,"×",THEME.SurfaceAlt)
+pickerClose.Size=UDim2.fromOffset(30,30)
+pickerClose.Position=UDim2.new(1,-38,0,7)
+pickerClose.TextColor3=THEME.Danger
+pickerClose.TextSize=18
+pickerClose.ZIndex=83
+
+local pickerSearch=Instance.new("TextBox")
+pickerSearch.Parent=pickerPanel
+pickerSearch.Size=UDim2.new(1,-20,0,32)
+pickerSearch.Position=UDim2.fromOffset(10,43)
+pickerSearch.BackgroundColor3=THEME.SurfaceAlt
+pickerSearch.BackgroundTransparency=0.08
+pickerSearch.BorderSizePixel=0
+pickerSearch.ClearTextOnFocus=false
+pickerSearch.PlaceholderText="Поиск..."
+pickerSearch.PlaceholderColor3=THEME.Muted
+pickerSearch.Text=""
+pickerSearch.TextColor3=THEME.Text
+pickerSearch.Font=Enum.Font.GothamBold
+pickerSearch.TextSize=11
+pickerSearch.TextXAlignment=Enum.TextXAlignment.Left
+pickerSearch.ZIndex=82
+corner(pickerSearch,8)
+neonStroke(pickerSearch,1.2,0.48)
+local pickerSearchPad=Instance.new("UIPadding")
+pickerSearchPad.Parent=pickerSearch
+pickerSearchPad.PaddingLeft=UDim.new(0,10)
+pickerSearchPad.PaddingRight=UDim.new(0,10)
+
+local pickerList=Instance.new("ScrollingFrame")
+pickerList.Parent=pickerPanel
+pickerList.Size=UDim2.new(1,-20,1,-132)
+pickerList.Position=UDim2.fromOffset(10,82)
+pickerList.BackgroundColor3=THEME.Bg
+pickerList.BackgroundTransparency=0.10
+pickerList.BorderSizePixel=0
+pickerList.ScrollBarThickness=4
+pickerList.ScrollBarImageColor3=THEME.Accent
+pickerList.CanvasSize=UDim2.new(0,0,0,0)
+pickerList.ScrollingDirection=Enum.ScrollingDirection.Y
+pickerList.ZIndex=82
+pickerList.Active=true
+corner(pickerList,10)
+neonStroke(pickerList,1,0.68)
+
+local pickerPadding=Instance.new("UIPadding")
+pickerPadding.Parent=pickerList
+pickerPadding.PaddingTop=UDim.new(0,6)
+pickerPadding.PaddingBottom=UDim.new(0,6)
+pickerPadding.PaddingLeft=UDim.new(0,6)
+pickerPadding.PaddingRight=UDim.new(0,6)
+
+local pickerLayout=Instance.new("UIListLayout")
+pickerLayout.Parent=pickerList
+pickerLayout.SortOrder=Enum.SortOrder.LayoutOrder
+pickerLayout.Padding=UDim.new(0,5)
+
+local pickerDone=button(pickerPanel,"ГОТОВО",THEME.SurfaceAlt)
+pickerDone.Size=UDim2.new(1,-20,0,34)
+pickerDone.Position=UDim2.new(0,10,1,-42)
+pickerDone.ZIndex=83
+
+local pickerState=nil
+local pickerItems={}
+local pickerItemConnections={}
+
+local function clearPickerItems()
+	for _,connection in ipairs(pickerItemConnections) do
+		safe(function() connection:Disconnect() end)
+	end
+	pickerItemConnections={}
+	for _,item in ipairs(pickerItems) do
+		if item.Parent then item:Destroy() end
+	end
+	pickerItems={}
+end
+
+local function closePicker()
+	pickerState=nil
+	pickerShade.Visible=false
+	pickerSearch.Text=""
+	clearPickerItems()
+end
+
+local function renderPicker(resetScroll)
+	local oldCanvas=pickerList.CanvasPosition
+	clearPickerItems()
+	if not pickerState then return end
+
+	local query=string.lower(tostring(pickerSearch.Text or ""))
+	local visibleCount=0
+	for _,option in ipairs(pickerState.options) do
+		local id=tostring(option.id or option.label)
+		local hay=string.lower(tostring(option.label or "").." "..tostring(option.sub or ""))
+		if query=="" or hay:find(query,1,true) then
+			visibleCount=visibleCount+1
+			local chosen=pickerState.selected[id]==true
+			local item=button(pickerList,"",chosen and THEME.SurfaceAlt or THEME.Surface)
+			item.Size=UDim2.new(1,-2,0,45)
+			item.LayoutOrder=visibleCount
+			item.ZIndex=83
+			item.BackgroundTransparency=chosen and 0.02 or 0.20
+			local itemStroke=item:FindFirstChild("NeonEdge")
+			if itemStroke then
+				itemStroke.Transparency=chosen and 0.02 or 0.66
+				itemStroke.Thickness=chosen and 2 or 1
+			end
+
+			local nameLabel=label(item,option.label,10,Enum.Font.GothamBlack,chosen and THEME.Accent2 or THEME.Text)
+			nameLabel.Size=UDim2.new(1,-48,0,20)
+			nameLabel.Position=UDim2.fromOffset(9,3)
+			nameLabel.ZIndex=84
+			local subLabel=label(item,option.sub or "",8,Enum.Font.Gotham,THEME.Muted)
+			subLabel.Size=UDim2.new(1,-48,0,16)
+			subLabel.Position=UDim2.fromOffset(9,23)
+			subLabel.ZIndex=84
+			local marker=label(item,chosen and "ON" or "›",9,Enum.Font.GothamBlack,chosen and THEME.Accent2 or THEME.Muted)
+			marker.Size=UDim2.fromOffset(34,45)
+			marker.Position=UDim2.new(1,-40,0,0)
+			marker.TextXAlignment=Enum.TextXAlignment.Center
+			marker.ZIndex=84
+
+			local itemConnection=item.Activated:Connect(function()
+				if not pickerState then return end
+				if pickerState.multiple then
+					pickerState.selected[id]=not pickerState.selected[id]
+					renderPicker(false)
+				else
+					local done=pickerState.onDone
+					closePicker()
+					if done then done(option) end
+				end
+			end)
+			table.insert(pickerItemConnections,itemConnection)
+			table.insert(pickerItems,item)
+		end
+	end
+
+	if visibleCount==0 then
+		local empty=label(pickerList,"НИЧЕГО НЕ НАЙДЕНО",10,Enum.Font.GothamBold,THEME.Muted)
+		empty.Size=UDim2.new(1,-2,0,42)
+		empty.LayoutOrder=1
+		empty.TextXAlignment=Enum.TextXAlignment.Center
+		empty.ZIndex=83
+		table.insert(pickerItems,empty)
+	end
+
+	pickerList.CanvasSize=UDim2.new(0,0,0,math.max(54,visibleCount*50+12))
+	if resetScroll then
+		pickerList.CanvasPosition=Vector2.new(0,0)
+	else
+		task.defer(function()
+			if pickerList.Parent then pickerList.CanvasPosition=oldCanvas end
+		end)
+	end
+	pickerDone.Text=pickerState.multiple and ("ГОТОВО • "..selectedCount(pickerState.selected)) or "ЗАКРЫТЬ"
+end
+
+local function openPicker(titleText,options,config)
+	config=config or {}
+	local selected={}
+	for id,enabled in pairs(config.selected or {}) do
+		if enabled then selected[tostring(id)]=true end
+	end
+	pickerState={
+		options=options or {},
+		multiple=config.multiple==true,
+		selected=selected,
+		onDone=config.onDone,
+	}
+	pickerTitle.Text=titleText
+	pickerSearch.Text=""
+	pickerShade.Visible=true
+	renderPicker(true)
+end
+
+addConn(pickerClose.Activated:Connect(closePicker))
+addConn(pickerDone.Activated:Connect(function()
+	if not pickerState then return end
+	local state=pickerState
+	if state.multiple and state.onDone then state.onDone(state.selected) end
+	closePicker()
+end))
+addConn(pickerSearch:GetPropertyChangedSignal("Text"):Connect(function()
+	if pickerState then renderPicker(true) end
+end))
+
+Runtime.closePicker=closePicker
 
 -- BUG PAGE
 
@@ -3192,9 +3885,241 @@ end)
 
 Runtime.leverRefs.kingLock=kingLockSlider
 
+-- AUTO KILL PAGE
+
+local killFeaturePanel,killFeatureBody=makeFeaturePanel(killPage,"РЕЖИМ АВТОКИЛА",86,3)
+killFeaturePanel.LayoutOrder=1
+local killSettingsPanel,killSettingsBody=makeSettingsPanel(killPage,"СПИСКИ ИГРОКОВ",141)
+killSettingsPanel.LayoutOrder=2
+
+Runtime.leverRefs.kill={}
+
+local function turnOffOtherKillLevers(activeMode)
+	if Runtime.mode then stopMode("ОСНОВНОЙ РЕЖИМ ОСТАНОВЛЕН / АВТОКИЛ") end
+	for mode,lever in pairs(Runtime.leverRefs.kill) do
+		if mode~=activeMode and lever then lever.Set(false,true) end
+	end
+end
+
+local killAllLever
+killAllLever=makeFeatureToggle(killFeatureBody,"✦","ВСЕ ИГРОКИ","без исключений",false,function(on,api)
+	if on then
+		turnOffOtherKillLevers("all")
+		startKillAutomation("all")
+	else
+		if Runtime.killMode=="all" then stopKillAutomation("АВТОКИЛ: выключен") end
+	end
+end)
+Runtime.leverRefs.kill.all=killAllLever
+
+local killWhiteLever
+killWhiteLever=makeFeatureToggle(killFeatureBody,"♢","КРОМЕ БЕЛЫХ","не трогает список",false,function(on,api)
+	if on then
+		turnOffOtherKillLevers("whitelist")
+		startKillAutomation("whitelist")
+	else
+		if Runtime.killMode=="whitelist" then stopKillAutomation("АВТОКИЛ: выключен") end
+	end
+end)
+Runtime.leverRefs.kill.whitelist=killWhiteLever
+
+local killBlackLever
+killBlackLever=makeFeatureToggle(killFeatureBody,"◎","ТОЛЬКО ЦЕЛИ","чёрный список",false,function(on,api)
+	if on then
+		turnOffOtherKillLevers("blacklist")
+		startKillAutomation("blacklist")
+	else
+		if Runtime.killMode=="blacklist" then stopKillAutomation("АВТОКИЛ: выключен") end
+	end
+end)
+Runtime.leverRefs.kill.blacklist=killBlackLever
+
+local function currentPlayerOptions()
+	local options={}
+	for _,player in ipairs(Players:GetPlayers()) do
+		if player~=lp then
+			table.insert(options,{
+				id=tostring(player.UserId),
+				label=player.DisplayName,
+				sub="@"..player.Name.."  •  ID "..tostring(player.UserId),
+				player=player,
+			})
+		end
+	end
+	table.sort(options,function(a,b) return string.lower(a.label)<string.lower(b.label) end)
+	return options
+end
+
+local whiteSelection
+whiteSelection=makeSelectionRow(killSettingsBody,"БЕЛЫЙ СПИСОК","0 игроков",function()
+	openPicker("БЕЛЫЙ СПИСОК",currentPlayerOptions(),{
+		multiple=true,
+		selected=Runtime.killWhitelist,
+		onDone=function(selected)
+			Runtime.killWhitelist={}
+			for id,enabled in pairs(selected) do
+				if enabled then Runtime.killWhitelist[tonumber(id) or id]=true end
+			end
+			refreshExtraUI()
+			setStatus("БЕЛЫЙ СПИСОК: "..selectedCount(Runtime.killWhitelist))
+		end,
+	})
+end)
+
+local blackSelection
+blackSelection=makeSelectionRow(killSettingsBody,"ЦЕЛИ","0 игроков",function()
+	openPicker("ЦЕЛИ АВТОКИЛА",currentPlayerOptions(),{
+		multiple=true,
+		selected=Runtime.killBlacklist,
+		onDone=function(selected)
+			Runtime.killBlacklist={}
+			for id,enabled in pairs(selected) do
+				if enabled then Runtime.killBlacklist[tonumber(id) or id]=true end
+			end
+			refreshExtraUI()
+			setStatus("ЦЕЛЕЙ АВТОКИЛА: "..selectedCount(Runtime.killBlacklist))
+		end,
+	})
+end)
+
+local killHint=label(killSettingsBody,"Белые — защищены. Цели — единственные атакуемые игроки.",8,Enum.Font.Gotham,THEME.Muted)
+killHint.Size=UDim2.new(1,0,0,32)
+killHint.TextXAlignment=Enum.TextXAlignment.Center
+
+-- CRYSTALS AND DIRECT GEM SHOP PAGE
+
+normalizeShopSelection("pet")
+normalizeShopSelection("aura")
+
+local crystalFeaturePanel,crystalFeatureBody=makeFeaturePanel(crystalPage,"ПОКУПКА КАЖДЫЕ 0.5 СЕК",86,3)
+crystalFeaturePanel.LayoutOrder=1
+local crystalSettingsPanel,crystalSettingsBody=makeSettingsPanel(crystalPage,"ТОЧНЫЙ ВЫБОР ТОВАРА",141)
+crystalSettingsPanel.LayoutOrder=2
+
+Runtime.leverRefs.crystal={}
+
+local function turnOffOtherCrystalLevers(activeMode)
+	for mode,lever in pairs(Runtime.leverRefs.crystal) do
+		if mode~=activeMode and lever then lever.Set(false,true) end
+	end
+end
+
+local crystalLever
+crystalLever=makeFeatureToggle(crystalFeatureBody,"C","КРИСТАЛЛЫ","открывать • 0.5 сек",false,function(on,api)
+	if on then
+		turnOffOtherCrystalLevers("crystal")
+		if not startCrystalAutomation("crystal") then api.Set(false,true) end
+	else
+		if Runtime.crystalMode=="crystal" then stopCrystalAutomation("КРИСТАЛЛЫ: выключено") end
+	end
+end)
+Runtime.leverRefs.crystal.crystal=crystalLever
+
+local petLever
+petLever=makeFeatureToggle(crystalFeatureBody,"P","ПЕТ ЗА ГЕМЫ","точная покупка • 0.5 сек",false,function(on,api)
+	if on then
+		turnOffOtherCrystalLevers("pet")
+		if not startCrystalAutomation("pet") then api.Set(false,true) end
+	else
+		if Runtime.crystalMode=="pet" then stopCrystalAutomation("АВТОПИТОМЕЦ: выключен") end
+	end
+end)
+Runtime.leverRefs.crystal.pet=petLever
+
+local auraLever
+auraLever=makeFeatureToggle(crystalFeatureBody,"A","АУРА ЗА ГЕМЫ","точная покупка • 0.5 сек",false,function(on,api)
+	if on then
+		turnOffOtherCrystalLevers("aura")
+		if not startCrystalAutomation("aura") then api.Set(false,true) end
+	else
+		if Runtime.crystalMode=="aura" then stopCrystalAutomation("АВТОАУРА: выключена") end
+	end
+end)
+Runtime.leverRefs.crystal.aura=auraLever
+
+local crystalSelection
+crystalSelection=makeSelectionRow(crystalSettingsBody,"КРИСТАЛЛ ДЛЯ ОТКРЫТИЯ",Runtime.selectedCrystal,function()
+	local options={}
+	for _,name in ipairs(availableCrystalNames()) do
+		table.insert(options,{id=name,label=name,sub="рулетка • открытие каждые 0.5 сек"})
+	end
+	openPicker("ВЫБОР КРИСТАЛЛА",options,{
+		selected={[Runtime.selectedCrystal]=true},
+		onDone=function(option)
+			stopCrystalAutomation(nil)
+			Runtime.selectedCrystal=option.label
+			refreshExtraUI()
+			setStatus("КРИСТАЛЛ: "..Runtime.selectedCrystal)
+		end,
+	})
+end)
+
+local petSelection
+petSelection=makeSelectionRow(crystalSettingsBody,"ПЕТ ИЗ МАГАЗИНА",Runtime.selectedPet or "ВЫБРАТЬ",function()
+	local options={}
+	for _,entry in ipairs(shopCatalog("pet")) do
+		table.insert(options,{
+			id=entry.name,
+			label=entry.name,
+			sub="Прямая покупка • "..formatShopPrice(entry.price),
+		})
+	end
+	openPicker("ПЕТ ЗА ГЕМЫ • БЕЗ РУЛЕТКИ",options,{
+		selected={[tostring(Runtime.selectedPet or "")]=true},
+		onDone=function(option)
+			stopCrystalAutomation(nil)
+			Runtime.selectedPet=option.label
+			refreshExtraUI()
+			setStatus("ПЕТ ИЗ МАГАЗИНА: "..Runtime.selectedPet)
+		end,
+	})
+end)
+
+local auraSelection
+auraSelection=makeSelectionRow(crystalSettingsBody,"АУРА ИЗ МАГАЗИНА",Runtime.selectedAura or "ВЫБРАТЬ",function()
+	local options={}
+	for _,entry in ipairs(shopCatalog("aura")) do
+		table.insert(options,{
+			id=entry.name,
+			label=entry.name,
+			sub="Прямая покупка • "..formatShopPrice(entry.price),
+		})
+	end
+	openPicker("АУРА ЗА ГЕМЫ • БЕЗ РУЛЕТКИ",options,{
+		selected={[tostring(Runtime.selectedAura or "")]=true},
+		onDone=function(option)
+			stopCrystalAutomation(nil)
+			Runtime.selectedAura=option.label
+			refreshExtraUI()
+			setStatus("АУРА ИЗ МАГАЗИНА: "..Runtime.selectedAura)
+		end,
+	})
+end)
+
+Runtime.refreshExtraUI=function()
+	whiteSelection.Set(selectedCount(Runtime.killWhitelist).." игроков")
+	blackSelection.Set(selectedCount(Runtime.killBlacklist).." игроков")
+	crystalSelection.Set(Runtime.selectedCrystal)
+	petSelection.Set(Runtime.selectedPet or "ВЫБРАТЬ")
+	auraSelection.Set(Runtime.selectedAura or "ВЫБРАТЬ")
+end
+refreshExtraUI()
+
 local activeTab="bug"
 local minimized=false
 local expandedSize=main.Size
+
+local function applyResponsiveLayout()
+	local compact=main.AbsoluteSize.X<380
+	local railWidth=compact and 72 or 82
+	rail.Size=UDim2.new(0,railWidth,1,-48)
+	content.Size=UDim2.new(1,-railWidth,1,-48)
+	content.Position=UDim2.fromOffset(railWidth,48)
+	railScroll.ScrollBarThickness=compact and 3 or 2
+	title.TextSize=compact and 12 or 14
+	author.TextSize=compact and 7 or 8
+	updateCanvas()
+end
 
 local function paintTab(tab,active)
 	tab.BackgroundColor3=active and THEME.SurfaceAlt or THEME.Surface
@@ -3214,12 +4139,18 @@ local function showTab(name)
 	local bug=name=="bug"
 	local train=name=="train"
 	local reb=name=="reb"
+	local kill=name=="kill"
+	local crystal=name=="crystal"
 	bugPage.Visible=(not minimized) and bug
 	trainPage.Visible=(not minimized) and train
 	rebPage.Visible=(not minimized) and reb
+	killPage.Visible=(not minimized) and kill
+	crystalPage.Visible=(not minimized) and crystal
 	paintTab(bugTab,bug)
 	paintTab(trainTab,train)
 	paintTab(rebTab,reb)
+	paintTab(killTab,kill)
+	paintTab(crystalTab,crystal)
 end
 
 local function clampOffsetPosition(position,size)
@@ -3244,6 +4175,8 @@ local function setMinimized(on)
 		bugPage.Visible=false
 		trainPage.Visible=false
 		rebPage.Visible=false
+		killPage.Visible=false
+		crystalPage.Visible=false
 	else
 		main.Size=expandedSize
 		main.Position=clampOffsetPosition(miniButton.Position,expandedSize)
@@ -3253,10 +4186,61 @@ local function setMinimized(on)
 	end
 end
 
+local viewportConnection=nil
+
+local function fitWindowToViewport(useDefaultSize)
+	local viewport=viewportSize()
+	local minWidth,minHeight,maxWidth,maxHeight,wantedWidth,wantedHeight=windowMetrics(viewport)
+	local sourceSize=minimized and expandedSize or main.Size
+	local width=useDefaultSize and wantedWidth or math.clamp(sourceSize.X.Offset,minWidth,maxWidth)
+	local height=useDefaultSize and wantedHeight or math.clamp(sourceSize.Y.Offset,minHeight,maxHeight)
+	local fittedSize=UDim2.fromOffset(width,height)
+	expandedSize=fittedSize
+
+	if minimized then
+		miniButton.Position=clampOffsetPosition(miniButton.Position,miniButton.Size)
+	else
+		main.Size=fittedSize
+		main.Position=clampOffsetPosition(main.Position,fittedSize)
+	end
+	applyResponsiveLayout()
+end
+
+local function bindViewportCamera()
+	if viewportConnection then
+		safe(function() viewportConnection:Disconnect() end)
+		viewportConnection=nil
+	end
+	local camera=workspace.CurrentCamera
+	if camera then
+		viewportConnection=camera:GetPropertyChangedSignal("ViewportSize"):Connect(function()
+			task.defer(function()
+				if Runtime.alive then fitWindowToViewport(false) end
+			end)
+		end)
+		table.insert(Runtime.connections,viewportConnection)
+	end
+end
+
+addConn(main:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
+	task.defer(applyResponsiveLayout)
+end))
+addConn(workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(function()
+	bindViewportCamera()
+	fitWindowToViewport(false)
+end))
+bindViewportCamera()
+applyResponsiveLayout()
+
 addConn(bugTab.Activated:Connect(function() showTab("bug") end))
 addConn(trainTab.Activated:Connect(function() showTab("train") end))
 addConn(rebTab.Activated:Connect(function() showTab("reb") end))
-addConn(minimizeBtn.Activated:Connect(function() setMinimized(true) end))
+addConn(killTab.Activated:Connect(function() showTab("kill") end))
+addConn(crystalTab.Activated:Connect(function() showTab("crystal") end))
+addConn(minimizeBtn.Activated:Connect(function()
+	if Runtime.closePicker then Runtime.closePicker() end
+	setMinimized(true)
+end))
 
 addConn(rescanBtn.Activated:Connect(function()
 	setStatus("ОБНОВЛЯЮ КАМНИ...")
@@ -3331,10 +4315,9 @@ addConn(UserInputService.InputChanged:Connect(function(input)
 			miniButton.Position=clampOffsetPosition(wanted,miniButton.Size)
 		elseif resizing and resizeStartSize then
 			local viewport=viewportSize()
-			local dynamicMinWidth=math.max(280,math.min(320,viewport.X-12))
-			local dynamicMinHeight=math.max(360,math.min(410,viewport.Y-12))
-			local maxWidth=math.max(dynamicMinWidth,viewport.X-main.Position.X.Offset-4)
-			local maxHeight=math.max(dynamicMinHeight,viewport.Y-main.Position.Y.Offset-4)
+			local dynamicMinWidth,dynamicMinHeight,viewportMaxWidth,viewportMaxHeight=windowMetrics(viewport)
+			local maxWidth=math.min(viewportMaxWidth,math.max(dynamicMinWidth,viewport.X-main.Position.X.Offset-4))
+			local maxHeight=math.min(viewportMaxHeight,math.max(dynamicMinHeight,viewport.Y-main.Position.Y.Offset-4))
 			local width=math.clamp(resizeStartSize.X.Offset+delta.X,dynamicMinWidth,maxWidth)
 			local height=math.clamp(resizeStartSize.Y.Offset+delta.Y,dynamicMinHeight,maxHeight)
 			main.Size=UDim2.fromOffset(width,height)
