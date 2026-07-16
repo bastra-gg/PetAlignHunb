@@ -331,7 +331,38 @@ local function setStatus(text)
 	end
 end
 
+local function formatServerDuration(value)
+	local seconds=math.max(0,math.floor(tonumber(value) or 0))
+	local days=math.floor(seconds/86400)
+	seconds=seconds%86400
+	local hours=math.floor(seconds/3600)
+	local minutes=math.floor((seconds%3600)/60)
+	local secs=seconds%60
+	if days>0 then
+		return ("%dд %02d:%02d:%02d"):format(days,hours,minutes,secs)
+	end
+	return ("%02d:%02d:%02d"):format(hours,minutes,secs)
+end
+
+local function observedServerAge()
+	-- Roblox does not replicate the real server process uptime to LocalScripts.
+	-- On a freshly opened VIP server this connection timer is the closest safe
+	-- estimate because the owner normally creates the instance with the first join.
+	local ok,value=safe(function() return workspace.DistributedGameTime end)
+	if ok and type(value)=="number" and value==value and value>=0 then
+		return value
+	end
+	return nil
+end
+
 local function setNetText()
+	if Runtime.ui and Runtime.ui.uptime and Runtime.ui.uptime.Parent then
+		local age=observedServerAge()
+		local isVip=tostring(game.PrivateServerId or "")~=""
+		local prefix=isVip and "VIP-СЕРВЕР ~ " or "В СЕРВЕРЕ "
+		Runtime.ui.uptime.Text=prefix..(age and formatServerDuration(age) or "--:--:--")
+	end
+
 	if Runtime.ui and Runtime.ui.net and Runtime.ui.net.Parent then
 		local pingText=Runtime.pingAvailable and tostring(math.floor((Runtime.pingMs or 0)+0.5)).."ms" or "?"
 		if Runtime.networkPaused then
@@ -2795,8 +2826,15 @@ corner(statusPanel,10)
 neonStroke(statusPanel,1.1,0.58)
 
 local statusTitle=label(statusPanel,"⌁  СТАТУС",8,Enum.Font.GothamBold,THEME.Accent)
-statusTitle.Size=UDim2.new(1,-12,0,12)
+statusTitle.Size=UDim2.new(0.34,-6,0,12)
 statusTitle.Position=UDim2.fromOffset(6,1)
+
+local serverUptime=label(statusPanel,"VIP-СЕРВЕР ~ 00:00:00",8,Enum.Font.GothamBold,THEME.Accent2)
+serverUptime.Size=UDim2.new(0.66,-10,0,12)
+serverUptime.Position=UDim2.new(0.34,4,0,1)
+serverUptime.TextXAlignment=Enum.TextXAlignment.Right
+serverUptime.TextWrapped=false
+serverUptime.TextTruncate=Enum.TextTruncate.AtEnd
 
 local status=label(statusPanel,"ГОТОВО",9,Enum.Font.GothamBold,THEME.Text)
 status.Size=UDim2.new(0.62,-7,0,21)
@@ -2822,7 +2860,7 @@ net.TextTruncate=Enum.TextTruncate.AtEnd
 corner(net,7)
 neonStroke(net,1,0.66)
 
-Runtime.ui={status=status,net=net}
+Runtime.ui={status=status,net=net,uptime=serverUptime}
 
 local function makePage(color)
 	local page=Instance.new("ScrollingFrame")
