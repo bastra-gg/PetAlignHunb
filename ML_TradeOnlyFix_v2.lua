@@ -77,6 +77,15 @@ local Runtime={
 	autoRockReason=nil,
 	autoRebirth=false,
 	rebirthInFlight=false,
+	rebirthToken=0,
+	rebirthGoalEnabled=false,
+	rebirthGoal=100,
+	rebirthGoalCurrent=nil,
+	rebirthGoalCompleted=false,
+	rebirthGoalAwaitingFrom=nil,
+	rebirthGoalAwaitingSince=0,
+	rebirthGoalReadFailures=0,
+	rebirthGoalStatusAt=0,
 	autoSize=false,
 	sizeTarget=1,
 	sizeInFlight=false,
@@ -562,6 +571,10 @@ local function readRebirths()
 		local scanned=0
 
 		for _,d in ipairs(pg:GetDescendants()) do
+			-- Never parse RockBugHub's own labels (goal input/status) as the
+			-- game's rebirth counter.
+			if Runtime.uiRoot and d:IsDescendantOf(Runtime.uiRoot) then continue end
+
 			scanned=scanned+1
 			if scanned>2600 then break end
 
@@ -576,6 +589,36 @@ local function readRebirths()
 	end
 
 	return nil,"not found"
+end
+
+local function formatWholeNumber(value)
+	local number=math.max(0,math.floor(tonumber(value) or 0))
+	local text=("%.0f"):format(number)
+	return text:reverse():gsub("(%d%d%d)","%1 "):reverse():gsub("^ ","")
+end
+
+local function refreshRebirthGoalUI(current,overrideText)
+	if current~=nil then Runtime.rebirthGoalCurrent=math.max(0,math.floor(tonumber(current) or 0)) end
+	local ui=Runtime.ui and Runtime.ui.rebirthGoalProgress
+	if not ui or not ui.Parent then return end
+
+	local target=math.max(1,math.floor(tonumber(Runtime.rebirthGoal) or 1))
+	local known=Runtime.rebirthGoalCurrent
+	if overrideText then
+		ui.Text=overrideText
+	elseif Runtime.rebirthGoalCompleted then
+		ui.Text=("ЦЕЛЬ ДОСТИГНУТА • %s / %s"):format(formatWholeNumber(known or target),formatWholeNumber(target))
+	elseif Runtime.rebirthGoalEnabled then
+		if known~=nil then
+			ui.Text=("Сейчас: %s • цель: %s • осталось: %s"):format(
+				formatWholeNumber(known),formatWholeNumber(target),formatWholeNumber(math.max(0,target-known))
+			)
+		else
+			ui.Text=("Сейчас: — • цель: %s"):format(formatWholeNumber(target))
+		end
+	else
+		ui.Text=("Лимит выключен • цель: %s"):format(formatWholeNumber(target))
+	end
 end
 
 local PET_GRADES={
@@ -1803,6 +1846,117 @@ local function tryRebirth()
 	return ok,err
 end
 
+local function clearRebirthGoalPending()
+	Runtime.rebirthGoalAwaitingFrom=nil
+	Runtime.rebirthGoalAwaitingSince=0
+	Runtime.rebirthGoalReadFailures=0
+end
+
+local function stopRebirthAutomation(reason,completed,current)
+	Runtime.rebirthToken=Runtime.rebirthToken+1
+	Runtime.autoRebirth=false
+	Runtime.rebirthGoalEnabled=false
+	Runtime.rebirthGoalCompleted=completed==true
+	Runtime.nextRebirth=0
+	clearRebirthGoalPending()
+
+	if current~=nil then Runtime.rebirthGoalCurrent=math.max(0,math.floor(tonumber(current) or 0)) end
+	if Runtime.leverRefs.autoRebirth then Runtime.leverRefs.autoRebirth.Set(false,true) end
+	if Runtime.leverRefs.rebirthGoal then Runtime.leverRefs.rebirthGoal.Set(false,true) end
+	refreshRebirthGoalUI(Runtime.rebirthGoalCurrent)
+	if reason then setStatus(reason) end
+end
+
+local function stopRebirthAtGoal(current)
+	local target=math.max(1,math.floor(tonumber(Runtime.rebirthGoal) or 1))
+	local reached=math.max(0,math.floor(tonumber(current) or target))
+	stopRebirthAutomation(
+		("ЦЕЛЬ ДОСТИГНУТА: %s / %s • АВТОРЕБИРТ СТОП"):format(formatWholeNumber(reached),formatWholeNumber(target)),
+		true,
+		reached
+	)
+end
+
+local function runRebirthAttempt(runToken)
+	local function currentRun()
+		return Runtime.alive
+			and Runtime.autoRebirth
+			and Runtime.rebirthToken==runToken
+	end
+
+	local before=nil
+	if Runtime.rebirthGoalEnabled then
+		local value=readRebirths()
+		if not currentRun() then return end
+
+		if value==nil then
+			local now=os.clock()
+			Runtime.rebirthGoalCurrent=nil
+			Runtime.rebirthGoalReadFailures=Runtime.rebirthGoalReadFailures+1
+			Runtime.nextRebirth=now+1
+			refreshRebirthGoalUI(nil,"Счётчик ребиртов не найден • запрос на паузе")
+			if Runtime.rebirthGoalReadFailures==1 or now-Runtime.rebirthGoalStatusAt>=3 then
+				Runtime.rebirthGoalStatusAt=now
+				setStatus("ЦЕЛЬ: СЧЁТЧИК РЕБИРТОВ НЕ НАЙДЕН • ЗАПРОС НА ПАУЗЕ")
+			end
+			return
+		end
+
+		Runtime.rebirthGoalReadFailures=0
+		before=math.max(0,math.floor(value+0.5))
+		local target=math.max(1,math.floor(tonumber(Runtime.rebirthGoal) or 1))
+		refreshRebirthGoalUI(before)
+		if before>=target then
+			stopRebirthAtGoal(before)
+			return
+		end
+
+		local awaiting=Runtime.rebirthGoalAwaitingFrom
+		if awaiting~=nil then
+			if before>awaiting then
+				Runtime.rebirthGoalAwaitingFrom=nil
+				Runtime.rebirthGoalAwaitingSince=0
+			else
+				local now=os.clock()
+				local waited=now-Runtime.rebirthGoalAwaitingSince
+				if waited<8 then
+					Runtime.nextRebirth=now+0.35
+					refreshRebirthGoalUI(before,("Сейчас: %s / %s • подтверждаю сервер…"):format(
+						formatWholeNumber(before),formatWholeNumber(target)
+					))
+					if waited>=6 and now-Runtime.rebirthGoalStatusAt>=3 then
+						Runtime.rebirthGoalStatusAt=now
+						setStatus("ЦЕЛЬ: ЖДУ ПОДТВЕРЖДЕНИЕ СЕРВЕРА")
+					end
+					return
+				end
+
+				-- A successful FireServer only confirms delivery, not that the game
+				-- accepted the rebirth (for example, strength may still be too low).
+				-- Retry one request after a long acknowledgement window; the scheduler's
+				-- in-flight gate still prevents duplicate parallel requests.
+				Runtime.rebirthGoalAwaitingFrom=nil
+				Runtime.rebirthGoalAwaitingSince=0
+				setStatus("ЦЕЛЬ: НЕТ ПОДТВЕРЖДЕНИЯ • БЕЗОПАСНЫЙ ПОВТОР")
+			end
+		end
+	end
+
+	if not currentRun() then return end
+	local ok,err=tryRebirth()
+	if not currentRun() then return end
+
+	if ok then
+		if Runtime.rebirthGoalEnabled and before~=nil then
+			Runtime.rebirthGoalAwaitingFrom=before
+			Runtime.rebirthGoalAwaitingSince=os.clock()
+			Runtime.nextRebirth=os.clock()+0.35
+		end
+	else
+		setStatus("AUTO REB: "..tostring(err))
+	end
+end
+
 local function findSizeRemote()
 	local events=ReplicatedStorage:FindFirstChild("rEvents")
 	local remote=events and events:FindFirstChild("changeSpeedSizeRemote")
@@ -2244,13 +2398,11 @@ local function panicStop()
 	stopExtraAutomation(nil)
 	Runtime.lockPosition=false
 	Runtime.positionCF=nil
-	Runtime.autoRebirth=false
-	Runtime.rebirthInFlight=false
+	stopRebirthAutomation(nil,false)
 	Runtime.autoSize=false
 	disableKingLock()
 
 	if Runtime.leverRefs.lockPosition then Runtime.leverRefs.lockPosition.Set(false,true) end
-	if Runtime.leverRefs.autoRebirth then Runtime.leverRefs.autoRebirth.Set(false,true) end
 	if Runtime.leverRefs.autoSize then Runtime.leverRefs.autoSize.Set(false,true) end
 	if Runtime.leverRefs.kingLock then Runtime.leverRefs.kingLock.Set(false,true) end
 
@@ -2368,11 +2520,19 @@ local function scheduler()
 		if not Runtime.networkPaused and Runtime.autoRebirth and not Runtime.rebirthInFlight and now>=Runtime.nextRebirth then
 			Runtime.nextRebirth=now+1.2
 			Runtime.rebirthInFlight=true
+			local runToken=Runtime.rebirthToken
 			task.spawn(function()
-				local ok,err=tryRebirth()
+				local ok,err=xpcall(function()
+					runRebirthAttempt(runToken)
+				end,function(e)
+					local trace=""
+					if debug and type(debug.traceback)=="function" then trace="\n"..tostring(debug.traceback()) end
+					return tostring(e)..trace
+				end)
 				Runtime.rebirthInFlight=false
-				if not ok and Runtime.alive and Runtime.autoRebirth then
-					setStatus("AUTO REB: "..tostring(err))
+				if not ok and Runtime.alive and Runtime.rebirthToken==runToken then
+					Runtime.nextRebirth=os.clock()+1
+					setStatus("AUTO REB ERROR: "..tostring(err):sub(1,90))
 				end
 			end)
 		end
@@ -3870,24 +4030,172 @@ rebSettingsPanel.LayoutOrder=2
 
 local rebInfo=card(rebPage,52)
 rebInfo.LayoutOrder=3
-local rebInfoTitle=label(rebInfo,"АВТОРЕБИРТ",12,Enum.Font.GothamBlack,THEME.Accent2)
-rebInfoTitle.Size=UDim2.new(1,-16,0,17)
+local rebInfoTitle=label(rebInfo,"ЦЕЛЬ РЕБИРТОВ",10,Enum.Font.GothamBlack,THEME.Accent2)
+rebInfoTitle.Size=UDim2.new(1,-126,0,15)
 rebInfoTitle.Position=UDim2.new(0,8,0,4)
+rebInfoTitle.TextTruncate=Enum.TextTruncate.AtEnd
 
-local rebInfoText=label(rebInfo,"Rebirth каждые 1.2с • King Gym: -8626 / 17 / -5730",9,Enum.Font.GothamBold,THEME.Muted)
-rebInfoText.Size=UDim2.new(1,-16,0,22)
-rebInfoText.Position=UDim2.new(0,8,0,23)
+local rebGoalProgress=label(rebInfo,"Лимит выключен • цель: 100",8,Enum.Font.GothamBold,THEME.Muted)
+rebGoalProgress.Size=UDim2.new(1,-126,0,18)
+rebGoalProgress.Position=UDim2.new(0,8,0,24)
+rebGoalProgress.TextTruncate=Enum.TextTruncate.AtEnd
 
-local autoRebSlider=makeFeatureToggle(rebFeatureBody,"↻","АВТОРЕБИРТ","срабатывает сам",false,function(on,api)
+local rebGoalBox=Instance.new("TextBox")
+rebGoalBox.Parent=rebInfo
+rebGoalBox.Size=UDim2.fromOffset(58,28)
+rebGoalBox.Position=UDim2.new(1,-116,0,12)
+rebGoalBox.BackgroundColor3=THEME.SurfaceAlt
+rebGoalBox.BackgroundTransparency=0.05
+rebGoalBox.BorderSizePixel=0
+rebGoalBox.TextColor3=THEME.Text
+rebGoalBox.PlaceholderColor3=THEME.Muted
+rebGoalBox.PlaceholderText="100"
+rebGoalBox.ClearTextOnFocus=false
+rebGoalBox.Font=Enum.Font.GothamBlack
+rebGoalBox.TextSize=11
+rebGoalBox.Text="100"
+corner(rebGoalBox,9)
+neonStroke(rebGoalBox,1.2,0.34)
+
+local rebGoalTrack=Instance.new("TextButton")
+rebGoalTrack.Parent=rebInfo
+rebGoalTrack.Size=UDim2.fromOffset(44,22)
+rebGoalTrack.Position=UDim2.new(1,-50,0,15)
+rebGoalTrack.Text=""
+rebGoalTrack.AutoButtonColor=false
+rebGoalTrack.BorderSizePixel=0
+corner(rebGoalTrack,13)
+local rebGoalStroke=neonStroke(rebGoalTrack,1.2,0.48)
+
+local rebGoalKnob=Instance.new("Frame")
+rebGoalKnob.Parent=rebGoalTrack
+rebGoalKnob.Size=UDim2.fromOffset(16,16)
+rebGoalKnob.BorderSizePixel=0
+rebGoalKnob.BackgroundColor3=THEME.Text
+corner(rebGoalKnob,10)
+
+local rebGoalState=false
+local rebGoalApi={}
+local autoRebSlider
+
+local function paintRebirthGoalLever()
+	rebGoalTrack.BackgroundColor3=rebGoalState and THEME.Accent or THEME.SurfaceAlt
+	rebGoalKnob.Position=rebGoalState and UDim2.new(1,-19,0,3) or UDim2.new(0,3,0,3)
+	rebGoalStroke.Color=rebGoalState and THEME.Accent2 or THEME.Border
+	rebGoalStroke.Thickness=rebGoalState and 2 or 1.2
+end
+
+local function commitRebirthGoalInput()
+	local parsed=parseCompactNumber((tostring(rebGoalBox.Text):gsub("%s+","")))
+	if not parsed or parsed<1 then
+		rebGoalBox.Text=("%.0f"):format(Runtime.rebirthGoal)
+		setStatus("ЦЕЛЬ РЕБИРТОВ: введи целое число от 1")
+		return false
+	end
+
+	local target=math.clamp(math.floor(parsed+0.5),1,1e15)
+	Runtime.rebirthGoal=target
+	Runtime.rebirthGoalCompleted=false
+	rebGoalBox.Text=("%.0f"):format(target)
+	refreshRebirthGoalUI(Runtime.rebirthGoalCurrent)
+
+	if Runtime.rebirthGoalEnabled then
+		Runtime.rebirthToken=Runtime.rebirthToken+1
+		clearRebirthGoalPending()
+		Runtime.nextRebirth=0
+		local current=readRebirths()
+		Runtime.rebirthGoalCurrent=current and math.max(0,math.floor(current+0.5)) or nil
+		if current~=nil and current>=target then
+			stopRebirthAtGoal(current)
+		else
+			refreshRebirthGoalUI(current)
+			setStatus("НОВАЯ ЦЕЛЬ РЕБИРТОВ: "..formatWholeNumber(target))
+		end
+	end
+	return true
+end
+
+local function changeRebirthGoal(on,api)
+	if on then
+		if not findRebirthRemote() then
+			api.Set(false,true)
+			setStatus("ЦЕЛЬ РЕБИРТОВ: функция игры не найдена")
+			return
+		end
+		if not commitRebirthGoalInput() then
+			api.Set(false,true)
+			return
+		end
+
+		local current=readRebirths()
+		if current==nil then
+			api.Set(false,true)
+			Runtime.rebirthGoalCurrent=nil
+			refreshRebirthGoalUI(nil,"Счётчик ребиртов не найден • лимит не запущен")
+			setStatus("ЦЕЛЬ РЕБИРТОВ: счётчик игры не найден")
+			return
+		end
+		if current>=Runtime.rebirthGoal then
+			stopRebirthAtGoal(current)
+			return
+		end
+
+		Runtime.rebirthToken=Runtime.rebirthToken+1
+		Runtime.rebirthGoalEnabled=true
+		Runtime.rebirthGoalCompleted=false
+		Runtime.rebirthGoalCurrent=math.max(0,math.floor(current+0.5))
+		clearRebirthGoalPending()
+		Runtime.autoRebirth=true
+		Runtime.nextRebirth=0
+		if autoRebSlider then autoRebSlider.Set(true,true) end
+		refreshRebirthGoalUI(Runtime.rebirthGoalCurrent)
+		setStatus(("АВТОРЕБИРТ ДО ЦЕЛИ: %s"):format(formatWholeNumber(Runtime.rebirthGoal)))
+	else
+		stopRebirthAutomation("ЛИМИТ РЕБИРТОВ: выключен",false)
+	end
+end
+
+function rebGoalApi.Set(value,silent)
+	rebGoalState=value and true or false
+	paintRebirthGoalLever()
+	if not silent then changeRebirthGoal(rebGoalState,rebGoalApi) end
+end
+
+function rebGoalApi.Get()
+	return rebGoalState
+end
+
+addConn(rebGoalTrack.Activated:Connect(function()
+	rebGoalApi.Set(not rebGoalState,false)
+end))
+addConn(rebGoalBox.FocusLost:Connect(commitRebirthGoalInput))
+paintRebirthGoalLever()
+
+Runtime.ui.rebirthGoalProgress=rebGoalProgress
+Runtime.ui.rebirthGoalInput=rebGoalBox
+Runtime.leverRefs.rebirthGoal=rebGoalApi
+refreshRebirthGoalUI(nil)
+
+autoRebSlider=makeFeatureToggle(rebFeatureBody,"↻","АВТОРЕБИРТ","без ограничения",false,function(on,api)
 	if on and not findRebirthRemote() then
 		api.Set(false,true)
 		setStatus("РЕБИРТ: функция игры не найдена")
 		return
 	end
 
-	Runtime.autoRebirth=on
-	Runtime.nextRebirth=0
-	setStatus("АВТО РЕБИРТ: "..(on and "включён" or "выключен"))
+	if on then
+		Runtime.rebirthToken=Runtime.rebirthToken+1
+		Runtime.rebirthGoalEnabled=false
+		Runtime.rebirthGoalCompleted=false
+		clearRebirthGoalPending()
+		Runtime.autoRebirth=true
+		Runtime.nextRebirth=0
+		if Runtime.leverRefs.rebirthGoal then Runtime.leverRefs.rebirthGoal.Set(false,true) end
+		refreshRebirthGoalUI(Runtime.rebirthGoalCurrent)
+		setStatus("АВТО РЕБИРТ: включён без лимита")
+	else
+		stopRebirthAutomation("АВТО РЕБИРТ: выключен",false)
+	end
 end)
 
 Runtime.leverRefs.autoRebirth=autoRebSlider
