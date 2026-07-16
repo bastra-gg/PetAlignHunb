@@ -84,8 +84,14 @@ local Runtime={
 	rebirthGoalCompleted=false,
 	rebirthGoalAwaitingFrom=nil,
 	rebirthGoalAwaitingSince=0,
+	rebirthGoalAwaitingUntil=0,
 	rebirthGoalReadFailures=0,
 	rebirthGoalStatusAt=0,
+	rebirthCounter=nil,
+	rebirthCounterSource=nil,
+	rebirthCounterExact=false,
+	rebirthCounterWatched=nil,
+	rebirthCounterConn=nil,
 	autoSize=false,
 	sizeTarget=1,
 	sizeInFlight=false,
@@ -535,34 +541,100 @@ local function looksLikeRebirthName(s)
 		or s:find("перерожд",1,true)
 end
 
-local function readRebirths()
-	local leader=lp:FindFirstChild("leaderstats")
+local function readRebirthValue(object)
+	if not object or not object.Parent then return nil end
+	local ok,value=pcall(function() return object.Value end)
+	if not ok then return nil end
+	return tonumber(value) or parseCompactNumber(value)
+end
 
+local function rebirthCounterNameScore(name)
+	local text=tostring(name or ""):lower():gsub("[%s_%-]","")
+	if text:find("cost",1,true) or text:find("price",1,true)
+		or text:find("need",1,true) or text:find("require",1,true) then
+		return 0
+	end
+	if text=="rebirths" or text=="rebirth" or text=="rebs"
+		or text=="ребирты" or text=="ребы" or text=="перерождения" then
+		return 3
+	end
+	return looksLikeRebirthName(text) and 1 or 0
+end
+
+local function isExactRebirthCounterObject(object,score)
+	if not object or not object.Parent or (tonumber(score) or 0)<3 then return false end
+	if not (object:IsA("IntValue") or object:IsA("NumberValue") or object:IsA("StringValue")) then return false end
+	local ok,raw=pcall(function() return object.Value end)
+	if not ok then return false end
+	local number=tonumber(raw)
+	return number~=nil and number==number and number~=math.huge and number~=-math.huge
+		and number>=0 and math.abs(number-math.floor(number+0.5))<0.000001
+end
+
+local function rememberRebirthCounter(object,source,score)
+	if object and object.Parent and object:IsA("ValueBase") then
+		Runtime.rebirthCounter=object
+		Runtime.rebirthCounterSource=source
+		local resolvedScore=tonumber(score) or rebirthCounterNameScore(object.Name)
+		Runtime.rebirthCounterExact=isExactRebirthCounterObject(object,resolvedScore)
+	end
+end
+
+local function readRebirths()
+	-- Once a real ValueBase is found, every later check is a local property read.
+	-- No repeated descendant or GUI scan is needed during auto rebirth.
+	local cached=Runtime.rebirthCounter
+	if cached and cached.Parent and Runtime.rebirthCounterExact and Runtime.rebirthCounterSource=="leaderstats" then
+		local number=readRebirthValue(cached)
+		if number~=nil then return number,Runtime.rebirthCounterSource or "cached",cached end
+	elseif not cached or not cached.Parent then
+		Runtime.rebirthCounter=nil
+		Runtime.rebirthCounterSource=nil
+		Runtime.rebirthCounterExact=false
+	end
+
+	local leader=lp:FindFirstChild("leaderstats")
 	if leader then
+		local best,bestNumber,bestScore=nil,nil,0
 		for _,d in ipairs(leader:GetChildren()) do
-			if looksLikeRebirthName(d.Name) then
-				local ok,val=pcall(function() return d.Value end)
-				if ok then
-					local n=tonumber(val) or parseCompactNumber(val)
-					if n then return n,"leaderstats" end
+			local score=d:IsA("ValueBase") and rebirthCounterNameScore(d.Name) or 0
+			if score>bestScore then
+				local number=readRebirthValue(d)
+				if number~=nil then
+					best,bestNumber,bestScore=d,number,score
 				end
 			end
 		end
+		if best then
+			rememberRebirthCounter(best,"leaderstats",bestScore)
+			return bestNumber,"leaderstats",best
+		end
 	end
 
-	-- Search value objects only once on request, not in fast loops.
+	if cached and cached.Parent then
+		local number=readRebirthValue(cached)
+		if number~=nil then return number,Runtime.rebirthCounterSource or "cached",cached end
+	end
+
+	-- Slow discovery is only a fallback until a real counter has been cached.
 	local checked=0
+	local best,bestNumber,bestScore=nil,nil,0
 	for _,d in ipairs(lp:GetDescendants()) do
 		checked=checked+1
 		if checked>1800 then break end
 
-		if looksLikeRebirthName(d.Name) then
-			local ok,val=pcall(function() return d.Value end)
-			if ok then
-				local n=tonumber(val) or parseCompactNumber(val)
-				if n then return n,"value" end
+		local score=d:IsA("ValueBase") and rebirthCounterNameScore(d.Name) or 0
+		if score>bestScore then
+			local number=readRebirthValue(d)
+			if number~=nil then
+				best,bestNumber,bestScore=d,number,score
+				if score>=3 then break end
 			end
 		end
+	end
+	if best then
+		rememberRebirthCounter(best,"value",bestScore)
+		return bestNumber,"value",best
 	end
 
 	-- Conservative GUI fallback.
@@ -582,13 +654,13 @@ local function readRebirths()
 				local text=tostring(d.Text or "")
 				if looksLikeRebirthName(text) or looksLikeRebirthName(d.Name) then
 					local n=parseCompactNumber(text)
-					if n then return n,"gui" end
+					if n then return n,"gui",nil end
 				end
 			end
 		end
 	end
 
-	return nil,"not found"
+	return nil,"not found",nil
 end
 
 local function formatWholeNumber(value)
@@ -1259,7 +1331,15 @@ local function leaveNetworkHold(now,reason)
 	Runtime.remoteTokens=0
 	Runtime.remoteLastRefill=now
 	Runtime.nextAction=now+0.25
-	Runtime.nextRebirth=now+0.5
+	if Runtime.rebirthGoalEnabled and Runtime.rebirthGoalAwaitingFrom~=nil then
+		-- A request may have reached the server just before Wi-Fi disappeared.
+		-- Give its replicated Value a fresh settle window after recovery before
+		-- allowing any retry, especially when this was the final rebirth.
+		Runtime.rebirthGoalAwaitingUntil=math.max(Runtime.rebirthGoalAwaitingUntil or 0,now+2.5)
+		Runtime.nextRebirth=Runtime.rebirthGoalAwaitingUntil
+	else
+		Runtime.nextRebirth=now+0.5
+	end
 	Runtime.nextSize=now+0.5
 	releaseNetworkCharacterHold()
 
@@ -1830,25 +1910,27 @@ local function findRebirthRemote()
 	return nil
 end
 
-local function tryRebirth()
+local function tryRebirth(remote)
 	if Runtime.networkPaused then return false,"network hold" end
-	local remote=findRebirthRemote()
+	remote=remote or findRebirthRemote()
 	if not remote then return false,"rebirthRemote не найден" end
 
+	local response=nil
 	local ok,err=safe(function()
 		if remote:IsA("RemoteFunction") then
-			remote:InvokeServer("rebirthRequest")
+			response=remote:InvokeServer("rebirthRequest")
 		else
 			remote:FireServer("rebirthRequest")
 		end
 	end)
 
-	return ok,err
+	return ok,err,remote:IsA("RemoteFunction"),response
 end
 
 local function clearRebirthGoalPending()
 	Runtime.rebirthGoalAwaitingFrom=nil
 	Runtime.rebirthGoalAwaitingSince=0
+	Runtime.rebirthGoalAwaitingUntil=0
 	Runtime.rebirthGoalReadFailures=0
 end
 
@@ -1877,6 +1959,77 @@ local function stopRebirthAtGoal(current)
 	)
 end
 
+local function observeRebirthCounter(counter,value)
+	if not Runtime.alive then return end
+	if counter and Runtime.rebirthCounterWatched and counter~=Runtime.rebirthCounterWatched then return end
+	local current=tonumber(value)
+	if current==nil then return end
+	current=math.max(0,math.floor(current+0.5))
+	Runtime.rebirthGoalCurrent=current
+
+	local awaiting=Runtime.rebirthGoalAwaitingFrom
+	if awaiting~=nil and current>awaiting then
+		clearRebirthGoalPending()
+	end
+	refreshRebirthGoalUI(current)
+
+	if Runtime.rebirthGoalEnabled then
+		local target=math.max(1,math.floor(tonumber(Runtime.rebirthGoal) or 1))
+		if current>=target then
+			stopRebirthAtGoal(current)
+		else
+			-- A real Value change is the acknowledgement. Continue immediately;
+			-- there is no fixed polling delay after a successful rebirth.
+			Runtime.nextRebirth=0
+		end
+	end
+end
+
+local function ensureRebirthCounterWatcher()
+	local current,source,counter=readRebirths()
+	local exactNumericCounter=counter and (counter:IsA("IntValue") or counter:IsA("NumberValue"))
+	if not exactNumericCounter
+		or not Runtime.rebirthCounterExact
+		or source~="leaderstats"
+		or not counter:IsDescendantOf(lp) then
+		if Runtime.rebirthCounterConn then safe(function() Runtime.rebirthCounterConn:Disconnect() end) end
+		Runtime.rebirthCounterConn=nil
+		Runtime.rebirthCounterWatched=nil
+		return current,source,nil
+	end
+
+	if Runtime.rebirthCounterWatched~=counter or not Runtime.rebirthCounterConn then
+		if Runtime.rebirthCounterConn then safe(function() Runtime.rebirthCounterConn:Disconnect() end) end
+		Runtime.rebirthCounterWatched=counter
+		local ok,connection=safe(function()
+			return counter:GetPropertyChangedSignal("Value"):Connect(function()
+				if not Runtime.alive or Runtime.rebirthCounterWatched~=counter then return end
+				local value=readRebirthValue(counter)
+				if value~=nil then observeRebirthCounter(counter,value) end
+			end)
+		end)
+		Runtime.rebirthCounterConn=ok and addConn(connection) or nil
+		if not Runtime.rebirthCounterConn then
+			Runtime.rebirthCounterWatched=nil
+			return current,source,nil
+		end
+	end
+
+	if current~=nil then observeRebirthCounter(counter,current) end
+	return current,source,counter
+end
+
+local function rebirthGoalRetryDelay(current,target,isRemoteFunction)
+	local pingSeconds=Runtime.pingAvailable and math.max(0,tonumber(Runtime.pingMs) or 0)/1000 or 0.1
+	-- Successful rebirths do not wait for this timeout: the Value signal schedules
+	-- the next request immediately. This is only a safety window before retrying a
+	-- request whose replicated acknowledgement never arrived.
+	local delay=math.clamp(0.35+pingSeconds*3,0.65,1.5)
+	if target-current<=2 then delay=math.max(delay,2.0) end
+	if not isRemoteFunction then delay=math.max(delay,1.0) end
+	return math.min(delay,2.5)
+end
+
 local function runRebirthAttempt(runToken)
 	local function currentRun()
 		return Runtime.alive
@@ -1885,26 +2038,29 @@ local function runRebirthAttempt(runToken)
 	end
 
 	local before=nil
+	local counter=nil
+	local target=nil
 	if Runtime.rebirthGoalEnabled then
-		local value=readRebirths()
+		local value,_,resolvedCounter=ensureRebirthCounterWatcher()
 		if not currentRun() then return end
 
-		if value==nil then
+		if value==nil or not resolvedCounter then
 			local now=os.clock()
 			Runtime.rebirthGoalCurrent=nil
 			Runtime.rebirthGoalReadFailures=Runtime.rebirthGoalReadFailures+1
 			Runtime.nextRebirth=now+1
-			refreshRebirthGoalUI(nil,"Счётчик ребиртов не найден • запрос на паузе")
+			refreshRebirthGoalUI(nil,"Точный счётчик Rebirths не найден • запрос на паузе")
 			if Runtime.rebirthGoalReadFailures==1 or now-Runtime.rebirthGoalStatusAt>=3 then
 				Runtime.rebirthGoalStatusAt=now
-				setStatus("ЦЕЛЬ: СЧЁТЧИК РЕБИРТОВ НЕ НАЙДЕН • ЗАПРОС НА ПАУЗЕ")
+				setStatus("ЦЕЛЬ: ТОЧНЫЙ СЧЁТЧИК REBIRTHS НЕ НАЙДЕН • ПАУЗА")
 			end
 			return
 		end
 
 		Runtime.rebirthGoalReadFailures=0
+		counter=resolvedCounter
 		before=math.max(0,math.floor(value+0.5))
-		local target=math.max(1,math.floor(tonumber(Runtime.rebirthGoal) or 1))
+		target=math.max(1,math.floor(tonumber(Runtime.rebirthGoal) or 1))
 		refreshRebirthGoalUI(before)
 		if before>=target then
 			stopRebirthAtGoal(before)
@@ -1914,46 +2070,81 @@ local function runRebirthAttempt(runToken)
 		local awaiting=Runtime.rebirthGoalAwaitingFrom
 		if awaiting~=nil then
 			if before>awaiting then
-				Runtime.rebirthGoalAwaitingFrom=nil
-				Runtime.rebirthGoalAwaitingSince=0
+				clearRebirthGoalPending()
 			else
 				local now=os.clock()
-				local waited=now-Runtime.rebirthGoalAwaitingSince
-				if waited<8 then
-					Runtime.nextRebirth=now+0.35
-					refreshRebirthGoalUI(before,("Сейчас: %s / %s • подтверждаю сервер…"):format(
-						formatWholeNumber(before),formatWholeNumber(target)
-					))
-					if waited>=6 and now-Runtime.rebirthGoalStatusAt>=3 then
-						Runtime.rebirthGoalStatusAt=now
-						setStatus("ЦЕЛЬ: ЖДУ ПОДТВЕРЖДЕНИЕ СЕРВЕРА")
-					end
+				if now<Runtime.rebirthGoalAwaitingUntil then
+					Runtime.nextRebirth=Runtime.rebirthGoalAwaitingUntil
 					return
 				end
 
-				-- A successful FireServer only confirms delivery, not that the game
-				-- accepted the rebirth (for example, strength may still be too low).
-				-- Retry one request after a long acknowledgement window; the scheduler's
-				-- in-flight gate still prevents duplicate parallel requests.
-				Runtime.rebirthGoalAwaitingFrom=nil
-				Runtime.rebirthGoalAwaitingSince=0
-				setStatus("ЦЕЛЬ: НЕТ ПОДТВЕРЖДЕНИЯ • БЕЗОПАСНЫЙ ПОВТОР")
+				-- The previous request was rejected or its counter update never arrived.
+				-- Release exactly one slot and retry; inFlight still prevents overlap.
+				clearRebirthGoalPending()
 			end
 		end
 	end
 
 	if not currentRun() then return end
-	local ok,err=tryRebirth()
+	local remote=findRebirthRemote()
+	if not remote then
+		Runtime.nextRebirth=os.clock()+1
+		setStatus("AUTO REB: rebirthRemote не найден")
+		return
+	end
+	if target and not remote:IsA("RemoteFunction") then
+		stopRebirthAutomation("ЦЕЛЬ РЕБИРТОВ: НУЖЕН ТОЧНЫЙ REMOTEFUNCTION",false,before)
+		return
+	end
+
+	local isRemoteFunction=remote:IsA("RemoteFunction")
+	local retryDelay=target and rebirthGoalRetryDelay(before,target,isRemoteFunction) or 0.1
+	if Runtime.rebirthGoalEnabled then
+		-- Arm acknowledgement BEFORE InvokeServer: Value may change while the
+		-- yielding call is still waiting for its response.
+		local sentAt=os.clock()
+		Runtime.rebirthGoalAwaitingFrom=before
+		Runtime.rebirthGoalAwaitingSince=sentAt
+		Runtime.rebirthGoalAwaitingUntil=sentAt+retryDelay
+	end
+
+	local ok,err=tryRebirth(remote)
 	if not currentRun() then return end
 
-	if ok then
-		if Runtime.rebirthGoalEnabled and before~=nil then
-			Runtime.rebirthGoalAwaitingFrom=before
-			Runtime.rebirthGoalAwaitingSince=os.clock()
-			Runtime.nextRebirth=os.clock()+0.35
+	if not ok then
+		if Runtime.rebirthGoalEnabled then
+			if Runtime.rebirthGoalAwaitingFrom==before then
+				-- An InvokeServer error does not prove that the server rejected the
+				-- request. Keep the same acknowledgement window to avoid a duplicate.
+				Runtime.nextRebirth=Runtime.rebirthGoalAwaitingUntil
+				setStatus("AUTO REB: ЖДУ СЧЁТЧИК ПОСЛЕ ОШИБКИ СЕТИ")
+			else
+				-- The Value signal already confirmed this request while it was yielding.
+				Runtime.nextRebirth=0
+			end
+		else
+			Runtime.nextRebirth=os.clock()+0.25
+			setStatus("AUTO REB: "..tostring(err))
 		end
-	else
-		setStatus("AUTO REB: "..tostring(err))
+		return
+	end
+
+	if Runtime.rebirthGoalEnabled and counter then
+		local after=readRebirthValue(counter)
+		if after~=nil then observeRebirthCounter(counter,after) end
+		if not currentRun() then return end
+
+		if Runtime.rebirthGoalAwaitingFrom==before then
+			-- No change yet: wait only the short post-response replication window.
+			Runtime.rebirthGoalAwaitingUntil=math.max(Runtime.rebirthGoalAwaitingUntil,os.clock()+retryDelay)
+			Runtime.nextRebirth=Runtime.rebirthGoalAwaitingUntil
+		else
+			Runtime.nextRebirth=0
+		end
+	elseif not Runtime.rebirthGoalEnabled then
+		-- Unlimited mode is limited only by the yielding server call plus a tiny
+		-- client-side guard, matching the game's usual fast rebirth cadence.
+		Runtime.nextRebirth=os.clock()+0.05
 	end
 end
 
@@ -2518,7 +2709,7 @@ local function scheduler()
 		end
 
 		if not Runtime.networkPaused and Runtime.autoRebirth and not Runtime.rebirthInFlight and now>=Runtime.nextRebirth then
-			Runtime.nextRebirth=now+1.2
+			Runtime.nextRebirth=now+0.05
 			Runtime.rebirthInFlight=true
 			local runToken=Runtime.rebirthToken
 			task.spawn(function()
@@ -4103,9 +4294,12 @@ local function commitRebirthGoalInput()
 		Runtime.rebirthToken=Runtime.rebirthToken+1
 		clearRebirthGoalPending()
 		Runtime.nextRebirth=0
-		local current=readRebirths()
+		local current,_,counter=ensureRebirthCounterWatcher()
 		Runtime.rebirthGoalCurrent=current and math.max(0,math.floor(current+0.5)) or nil
-		if current~=nil and current>=target then
+		if not counter then
+			refreshRebirthGoalUI(nil,"Точный счётчик Rebirths не найден • запрос на паузе")
+			setStatus("НОВАЯ ЦЕЛЬ: ЖДУ ТОЧНЫЙ СЧЁТЧИК REBIRTHS")
+		elseif current~=nil and current>=target then
 			stopRebirthAtGoal(current)
 		else
 			refreshRebirthGoalUI(current)
@@ -4117,9 +4311,10 @@ end
 
 local function changeRebirthGoal(on,api)
 	if on then
-		if not findRebirthRemote() then
+		local rebirthRemote=findRebirthRemote()
+		if not rebirthRemote or not rebirthRemote:IsA("RemoteFunction") then
 			api.Set(false,true)
-			setStatus("ЦЕЛЬ РЕБИРТОВ: функция игры не найдена")
+			setStatus("ЦЕЛЬ РЕБИРТОВ: ТОЧНЫЙ REMOTEFUNCTION НЕ НАЙДЕН")
 			return
 		end
 		if not commitRebirthGoalInput() then
@@ -4127,12 +4322,12 @@ local function changeRebirthGoal(on,api)
 			return
 		end
 
-		local current=readRebirths()
-		if current==nil then
+		local current,_,counter=ensureRebirthCounterWatcher()
+		if current==nil or not counter then
 			api.Set(false,true)
 			Runtime.rebirthGoalCurrent=nil
-			refreshRebirthGoalUI(nil,"Счётчик ребиртов не найден • лимит не запущен")
-			setStatus("ЦЕЛЬ РЕБИРТОВ: счётчик игры не найден")
+			refreshRebirthGoalUI(nil,"Точный счётчик Rebirths не найден • лимит не запущен")
+			setStatus("ЦЕЛЬ РЕБИРТОВ: ТОЧНЫЙ REBIRTHS.VALUE НЕ НАЙДЕН")
 			return
 		end
 		if current>=Runtime.rebirthGoal then
@@ -4797,6 +4992,8 @@ end)
 
 if not uiOk then
 	Runtime.alive=false
+	disconnectAll()
+	if ENV.RockBugRuntime==Runtime then ENV.RockBugRuntime=nil end
 	if Runtime.uiRoot and Runtime.uiRoot.Parent then safe(function() Runtime.uiRoot:Destroy() end) end
 	warn("[RockBugHub] UI startup failed: "..tostring(uiErr))
 	pcall(function()
