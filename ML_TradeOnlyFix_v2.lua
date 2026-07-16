@@ -178,14 +178,23 @@ local FALLBACK_SHOP_PETS={
 	"Phantom Genesis Dragon","Dark Legends Manticore","Ultimate Supernova Pegasus",
 	"Aether Spirit Bunny","Cybernetic Showdown Dragon","Eternal Strike Leviathan",
 	"Lighting Strike Phantom","Darkstar Hunter","Golden Viking","Muscle Sensei",
-	"Neon Guardian","Muscle King",
+	"Neon Guardian",
 }
 
 local FALLBACK_SHOP_AURAS={
-	"Basic Aura","Advanced Aura","Rare Aura","Epic Aura","Unique Aura",
-	"Ultra Inferno Aura","Azure Tundra Aura","Muscle King Aura",
-	"Grand SuperNova Aura","Eternal Megastrike Aura","Entropic Blast Aura",
+	"Astral Electro","Azure Tundra","Blue Aura","Dark Electro","Dark Lightning","Dark Storm",
+	"Electro","Enchanted Mirage","Entropic Blast","Eternal Megastrike","Grand Supernova",
+	"Green Aura","Inferno","Lightning","Muscle King","Power Lightning","Purple Aura",
+	"Purple Nova","Red Aura","Supernova","Ultra Inferno","Ultra Mirage","Unstable Mirage",
+	"Yellow Aura",
 }
+
+-- Most direct-shop aura object names do not contain the word "Aura". Keep an
+-- exact-name lookup so they are not incorrectly mixed into the pet selector.
+local SHOP_AURA_NAME_SET={}
+for _,name in ipairs(FALLBACK_SHOP_AURAS) do
+	SHOP_AURA_NAME_SET[string.lower(name)]=true
+end
 
 local FALLBACK_CRYSTALS={
 	"Blue Crystal","Green Crystal","Frost Crystal","Mythical Crystal",
@@ -194,7 +203,7 @@ local FALLBACK_CRYSTALS={
 }
 
 Runtime.selectedPet="Muscle King"
-Runtime.selectedAura="Muscle King Aura"
+Runtime.selectedAura="Muscle King"
 
 local function safe(fn)
 	local ok,res=pcall(fn)
@@ -212,6 +221,11 @@ end
 local function isAuraShopItem(item)
 	if not item then return false end
 	local name=string.lower(tostring(item.Name))
+	if SHOP_AURA_NAME_SET[name] then return true end
+	-- All current direct-shop auras expose this marker, including the 19 whose
+	-- object names do not contain "Aura". Its presence is the type signal; the
+	-- stored BoolValue itself is false in the live catalog.
+	if item:FindFirstChild("isPowerUp",true) then return true end
 	if string.find(name,"aura",1,true) or string.find(name,"trail",1,true) then
 		return true
 	end
