@@ -1966,12 +1966,6 @@ local function observeRebirthCounter(counter,value)
 	if current==nil then return end
 	current=math.max(0,math.floor(current+0.5))
 	Runtime.rebirthGoalCurrent=current
-	local safetyLatch=ENV.RockBugRebirthSafetyLatch
-	if type(safetyLatch)=="table"
-		and tostring(safetyLatch.jobId or "")==tostring(game.JobId or "")
-		and current>math.max(-1,math.floor(tonumber(safetyLatch.from) or math.huge)) then
-		ENV.RockBugRebirthSafetyLatch=nil
-	end
 
 	local awaiting=Runtime.rebirthGoalAwaitingFrom
 	if awaiting~=nil and current>awaiting then
@@ -2025,32 +2019,15 @@ local function ensureRebirthCounterWatcher()
 	return current,source,counter
 end
 
-local function rebirthGoalConfirmWindow(current,target,isRemoteFunction)
+local function rebirthGoalRetryDelay(current,target,isRemoteFunction)
 	local pingSeconds=Runtime.pingAvailable and math.max(0,tonumber(Runtime.pingMs) or 0)/1000 or 0.1
 	-- Successful rebirths do not wait for this timeout: the Value signal schedules
-	-- the next request immediately. If acknowledgement never arrives, strict goal
-	-- mode stops instead of ever issuing an ambiguous duplicate.
+	-- the next request immediately. This is only a safety window before retrying a
+	-- request whose replicated acknowledgement never arrived.
 	local delay=math.clamp(0.35+pingSeconds*3,0.65,1.5)
 	if target-current<=2 then delay=math.max(delay,2.0) end
 	if not isRemoteFunction then delay=math.max(delay,1.0) end
 	return math.min(delay,2.5)
-end
-
-local function rebirthSafetyLatchBlocks()
-	local latch=ENV.RockBugRebirthSafetyLatch
-	if type(latch)~="table" then return false end
-	if tostring(latch.jobId or "")~=tostring(game.JobId or "") then
-		ENV.RockBugRebirthSafetyLatch=nil
-		return false
-	end
-
-	local current,_,counter=ensureRebirthCounterWatcher()
-	local from=tonumber(latch.from)
-	if current~=nil and counter and from~=nil and current>from then
-		ENV.RockBugRebirthSafetyLatch=nil
-		return false
-	end
-	return true
 end
 
 local function runRebirthAttempt(runToken)
@@ -2101,110 +2078,34 @@ local function runRebirthAttempt(runToken)
 					return
 				end
 
-				-- Accepted and rejected calls are indistinguishable here. Retrying an
-				-- accepted-but-late request could overshoot the target, so strict goal
-				-- mode records the uncertainty and stops without a duplicate.
-				ENV.RockBugRebirthSafetyLatch={
-					jobId=tostring(game.JobId or ""),
-					target=target,
-					from=before,
-				}
-				stopRebirthAutomation("РЕБИРТ НЕ ПОДТВЕРЖДЁН • АВТОПОВТОРА НЕТ • СТОП",false,before)
-				return
+				-- The previous request was rejected or its counter update never arrived.
+				-- Release exactly one slot and retry; inFlight still prevents overlap.
+				clearRebirthGoalPending()
 			end
 		end
-	end
-
-	-- Last-resort duplicate barrier. UI state, a loader reload or a future code
-	-- path must never bypass an unresolved request recorded before InvokeServer.
-	-- A real Rebirths.Value increase is the only event that clears this latch.
-	if rebirthSafetyLatchBlocks() then
-		stopRebirthAutomation("ПРЕДЫДУЩИЙ РЕБИРТ НЕ ПОДТВЕРЖДЁН • НОВОГО ЗАПРОСА НЕТ • СТОП",false,before)
-		return
 	end
 
 	if not currentRun() then return end
 	local remote=findRebirthRemote()
 	if not remote then
-		if target and target-before==1 then
-			stopRebirthAutomation("ПОСЛЕДНИЙ РЕБИРТ: REMOTE НЕ НАЙДЕН • ПОВТОРА НЕТ • СТОП",false,before)
-		else
-			Runtime.nextRebirth=os.clock()+1
-			setStatus("AUTO REB: rebirthRemote не найден")
-		end
+		Runtime.nextRebirth=os.clock()+1
+		setStatus("AUTO REB: rebirthRemote не найден")
 		return
 	end
 	if target and not remote:IsA("RemoteFunction") then
 		stopRebirthAutomation("ЦЕЛЬ РЕБИРТОВ: НУЖЕН ТОЧНЫЙ REMOTEFUNCTION",false,before)
 		return
 	end
-	if target and target-before==1 then
-		-- Strict final shot: stop every rebirth scheduler path BEFORE the yielding
-		-- InvokeServer call. Even if the server never answers, this worker stays
-		-- blocked with autoRebirth already off, so no second final request exists.
-		local verified=readRebirthValue(counter)
-		if verified==nil then
-			stopRebirthAutomation("ПОСЛЕДНИЙ РЕБИРТ: СЧЁТЧИК ПОТЕРЯН • СТОП БЕЗ ОТПРАВКИ",false,before)
-			return
-		end
-		verified=math.max(0,math.floor(verified+0.5))
-		if verified>=target then
-			stopRebirthAtGoal(verified)
-			return
-		end
-		if verified~=target-1 or not currentRun() then
-			stopRebirthAutomation("ПОСЛЕДНИЙ РЕБИРТ: СЧЁТЧИК ИЗМЕНИЛСЯ • СТОП БЕЗ ОТПРАВКИ",false,verified)
-			return
-		end
-
-		local safetyLatch=ENV.RockBugRebirthSafetyLatch
-		if type(safetyLatch)=="table" and tostring(safetyLatch.jobId or "")==tostring(game.JobId or "") then
-			if verified>math.max(-1,tonumber(safetyLatch.from) or math.huge) then
-				ENV.RockBugRebirthSafetyLatch=nil
-			else
-				stopRebirthAutomation("ПОСЛЕДНИЙ РЕБИРТ УЖЕ ОТПРАВЛЕН • ПОВТОРА НЕТ • СТОП",false,verified)
-				return
-			end
-		end
-		ENV.RockBugRebirthSafetyLatch={
-			jobId=tostring(game.JobId or ""),
-			target=target,
-			from=verified,
-		}
-
-		stopRebirthAutomation(
-			("ПОСЛЕДНИЙ РЕБИРТ: 1 ЗАПРОС • АВТОРЕБИРТ СТОП • %s / %s"):format(
-				formatWholeNumber(verified),formatWholeNumber(target)
-			),
-			false,
-			verified
-		)
-
-		-- Exactly one invocation. Do not spawn another task: if this never
-		-- returns, rebirthInFlight also stays true as a duplicate-request barrier.
-		safe(function()
-			remote:InvokeServer("rebirthRequest")
-		end)
-		return
-	end
 
 	local isRemoteFunction=remote:IsA("RemoteFunction")
-	local confirmWindow=target and rebirthGoalConfirmWindow(before,target,isRemoteFunction) or 0.1
+	local retryDelay=target and rebirthGoalRetryDelay(before,target,isRemoteFunction) or 0.1
 	if Runtime.rebirthGoalEnabled then
-		-- Persist BEFORE the yielding call. If InvokeServer hangs and the loader is
-		-- run again, the new runtime sees this unresolved request and cannot send a
-		-- duplicate until exact Rebirths.Value advances beyond `before`.
-		ENV.RockBugRebirthSafetyLatch={
-			jobId=tostring(game.JobId or ""),
-			target=target,
-			from=before,
-		}
 		-- Arm acknowledgement BEFORE InvokeServer: Value may change while the
 		-- yielding call is still waiting for its response.
 		local sentAt=os.clock()
 		Runtime.rebirthGoalAwaitingFrom=before
 		Runtime.rebirthGoalAwaitingSince=sentAt
-		Runtime.rebirthGoalAwaitingUntil=sentAt+confirmWindow
+		Runtime.rebirthGoalAwaitingUntil=sentAt+retryDelay
 	end
 
 	local ok,err=tryRebirth(remote)
@@ -2235,7 +2136,7 @@ local function runRebirthAttempt(runToken)
 
 		if Runtime.rebirthGoalAwaitingFrom==before then
 			-- No change yet: wait only the short post-response replication window.
-			Runtime.rebirthGoalAwaitingUntil=math.max(Runtime.rebirthGoalAwaitingUntil,os.clock()+confirmWindow)
+			Runtime.rebirthGoalAwaitingUntil=math.max(Runtime.rebirthGoalAwaitingUntil,os.clock()+retryDelay)
 			Runtime.nextRebirth=Runtime.rebirthGoalAwaitingUntil
 		else
 			Runtime.nextRebirth=0
@@ -4376,16 +4277,6 @@ local function paintRebirthGoalLever()
 end
 
 local function commitRebirthGoalInput()
-	if Runtime.rebirthGoalEnabled and (
-		Runtime.rebirthInFlight
-		or Runtime.rebirthGoalAwaitingFrom~=nil
-		or rebirthSafetyLatchBlocks()
-	) then
-		rebGoalBox.Text=("%.0f"):format(Runtime.rebirthGoal)
-		setStatus("ЦЕЛЬ НЕ ИЗМЕНЕНА: ПРЕДЫДУЩИЙ ЗАПРОС ЕЩЁ НЕ ПОДТВЕРЖДЁН")
-		return false
-	end
-
 	local parsed=parseCompactNumber((tostring(rebGoalBox.Text):gsub("%s+","")))
 	if not parsed or parsed<1 then
 		rebGoalBox.Text=("%.0f"):format(Runtime.rebirthGoal)
@@ -4420,16 +4311,6 @@ end
 
 local function changeRebirthGoal(on,api)
 	if on then
-		if Runtime.rebirthInFlight then
-			api.Set(false,true)
-			setStatus("РЕБИРТ НЕ ЗАПУЩЕН: ПРЕДЫДУЩИЙ ЗАПРОС ЕЩЁ НЕ ЗАВЕРШЁН")
-			return
-		end
-		if rebirthSafetyLatchBlocks() then
-			api.Set(false,true)
-			setStatus("РЕБИРТ НЕ ЗАПУЩЕН: ПРЕДЫДУЩИЙ ЗАПРОС НЕ ПОДТВЕРЖДЁН")
-			return
-		end
 		local rebirthRemote=findRebirthRemote()
 		if not rebirthRemote or not rebirthRemote:IsA("RemoteFunction") then
 			api.Set(false,true)
@@ -4491,16 +4372,6 @@ Runtime.leverRefs.rebirthGoal=rebGoalApi
 refreshRebirthGoalUI(nil)
 
 autoRebSlider=makeFeatureToggle(rebFeatureBody,"↻","АВТОРЕБИРТ","без ограничения",false,function(on,api)
-	if on and Runtime.rebirthInFlight then
-		api.Set(false,true)
-		setStatus("АВТОРЕБИРТ НЕ ЗАПУЩЕН: ПРЕДЫДУЩИЙ ЗАПРОС ЕЩЁ НЕ ЗАВЕРШЁН")
-		return
-	end
-	if on and rebirthSafetyLatchBlocks() then
-		api.Set(false,true)
-		setStatus("АВТОРЕБИРТ НЕ ЗАПУЩЕН: ПРЕДЫДУЩИЙ ЗАПРОС НЕ ПОДТВЕРЖДЁН")
-		return
-	end
 	if on and not findRebirthRemote() then
 		api.Set(false,true)
 		setStatus("РЕБИРТ: функция игры не найдена")
