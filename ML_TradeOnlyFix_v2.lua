@@ -2115,6 +2115,14 @@ local function runRebirthAttempt(runToken)
 		end
 	end
 
+	-- Last-resort duplicate barrier. UI state, a loader reload or a future code
+	-- path must never bypass an unresolved request recorded before InvokeServer.
+	-- A real Rebirths.Value increase is the only event that clears this latch.
+	if rebirthSafetyLatchBlocks() then
+		stopRebirthAutomation("ПРЕДЫДУЩИЙ РЕБИРТ НЕ ПОДТВЕРЖДЁН • НОВОГО ЗАПРОСА НЕТ • СТОП",false,before)
+		return
+	end
+
 	if not currentRun() then return end
 	local remote=findRebirthRemote()
 	if not remote then
@@ -2183,6 +2191,14 @@ local function runRebirthAttempt(runToken)
 	local isRemoteFunction=remote:IsA("RemoteFunction")
 	local confirmWindow=target and rebirthGoalConfirmWindow(before,target,isRemoteFunction) or 0.1
 	if Runtime.rebirthGoalEnabled then
+		-- Persist BEFORE the yielding call. If InvokeServer hangs and the loader is
+		-- run again, the new runtime sees this unresolved request and cannot send a
+		-- duplicate until exact Rebirths.Value advances beyond `before`.
+		ENV.RockBugRebirthSafetyLatch={
+			jobId=tostring(game.JobId or ""),
+			target=target,
+			from=before,
+		}
 		-- Arm acknowledgement BEFORE InvokeServer: Value may change while the
 		-- yielding call is still waiting for its response.
 		local sentAt=os.clock()
@@ -4360,9 +4376,13 @@ local function paintRebirthGoalLever()
 end
 
 local function commitRebirthGoalInput()
-	if Runtime.rebirthGoalEnabled and Runtime.rebirthInFlight then
+	if Runtime.rebirthGoalEnabled and (
+		Runtime.rebirthInFlight
+		or Runtime.rebirthGoalAwaitingFrom~=nil
+		or rebirthSafetyLatchBlocks()
+	) then
 		rebGoalBox.Text=("%.0f"):format(Runtime.rebirthGoal)
-		setStatus("ЦЕЛЬ НЕ ИЗМЕНЕНА: ДОЖДИСЬ ТЕКУЩЕГО ЗАПРОСА")
+		setStatus("ЦЕЛЬ НЕ ИЗМЕНЕНА: ПРЕДЫДУЩИЙ ЗАПРОС ЕЩЁ НЕ ПОДТВЕРЖДЁН")
 		return false
 	end
 
