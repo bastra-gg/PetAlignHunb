@@ -76,6 +76,12 @@ local Runtime={
 	lastAutoRockRebs=nil,
 	autoRockReason=nil,
 	autoRebirth=false,
+	fastRebirth=false,
+	fastRebirthBusy=false,
+	fastRebirthApplying=false,
+	fastRebirthToken=0,
+	fastRebirthOwned={train=false,king=false,rebirth=false},
+	fastRebirthSnapshot=nil,
 	rebirthInFlight=false,
 	rebirthToken=0,
 	rebirthGoalEnabled=false,
@@ -2590,10 +2596,17 @@ local function panicStop()
 	Runtime.lockPosition=false
 	Runtime.positionCF=nil
 	stopRebirthAutomation(nil,false)
+	Runtime.fastRebirthToken=Runtime.fastRebirthToken+1
+	Runtime.fastRebirth=false
+	Runtime.fastRebirthBusy=false
+	Runtime.fastRebirthApplying=false
+	Runtime.fastRebirthOwned={train=false,king=false,rebirth=false}
+	Runtime.fastRebirthSnapshot=nil
 	Runtime.autoSize=false
 	disableKingLock()
 
 	if Runtime.leverRefs.lockPosition then Runtime.leverRefs.lockPosition.Set(false,true) end
+	if Runtime.leverRefs.fastRebirth then Runtime.leverRefs.fastRebirth.Set(false,true) end
 	if Runtime.leverRefs.autoSize then Runtime.leverRefs.autoSize.Set(false,true) end
 	if Runtime.leverRefs.kingLock then Runtime.leverRefs.kingLock.Set(false,true) end
 
@@ -4061,6 +4074,9 @@ lockRockSlider=makeFeatureToggle(bugFeatureBody,"◇","У КАМНЯ","не да
 end)
 
 bugSlider=makeFeatureToggle(bugFeatureBody,"▷","АВТОУДАР","бьёт автоматически",false,function(on,api)
+	if on and Runtime.fastRebirth and not Runtime.fastRebirthApplying then
+		Runtime.fastRebirthOwned.train=false
+	end
 	if on then
 		if not startBug() then
 			api.Set(false,true)
@@ -4197,6 +4213,9 @@ end
 for _,t in ipairs(TRAIN_TYPES) do
 	local slider
 	slider=makeFeatureToggle(trainFeatureBody,trainIcons[t.id] or "◈",trainNames[t.id] or t.label,trainDescs[t.id] or t.desc,false,function(on,api)
+		if Runtime.fastRebirth and not Runtime.fastRebirthApplying and (t.id=="Weight" or on) then
+			Runtime.fastRebirthOwned.train=false
+		end
 		if on then
 			turnOffOtherTrain(t.id)
 			if not startTrain(t) then
@@ -4216,7 +4235,7 @@ end
 
 local rebFeaturePanel,rebFeatureBody=makeFeaturePanel(rebPage,"АВТОМАТИЗАЦИЯ",86,3)
 rebFeaturePanel.LayoutOrder=1
-local rebSettingsPanel,rebSettingsBody=makeSettingsPanel(rebPage,"ТОЧНЫЙ РАЗМЕР",78)
+local rebSettingsPanel,rebSettingsBody=makeSettingsPanel(rebPage,"БЫСТРЫЕ РЕБЫ И РАЗМЕР",125)
 rebSettingsPanel.LayoutOrder=2
 
 local rebInfo=card(rebPage,52)
@@ -4340,6 +4359,9 @@ local function changeRebirthGoal(on,api)
 		Runtime.rebirthGoalCompleted=false
 		Runtime.rebirthGoalCurrent=math.max(0,math.floor(current+0.5))
 		clearRebirthGoalPending()
+		if Runtime.fastRebirth and not Runtime.fastRebirthApplying then
+			Runtime.fastRebirthOwned.rebirth=false
+		end
 		Runtime.autoRebirth=true
 		Runtime.nextRebirth=0
 		if autoRebSlider then autoRebSlider.Set(true,true) end
@@ -4372,6 +4394,9 @@ Runtime.leverRefs.rebirthGoal=rebGoalApi
 refreshRebirthGoalUI(nil)
 
 autoRebSlider=makeFeatureToggle(rebFeatureBody,"↻","АВТОРЕБИРТ","без ограничения",false,function(on,api)
+	if Runtime.fastRebirth and not Runtime.fastRebirthApplying then
+		Runtime.fastRebirthOwned.rebirth=false
+	end
 	if on and not findRebirthRemote() then
 		api.Set(false,true)
 		setStatus("РЕБИРТ: функция игры не найдена")
@@ -4395,11 +4420,12 @@ end)
 
 Runtime.leverRefs.autoRebirth=autoRebSlider
 
-local sizeInput=makeNumberInput(rebSettingsBody,"РАЗМЕР ПЕРСОНАЖА","значение от 0.1 до 1000",1,function(value)
+local sizeInput,sizeInputRow=makeNumberInput(rebSettingsBody,"РАЗМЕР ПЕРСОНАЖА","значение от 0.1 до 1000",1,function(value)
 	Runtime.sizeTarget=value
 	if Runtime.autoSize then Runtime.nextSize=0 end
 	setStatus("РАЗМЕР: "..tostring(value))
 end)
+sizeInputRow.LayoutOrder=2
 
 local autoSizeSlider=makeFeatureToggle(rebFeatureBody,"◫","ФИКС. РАЗМЕР","держит значение",false,function(on,api)
 	if on and not findSizeRemote() then
@@ -4417,6 +4443,9 @@ end)
 Runtime.leverRefs.autoSize=autoSizeSlider
 
 local kingLockSlider=makeFeatureToggle(rebFeatureBody,"♛","KING GYM","удерживает в зоне",false,function(on,api)
+	if Runtime.fastRebirth and not Runtime.fastRebirthApplying then
+		Runtime.fastRebirthOwned.king=false
+	end
 	if on then
 		if Runtime.mode=="bug" then stopMode("BUG STOP / KING LOCK") end
 
@@ -4439,6 +4468,210 @@ local kingLockSlider=makeFeatureToggle(rebFeatureBody,"♛","KING GYM","удер
 end)
 
 Runtime.leverRefs.kingLock=kingLockSlider
+
+-- FAST_REBIRTH_BEGIN
+local function clearFastRebirthOwnership()
+	Runtime.fastRebirthOwned={train=false,king=false,rebirth=false}
+end
+
+local function captureFastRebirthSnapshot()
+	return {
+		mode=Runtime.mode,
+		selectedTrain=Runtime.selectedTrain,
+		lockPosition=Runtime.lockPosition,
+		positionCF=Runtime.positionCF,
+	}
+end
+
+local function sameModeAsFastSnapshot(snapshot)
+	if not snapshot or Runtime.mode~=snapshot.mode then return false end
+	if snapshot.mode=="train" then
+		return Runtime.selectedTrain
+			and snapshot.selectedTrain
+			and Runtime.selectedTrain.id==snapshot.selectedTrain.id
+	end
+	return true
+end
+
+local function restoreFastRebirthSnapshot(snapshot,restoreMode,restoreLock)
+	if not snapshot then return end
+
+	if restoreMode and snapshot.mode=="bug" then
+		safe(function() startBug() end)
+	elseif restoreMode and snapshot.mode=="train" and snapshot.selectedTrain then
+		safe(function() startTrain(snapshot.selectedTrain) end)
+	end
+
+	if restoreLock
+		and snapshot.lockPosition
+		and snapshot.positionCF
+		and not Runtime.kingLock
+		and sameModeAsFastSnapshot(snapshot) then
+		Runtime.lockPosition=true
+		Runtime.positionCF=snapshot.positionCF
+		Runtime.nextPosTick=0
+		if Runtime.leverRefs.lockPosition then
+			Runtime.leverRefs.lockPosition.Set(true,true)
+		end
+	end
+end
+
+local function stopFastRebirthOwned(restoreSnapshot)
+	local owned=Runtime.fastRebirthOwned or {}
+	local snapshot=Runtime.fastRebirthSnapshot
+	local restoreMode=owned.train and snapshot and snapshot.mode~=nil
+	local restoreLock=false
+	Runtime.fastRebirth=false
+
+	-- Stop only components started by the master, in reverse action order.
+	if owned.rebirth then
+		local lever=Runtime.leverRefs.autoRebirth
+		if lever and (Runtime.autoRebirth or lever.Get()) then
+			safe(function() lever.Set(false,false) end)
+		end
+	end
+
+	if owned.train then
+		local lever=Runtime.leverRefs.train and Runtime.leverRefs.train.Weight
+		local weightActive=Runtime.mode=="train"
+			and Runtime.selectedTrain
+			and Runtime.selectedTrain.id=="Weight"
+		if weightActive and lever then
+			safe(function() lever.Set(false,false) end)
+		end
+	end
+
+	if owned.king then
+		local lever=Runtime.leverRefs.kingLock
+		restoreLock=snapshot and snapshot.lockPosition==true
+		if lever and (Runtime.kingLock or lever.Get()) then
+			safe(function() lever.Set(false,false) end)
+		end
+	end
+
+	if restoreSnapshot then
+		restoreFastRebirthSnapshot(snapshot,restoreMode,restoreLock)
+	end
+	clearFastRebirthOwnership()
+	Runtime.fastRebirthSnapshot=nil
+end
+
+local fastRebirthSlider,fastRebirthRow=makeSlider(
+	rebSettingsBody,
+	"БЫСТРЫЕ РЕБЫ",
+	"гантели + King Gym + автореб",
+	false,
+	function(on,api)
+		if Runtime.fastRebirthBusy then
+			api.Set(Runtime.fastRebirth,true)
+			setStatus("БЫСТРЫЕ РЕБЫ: переключение уже выполняется")
+			return
+		end
+
+		Runtime.fastRebirthBusy=true
+		Runtime.fastRebirthApplying=true
+		Runtime.fastRebirthToken=Runtime.fastRebirthToken+1
+		local token=Runtime.fastRebirthToken
+		local function currentTransition()
+			return Runtime.alive and Runtime.fastRebirthToken==token
+		end
+		local function finish(state,statusText)
+			if not currentTransition() then return end
+			Runtime.fastRebirth=state and true or false
+			Runtime.fastRebirthApplying=false
+			Runtime.fastRebirthBusy=false
+			api.Set(Runtime.fastRebirth,true)
+			if statusText then setStatus(statusText) end
+		end
+
+		if not on then
+			stopFastRebirthOwned(true)
+			finish(false,"БЫСТРЫЕ РЕБЫ: выключены")
+			return
+		end
+
+		local weightLever=Runtime.leverRefs.train and Runtime.leverRefs.train.Weight
+		local kingLever=Runtime.leverRefs.kingLock
+		local rebirthLever=Runtime.leverRefs.autoRebirth
+		local weightType=nil
+		for _,trainType in ipairs(TRAIN_TYPES) do
+			if trainType.id=="Weight" then
+				weightType=trainType
+				break
+			end
+		end
+
+		local weightActive=Runtime.mode=="train"
+			and Runtime.selectedTrain
+			and Runtime.selectedTrain.id=="Weight"
+		if not weightLever or not kingLever or not rebirthLever or not weightType then
+			finish(false,"БЫСТРЫЕ РЕБЫ: функции ещё не готовы")
+			return
+		end
+		if not Runtime.kingLock and not root() then
+			finish(false,"БЫСТРЫЕ РЕБЫ: персонаж ещё не загружен")
+			return
+		end
+		if not Runtime.autoRebirth and not findRebirthRemote() then
+			finish(false,"БЫСТРЫЕ РЕБЫ: функция ребирта не найдена")
+			return
+		end
+		if not weightActive then
+			local tool,msg=ensureTrainTool(weightType)
+			if not tool then
+				finish(false,"БЫСТРЫЕ РЕБЫ: "..tostring(msg))
+				return
+			end
+		end
+
+		Runtime.fastRebirthSnapshot=captureFastRebirthSnapshot()
+		clearFastRebirthOwnership()
+		local owned=Runtime.fastRebirthOwned
+		local function fail(reason)
+			if not currentTransition() then return end
+			stopFastRebirthOwned(true)
+			finish(false,"БЫСТРЫЕ РЕБЫ: "..tostring(reason))
+		end
+
+		if not weightActive then
+			owned.train=true
+			safe(function() weightLever.Set(true,false) end)
+			if not currentTransition() then return end
+			weightActive=Runtime.mode=="train"
+				and Runtime.selectedTrain
+				and Runtime.selectedTrain.id=="Weight"
+			if not weightActive then
+				fail("гантели не запустились")
+				return
+			end
+		end
+
+		if not Runtime.kingLock then
+			owned.king=true
+			safe(function() kingLever.Set(true,false) end)
+			if not currentTransition() then return end
+			if not Runtime.kingLock then
+				fail("King Gym не включился")
+				return
+			end
+		end
+
+		if not Runtime.autoRebirth then
+			owned.rebirth=true
+			safe(function() rebirthLever.Set(true,false) end)
+			if not currentTransition() then return end
+			if not Runtime.autoRebirth then
+				fail("авторебирт не включился")
+				return
+			end
+		end
+
+		finish(true,"БЫСТРЫЕ РЕБЫ: гантели + King Gym + автореб")
+	end
+)
+fastRebirthRow.LayoutOrder=1
+Runtime.leverRefs.fastRebirth=fastRebirthSlider
+-- FAST_REBIRTH_END
 
 -- AUTO KILL PAGE
 
@@ -5042,3 +5275,4 @@ task.spawn(function()
 		task.wait(math.min(0.5*#recentFailures,1.5))
 	end
 end)
+
