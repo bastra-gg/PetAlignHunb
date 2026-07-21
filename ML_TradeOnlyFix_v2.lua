@@ -100,6 +100,13 @@ local Runtime={
 	kingRoot=nil,
 	kingSavedAnchored=nil,
 	kingPresenceInFlight=false,
+	kingPresenceToken=0,
+	kingTriggerPart=nil,
+	kingTouchTrigger=nil,
+	kingTouchContacts={},
+	kingHoldPosition=nil,
+	kingHoldGyro=nil,
+	nextKingTouchPulse=0,
 	lockRock=false,
 	lockPosition=false,
 	lockCF=nil,
@@ -1260,7 +1267,10 @@ local function releaseNetworkCharacterHold()
 	if heldRoot and heldRoot.Parent and Runtime.networkHoldSavedAnchored~=nil then
 		safe(function()
 			if Runtime.kingLock and Runtime.kingRoot==heldRoot then
-				heldRoot.Anchored=true
+				-- King Gym must remain an unanchored, physical character after
+				-- a network hold; the dedicated BodyMovers keep it in place.
+				heldRoot.Anchored=false
+				Runtime.nextKingTick=0
 			else
 				heldRoot.Anchored=Runtime.networkHoldSavedAnchored
 			end
@@ -1291,7 +1301,17 @@ local function keepNetworkCharacterHold()
 		r.CFrame=cf
 		r.AssemblyLinearVelocity=Vector3.new(0,0,0)
 		r.AssemblyAngularVelocity=Vector3.new(0,0,0)
-		r.Anchored=true
+		-- A false-positive Wi-Fi hold must not remove King Gym physics.
+		local kingPhysical=Runtime.kingLock and Runtime.kingRoot==r
+		if kingPhysical then
+			if Runtime.kingHoldPosition and Runtime.kingHoldPosition.Parent==r then
+				Runtime.kingHoldPosition.Position=cf.Position
+			end
+			if Runtime.kingHoldGyro and Runtime.kingHoldGyro.Parent==r then
+				Runtime.kingHoldGyro.CFrame=cf
+			end
+		end
+		r.Anchored=not kingPhysical
 	end)
 	return true
 end
@@ -2185,103 +2205,258 @@ local function kingTargetCF()
 	return DEFAULT_KING_CF
 end
 
-local function findKingTriggerPart()
-	local targetPosition=kingTargetCF().Position
-	local best=nil
-	local bestScore=-math.huge
-	local scanned=0
+local function destroyKingPhysicalHold()
+	for _,field in ipairs({"kingHoldPosition","kingHoldGyro"}) do
+		local mover=Runtime[field]
+		if mover and mover.Parent then safe(function() mover:Destroy() end) end
+		Runtime[field]=nil
+	end
 
-	for _,d in ipairs(workspace:GetDescendants()) do
-		scanned=scanned+1
-		if scanned>12000 then break end
-
-		if d:IsA("BasePart") then
-			local distance=(d.Position-targetPosition).Magnitude
-			if distance<=320 then
-				local full=tostring(d:GetFullName()):lower()
-				local score=-distance*0.08
-				local hasTouch=d:FindFirstChildOfClass("TouchTransmitter")~=nil
-
-				if hasTouch then score=score+100 end
-				if full:find("muscle king",1,true) or full:find("muscleking",1,true) then score=score+80 end
-				if full:find("king",1,true) then score=score+35 end
-				if containsAny(full,{"trigger","zone","area","hill","gym","capture","touch"}) then score=score+45 end
-
-				if score>bestScore and (hasTouch or score>=45) then
-					best=d
-					bestScore=score
+	-- Also clean an orphan left by an interrupted creation between the two
+	-- BodyMovers or by a replaced runtime.
+	local candidates={Runtime.kingRoot,root()}
+	local seen={}
+	for _,candidate in ipairs(candidates) do
+		if candidate and not seen[candidate] then
+			seen[candidate]=true
+			for _,child in ipairs(candidate:GetChildren()) do
+				if child.Name=="RockBugKingPhysicalHold" or child.Name=="RockBugKingPhysicalGyro" then
+					safe(function() child:Destroy() end)
 				end
 			end
 		end
 	end
+end
 
+local function releaseKingTouch(clearTrigger)
+	local trigger=Runtime.kingTouchTrigger
+	if trigger and trigger.Parent and type(firetouchinterest)=="function" then
+		for _,part in ipairs(Runtime.kingTouchContacts or {}) do
+			if part and part.Parent and part:IsA("BasePart") then
+				safe(function() firetouchinterest(part,trigger,1) end)
+			end
+		end
+	end
+	Runtime.kingTouchContacts={}
+	Runtime.kingTouchTrigger=nil
+	if clearTrigger then Runtime.kingTriggerPart=nil end
+end
+
+local function kingTriggerScore(part,targetPosition)
+	local distance=(part.Position-targetPosition).Magnitude
+	if distance>320 then return nil end
+
+	local full=tostring(part:GetFullName()):lower()
+	local hasTouch=part:FindFirstChildOfClass("TouchTransmitter")~=nil
+	local kingNamed=full:find("muscle king",1,true) or full:find("muscleking",1,true) or full:find("king",1,true)
+	local zoneNamed=containsAny(full,{"trigger","zone","area","hill","capture","touch","boost"})
+	local excludedGeometry=containsAny(full,{"rock","mountain","machine","crystal","shop","neededdurability"})
+	if excludedGeometry then return nil end
+	if not hasTouch and not zoneNamed then return nil end
+	if not kingNamed and not zoneNamed and distance>35 then return nil end
+	local score=-distance*0.08
+
+	if hasTouch then score=score+100 end
+	if full:find("muscle king",1,true) or full:find("muscleking",1,true) then score=score+170 end
+	if full:find("king",1,true) then score=score+80 end
+	if zoneNamed then score=score+55 end
+	if part.CanTouch then score=score+8 end
+	if not part.CanCollide then score=score+6 end
+	if part.Size.X>=8 and part.Size.Z>=8 then score=score+8 end
+
+	-- A generic touch part can only be a very close fallback. Named King/zone
+	-- ancestry wins over unrelated portals or pads in the same area.
+	return score
+end
+
+local function findKingTriggerPart()
+	if Runtime.kingTriggerPart and Runtime.kingTriggerPart.Parent then
+		return Runtime.kingTriggerPart
+	end
+
+	local targetPosition=kingTargetCF().Position
+	local best=nil
+	local bestScore=-math.huge
+
+	local function consider(part)
+		if not part or not part:IsA("BasePart") then return end
+		local score=kingTriggerScore(part,targetPosition)
+		if score and score>bestScore then
+			best=part
+			bestScore=score
+		end
+	end
+
+	-- Spatial lookup avoids missing the zone merely because it appeared after
+	-- the old arbitrary 12,000-descendant scan limit.
+	local spatialOk,nearby=safe(function()
+		return workspace:GetPartBoundsInRadius(targetPosition,320)
+	end)
+	if spatialOk and type(nearby)=="table" then
+		for _,part in ipairs(nearby) do consider(part) end
+	end
+
+	if not best then
+		for _,part in ipairs(workspace:GetDescendants()) do consider(part) end
+	end
+
+	Runtime.kingTriggerPart=best
 	return best
+end
+
+local function kingPhysicalCF(trigger)
+	local base=Runtime.kingCF or kingTargetCF()
+	if not trigger or not trigger.Parent then return base end
+	if (trigger.Position-base.Position).Magnitude>160 then return base end
+
+	local localPosition=trigger.CFrame:PointToObjectSpace(base.Position)
+	local half=trigger.Size*0.5
+	local alreadyInside=
+		math.abs(localPosition.X)<=half.X+3
+		and math.abs(localPosition.Y)<=half.Y+4
+		and math.abs(localPosition.Z)<=half.Z+3
+	if alreadyInside then return base end
+
+	local y=trigger.Position.Y
+	if trigger.CanCollide or trigger.Size.Y<4 then
+		y=y+half.Y+2.8
+	end
+	return CFrame.new(trigger.Position.X,y,trigger.Position.Z)*base.Rotation
+end
+
+local function installKingPhysicalHold(r,cf)
+	destroyKingPhysicalHold()
+	r.Anchored=false
+	r.CFrame=cf
+	r.AssemblyLinearVelocity=Vector3.new(0,0,0)
+	r.AssemblyAngularVelocity=Vector3.new(0,0,0)
+
+	local ok,err=xpcall(function()
+		local position=Instance.new("BodyPosition")
+		position.Name="RockBugKingPhysicalHold"
+		position.MaxForce=Vector3.new(1e9,1e9,1e9)
+		position.P=50000
+		position.D=1800
+		position.Position=cf.Position
+		position.Parent=r
+		Runtime.kingHoldPosition=position
+
+		local gyro=Instance.new("BodyGyro")
+		gyro.Name="RockBugKingPhysicalGyro"
+		gyro.MaxTorque=Vector3.new(1e9,1e9,1e9)
+		gyro.P=40000
+		gyro.D=1200
+		gyro.CFrame=cf
+		gyro.Parent=r
+		Runtime.kingHoldGyro=gyro
+	end,function(e)
+		return tostring(e)
+	end)
+
+	if not ok then destroyKingPhysicalHold() end
+	return ok,err
+end
+
+local function pulseKingTouch(trigger)
+	Runtime.nextKingTouchPulse=os.clock()+2
+	if not trigger or not trigger.Parent or type(firetouchinterest)~="function" then return end
+	local c=char()
+	local contacts={
+		Runtime.kingRoot,
+		c and (c:FindFirstChild("LeftFoot") or c:FindFirstChild("Left Leg")),
+		c and (c:FindFirstChild("RightFoot") or c:FindFirstChild("Right Leg")),
+		c and (c:FindFirstChild("LowerTorso") or c:FindFirstChild("Torso")),
+	}
+
+	local openContacts=Runtime.kingTouchContacts or {}
+	local sameOpenTouch=Runtime.kingTouchTrigger==trigger and #openContacts>0
+	if sameOpenTouch then
+		for _,part in ipairs(openContacts) do
+			if not part or not part.Parent then
+				sameOpenTouch=false
+				break
+			end
+		end
+	end
+	if sameOpenTouch then return end
+	if #openContacts>0 or Runtime.kingTouchTrigger then releaseKingTouch(false) end
+
+	Runtime.kingTouchContacts={}
+	Runtime.kingTouchTrigger=trigger
+	for _,part in ipairs(contacts) do
+		if part and part.Parent and part:IsA("BasePart") then
+			table.insert(Runtime.kingTouchContacts,part)
+		-- Keep the touch open while King Gym is enabled. The old code sent
+		-- touch-end immediately, which explicitly removed physical presence.
+			safe(function() firetouchinterest(part,trigger,0) end)
+		end
+	end
 end
 
 local function triggerKingPresence(r)
 	if Runtime.kingPresenceInFlight or not Runtime.kingLock or not r or not r.Parent then return false end
 	Runtime.kingPresenceInFlight=true
+	local token=Runtime.kingPresenceToken
 
 	local ok,err=xpcall(function()
-		local cf=Runtime.kingCF or kingTargetCF()
-		r.Anchored=false
-		r.CFrame=cf*CFrame.new(0,6,0)
-		r.AssemblyLinearVelocity=Vector3.new(0,-18,0)
-		r.AssemblyAngularVelocity=Vector3.new(0,0,0)
-		task.wait(0.18)
-
-		if not Runtime.alive or not Runtime.kingLock or Runtime.kingRoot~=r or not r.Parent then return end
-
-		r.CFrame=cf
-		r.AssemblyLinearVelocity=Vector3.new(0,0,0)
-		r.AssemblyAngularVelocity=Vector3.new(0,0,0)
+		destroyKingPhysicalHold()
+		releaseKingTouch(false)
 
 		local trigger=findKingTriggerPart()
-		if trigger and type(firetouchinterest)=="function" then
-			local c=char()
-			local contacts={
-				r,
-				c and (c:FindFirstChild("LeftFoot") or c:FindFirstChild("Left Leg")),
-				c and (c:FindFirstChild("RightFoot") or c:FindFirstChild("Right Leg")),
-			}
+		local cf=kingPhysicalCF(trigger)
+		Runtime.kingCF=cf
+		local entryCF=cf*CFrame.new(0,8,0)
 
-			for _,part in ipairs(contacts) do
-				if part and part:IsA("BasePart") then
-					safe(function()
-						firetouchinterest(part,trigger,0)
-						firetouchinterest(part,trigger,1)
-					end)
-				end
-			end
-		end
+		r.Anchored=false
+		r.CFrame=entryCF
+		r.AssemblyAngularVelocity=Vector3.new(0,0,0)
 
-		task.wait(0.18)
-		if Runtime.alive and Runtime.kingLock and Runtime.kingRoot==r and r.Parent then
-			r.CFrame=cf
-			r.AssemblyLinearVelocity=Vector3.new(0,0,0)
+		-- Cross the zone over several replicated physics frames instead of an
+		-- instantaneous CFrame jump, so the server observes a real entry.
+		for step=1,12 do
+			if not Runtime.alive or Runtime.networkPaused or not Runtime.kingLock or Runtime.kingPresenceToken~=token
+				or Runtime.kingRoot~=r or not r.Parent then return end
+			local alpha=step/12
+			r.CFrame=entryCF:Lerp(cf,alpha)
+			r.AssemblyLinearVelocity=Vector3.new(0,-4,0)
 			r.AssemblyAngularVelocity=Vector3.new(0,0,0)
-			r.Anchored=true
+			RunService.Heartbeat:Wait()
 		end
+
+		task.wait(0.12)
+		if not Runtime.alive or Runtime.networkPaused or not Runtime.kingLock or Runtime.kingPresenceToken~=token
+			or Runtime.kingRoot~=r or not r.Parent then return end
+
+		pulseKingTouch(trigger)
+		local holdOk,holdErr=installKingPhysicalHold(r,cf)
+		if not holdOk then error(holdErr or "physical hold failed") end
 	end,function(e)
 		return tostring(e)
 	end)
 
-	Runtime.kingPresenceInFlight=false
-	if not ok and Runtime.alive then setStatus("KING TRIGGER: "..tostring(err)) end
+	if Runtime.kingPresenceToken==token then Runtime.kingPresenceInFlight=false end
+	if not ok and Runtime.alive and Runtime.kingLock and Runtime.kingPresenceToken==token then
+		setStatus("KING PHYSICS: "..tostring(err))
+	end
 	return ok
 end
 
 local function disableKingLock()
 	local savedRoot=Runtime.kingRoot
+	Runtime.kingPresenceToken=Runtime.kingPresenceToken+1
+	Runtime.kingLock=false
+	destroyKingPhysicalHold()
+	releaseKingTouch(true)
+
 	if savedRoot and savedRoot.Parent and Runtime.kingSavedAnchored~=nil then
 		safe(function() savedRoot.Anchored=Runtime.kingSavedAnchored end)
 	end
 
-	Runtime.kingLock=false
 	Runtime.kingCF=nil
 	Runtime.kingRoot=nil
 	Runtime.kingSavedAnchored=nil
 	Runtime.kingPresenceInFlight=false
+	Runtime.nextKingTouchPulse=0
 end
 
 local function enableKingLock()
@@ -2293,10 +2468,24 @@ local function enableKingLock()
 	Runtime.kingCF=kingTargetCF()
 	Runtime.kingLock=true
 	Runtime.kingRoot=r
-	Runtime.kingSavedAnchored=r.Anchored
+	if Runtime.networkHoldRoot==r and Runtime.networkHoldSavedAnchored~=nil then
+		Runtime.kingSavedAnchored=Runtime.networkHoldSavedAnchored
+	else
+		Runtime.kingSavedAnchored=r.Anchored
+	end
 	Runtime.nextKingTick=0
 
-	triggerKingPresence(r)
+	if Runtime.networkPaused then
+		-- Network hold owns the root until replication is healthy again. The
+		-- scheduler will perform the physical entry immediately after release.
+		return true
+	end
+
+	local ok=triggerKingPresence(r)
+	if not ok then
+		disableKingLock()
+		return false,"не удалось создать физическое присутствие"
+	end
 	return true
 end
 
@@ -2747,24 +2936,50 @@ local function scheduler()
 
 			if r then
 				if Runtime.kingRoot~=r then
+					-- Cancel every object/contact owned by the previous character
+					-- before accepting the respawned root. Otherwise the cancelled
+					-- coroutine can leave kingPresenceInFlight stuck forever.
+					destroyKingPhysicalHold()
+					releaseKingTouch(false)
+					Runtime.kingPresenceToken=Runtime.kingPresenceToken+1
+					Runtime.kingPresenceInFlight=false
 					Runtime.kingRoot=r
 					Runtime.kingSavedAnchored=r.Anchored
 					if not Runtime.kingPresenceInFlight then
 						task.spawn(function() triggerKingPresence(r) end)
 					end
-				elseif not r.Anchored or (r.Position-Runtime.kingCF.Position).Magnitude>0.75 then
-					if not Runtime.kingPresenceInFlight then
-						task.spawn(function() triggerKingPresence(r) end)
+				else
+					local position=Runtime.kingHoldPosition
+					local gyro=Runtime.kingHoldGyro
+					local holdAlive=position and position.Parent==r and gyro and gyro.Parent==r
+					local drift=(r.Position-Runtime.kingCF.Position).Magnitude
+
+					if r.Anchored or not holdAlive or drift>3 then
+						if not Runtime.kingPresenceInFlight then
+							task.spawn(function() triggerKingPresence(r) end)
+						end
+					else
+						-- BodyMovers freeze the character without removing it from
+						-- the server's unanchored physics simulation.
+						r.Anchored=false
+						position.Position=Runtime.kingCF.Position
+						gyro.CFrame=Runtime.kingCF
+						if now>=Runtime.nextKingTouchPulse then
+							pulseKingTouch(findKingTriggerPart())
+						end
 					end
 				end
 			end
 		end
 
-		if Runtime.mode=="train" and Runtime.lockPosition and Runtime.positionCF and now>=Runtime.nextPosTick then
+		if not Runtime.networkPaused and Runtime.lockPosition and Runtime.positionCF and now>=Runtime.nextPosTick then
 			Runtime.nextPosTick=now+0.05
 			local r=root()
 
 			if r then
+				-- Keep normal position lock inside the replicated physics world.
+				-- Anchoring only looks frozen locally and can suppress zone presence.
+				r.Anchored=false
 				r.CFrame=Runtime.positionCF
 				r.AssemblyLinearVelocity=Vector3.new(0,0,0)
 				r.AssemblyAngularVelocity=Vector3.new(0,0,0)
@@ -4095,10 +4310,11 @@ local lockPosSlider=makeFeatureToggle(trainSettingsBody,"◇","ЗАКРЕПИТ�
 			return
 		end
 
+		disableKingLock()
+		r.Anchored=false
 		Runtime.positionCF=r.CFrame
 		Runtime.lockPosition=true
 		Runtime.nextPosTick=0
-		disableKingLock()
 		if Runtime.leverRefs.kingLock then Runtime.leverRefs.kingLock.Set(false,true) end
 		setStatus("ПОЗИЦИЯ: зафиксирована")
 	else
@@ -4929,7 +5145,7 @@ addConn(lp.CharacterAdded:Connect(function(newCharacter)
 	local resumeToken=Runtime.modeToken
 
 	if Runtime.leverRefs.lockPosition then Runtime.leverRefs.lockPosition.Set(false,true) end
-	if not Runtime.autoResumeAfterRespawn or not resumeMode then return end
+	if not Runtime.autoResumeAfterRespawn or (not resumeMode and not resumePositionLock) then return end
 
 	task.spawn(function()
 		local deadline=os.clock()+15
@@ -4953,21 +5169,24 @@ addConn(lp.CharacterAdded:Connect(function(newCharacter)
 		task.wait(0.8)
 		if not Runtime.alive or Runtime.respawnGeneration~=generation or Runtime.modeToken~=resumeToken then return end
 
-		local resumed=false
+		local resumed=resumeMode==nil
 		if resumeMode=="bug" then
 			resumed=startBug()
 		elseif resumeMode=="train" and resumeTrain then
 			resumed=startTrain(resumeTrain)
 		end
 
-		if resumed and resumePositionLock and resumePositionCF then
+		local positionResumed=false
+		if resumePositionLock and resumePositionCF then
+			readyRoot.Anchored=false
 			Runtime.lockPosition=true
 			Runtime.positionCF=resumePositionCF
 			Runtime.nextPosTick=0
+			positionResumed=true
 			if Runtime.leverRefs.lockPosition then Runtime.leverRefs.lockPosition.Set(true,true) end
 		end
 
-		if resumed then
+		if resumed or positionResumed then
 			setStatus("RESPAWN RECOVERY: режим восстановлен")
 		else
 			setStatus("RESPAWN RECOVERY: не удалось восстановить предмет")
