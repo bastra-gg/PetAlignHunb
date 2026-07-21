@@ -5177,8 +5177,10 @@ addConn(lp.CharacterAdded:Connect(function(newCharacter)
 		end
 
 		local positionResumed=false
-		if resumePositionLock and resumePositionCF then
-			readyRoot.Anchored=false
+		if resumePositionLock and resumePositionCF and not Runtime.kingLock and not Runtime.lockPosition then
+			-- Do not revive an old position lock over a King lock (or a new
+			-- position chosen by the user) during the respawn settle window.
+			if not Runtime.networkPaused then readyRoot.Anchored=false end
 			Runtime.lockPosition=true
 			Runtime.positionCF=resumePositionCF
 			Runtime.nextPosTick=0
