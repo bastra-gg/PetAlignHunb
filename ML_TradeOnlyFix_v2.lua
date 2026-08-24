@@ -45,6 +45,7 @@ pcall(function()
 end)
 
 local HUB_VERSION="RockBugHub_v20_ValidatedCompact"
+local DISPLAY_VERSION="1.1"
 
 local ENV=(type(getgenv)=="function" and getgenv()) or _G
 
@@ -172,6 +173,16 @@ local Runtime={
 	killBlacklist={},
 	crystalMode="off",
 	crystalToken=0,
+	crystalCatalog={},
+	crystalNames={},
+	crystalCatalogAt=nil,
+	crystalPetCache={},
+	crystalAmount=1,
+	petCleanupEnabled=false,
+	petCleanupTargets={["Core Pup"]=true,["Volt Talon"]=true},
+	petCleanupPending={},
+	petCleanupSold=0,
+	petCleanupToken=0,
 	purchaseAttempts=0,
 	selectedCrystal="Blue Crystal",
 	selectedPet=nil,
@@ -243,6 +254,45 @@ local FALLBACK_CRYSTALS={
 	"Inferno Crystal","Legends Crystal","Muscle Elite Crystal",
 	"Galaxy Oracle Crystal","Dark Nebula Crystal","Sky Eclipse Crystal","Jungle Crystal",
 	"Industrial Crystal",
+}
+
+-- Pet-only contents for crystals whose names are stable. Auras are deliberately
+-- excluded: the cleanup picker must only show pets from the selected crystal.
+local CRYSTAL_PET_NAMES={
+	["bluecrystal"]={
+		"Orange Hedgehog","Blue Birdie","Red Kitty","Blue Bunny","Dark Vampy",
+	},
+	["greencrystal"]={
+		"Silver Dog","Dark Golem","Green Butterfly","Crimson Falcon",
+	},
+	["frostcrystal"]={
+		"Yellow Butterfly","Purple Dragon","Orange Pegasus","Blue Pheonix",
+	},
+	["frozencrystal"]={
+		"Yellow Butterfly","Purple Dragon","Orange Pegasus","Blue Pheonix",
+	},
+	["mythicalcrystal"]={
+		"Red Dragon","Purple Falcon","Blue Firecaster","Golden Pheonix",
+	},
+	["infernocrystal"]={
+		"Red Firecaster","White Pegasus","Golden Pheonix","Infernal Dragon",
+	},
+	["legendscrystal"]={
+		"Green Firecaster","White Pheonix","Magic Butterfly","Ultra Birdie",
+	},
+	["muscleelitecrystal"]={
+		"Frostwave Legends Penguin","Phantom Genesis Dragon","Dark Legends Manticore",
+		"Ultimate Supernova Pegasus","Aether Spirit Bunny","Cybernetic Showdown Dragon",
+	},
+	["galaxyoraclecrystal"]={
+		"Eternal Strike Leviathan","Lighting Strike Phantom","Darkstar Hunter",
+	},
+	["junglecrystal"]={
+		"Golden Viking","Muscle Sensei","Neon Guardian",
+	},
+	["industrialcrystal"]={
+		"Core Pup","Volt Talon","Reactor Beast","Plasma Ravager","Titan Reactor","Apex Overlord",
+	},
 }
 
 Runtime.selectedPet="Muscle King"
@@ -1909,55 +1959,289 @@ local function refreshExtraUI()
 	end
 end
 
-local function availableCrystalNames()
-	local names={}
-	local seen={}
-	local folder=workspace:FindFirstChild("mapCrystalsFolder")
+local function crystalMetadataValue(item,fields,allowNumber)
+	if not item then return nil end
+	for _,field in ipairs(fields) do
+		local ok,value=safe(function() return item:GetAttribute(field) end)
+		if ok and ((type(value)=="string" and value:match("%S"))
+			or (allowNumber and type(value)=="number")) then
+			return value
+		end
+		local child=item:FindFirstChild(field)
+		if child then
+			ok,value=safe(function() return child.Value end)
+			if ok and ((type(value)=="string" and value:match("%S"))
+				or (allowNumber and type(value)=="number")) then
+				return value
+			end
+		end
+	end
+	return nil
+end
 
-	if folder then
-		for _,item in ipairs(folder:GetChildren()) do
-			local name=tostring(item.Name)
-			local key=string.lower(name)
-			if key:find("crystal",1,true) and not seen[key] then
-				seen[key]=true
-				table.insert(names,name)
+local function availableCrystalNames(forceRefresh)
+	local now=os.clock()
+	if not forceRefresh and Runtime.crystalCatalogAt
+		and now-Runtime.crystalCatalogAt<3 and #Runtime.crystalNames>0 then
+		return Runtime.crystalNames
+	end
+
+	local names={}
+	local catalog={}
+	local roots={}
+	local rootSeen={}
+	local visited={}
+	local inspected=0
+	local rootNames={
+		"mapCrystalsFolder","crystalsFolder","CrystalsFolder","crystalFolder","CrystalFolder",
+		"Crystals","crystals","PetCrystals","petCrystals","CrystalDisplays","crystalDisplays",
+		"CrystalShop","crystalShop","CrystalStations","crystalStations","Hatchables","hatchables",
+		"Eggs","eggs","IndustrialGym","industrialGym","Gyms","gyms","Map","map","World",
+		"Assets","assets","Shared","shared","GameData","gameData","Definitions","definitions",
+	}
+	local categoryNames={
+		crystal=true,crystals=true,egg=true,eggs=true,hatchables=true,hatching=true,
+		categories=true,category=true,catalog=true,catalogue=true,definitions=true,
+		data=true,config=true,configuration=true,displays=true,stations=true,
+		models=true,assets=true,items=true,shop=true,gyms=true,map=true,world=true,
+		mapcrystalsfolder=true,crystalsfolder=true,crystalfolder=true,
+		petcrystals=true,crystaldisplays=true,crystalshop=true,crystalstations=true,
+		crystaldata=true,crystaldefinitions=true,crystalcatalog=true,crystalchances=true,
+	}
+
+	local function addRoot(item)
+		if item and not rootSeen[item] then
+			rootSeen[item]=true
+			table.insert(roots,item)
+		end
+	end
+
+	for _,parent in ipairs({workspace,ReplicatedStorage}) do
+		for _,name in ipairs(rootNames) do
+			addRoot(parent:FindFirstChild(name))
+		end
+		local checked=0
+		for _,child in ipairs(parent:GetChildren()) do
+			checked=checked+1
+			if checked>100 then break end
+			local lower=string.lower(tostring(child.Name or ""))
+			if lower:find("crystal",1,true) or lower:find("hatch",1,true)
+				or lower:find("industrial",1,true) or lower:find("gym",1,true) then
+				addRoot(child)
 			end
 		end
 	end
 
-	if #names==0 then
-		for _,name in ipairs(FALLBACK_CRYSTALS) do
-			seen[string.lower(name)]=true
+	local function addCrystal(item,inCrystalFolder)
+		if not item or item:IsA("RemoteEvent") or item:IsA("RemoteFunction")
+			or item:IsA("LocalScript") or item:IsA("ModuleScript") then return false end
+		local rawName=tostring(item.Name or "")
+		local rawKey=shopNameKey(rawName)
+		if rawKey=="" or categoryNames[rawKey]
+			or (rawKey:find("crystal",1,true) and (
+				rawKey:match("folders?$") or rawKey:match("systems?$")
+				or rawKey:match("remotes?$") or rawKey:match("events?$")
+				or rawKey:match("definitions?$") or rawKey:match("catalogs?$")
+				or rawKey:match("configs?$") or rawKey:match("chances?$")
+				or rawKey:match("displays?$") or rawKey:match("stations?$")
+				or rawKey:match("models?$") or rawKey:match("assets?$")
+			)) then return false end
+		local explicitName=crystalMetadataValue(item,{
+			"CrystalName","crystalName","CrystalDisplayName","crystalDisplayName","HatchName",
+		})
+		local display=explicitName or crystalMetadataValue(item,{
+			"DisplayName","displayName","Title","title",
+		}) or rawName
+		local lowerRaw=string.lower(rawName)
+		local lowerDisplay=string.lower(tostring(display))
+		local namedCrystal=lowerRaw:find("crystal",1,true)
+			or lowerDisplay:find("crystal",1,true)
+		local structure=item:IsA("Model") or item:IsA("Folder")
+			or item:IsA("Configuration") or item:IsA("ObjectValue")
+		if not explicitName and not namedCrystal and not inCrystalFolder then return false end
+		if not structure and not explicitName then return false end
+		if not explicitName and not namedCrystal and not crystalMetadataValue(item,{
+			"CrystalId","crystalId","CrystalID","OpenId","HatchId",
+		},true) then return false end
+
+		local name=tostring(display):gsub("^%s+",""):gsub("%s+$","")
+		local key=shopNameKey(name)
+		if key=="" or categoryNames[key] then return false end
+		if not catalog[key] then
+			local requestId=crystalMetadataValue(item,{
+				"CrystalId","crystalId","CrystalID","OpenId","HatchId","Id","ID",
+			},true) or rawName
+			catalog[key]={
+				name=name,
+				id=requestId,
+				action=crystalMetadataValue(item,{"OpenAction","openAction","RemoteAction"}),
+				source=item,
+			}
 			table.insert(names,name)
 		end
+		return true
 	end
-	if not seen["industrial crystal"] then
+
+	local function inspect(item,depth,inCrystalFolder)
+		if not item or visited[item] or depth>5 or inspected>=320 then return end
+		visited[item]=true
+		inspected=inspected+1
+		if item:IsA("RemoteEvent") or item:IsA("RemoteFunction")
+			or item:IsA("LocalScript") or item:IsA("ModuleScript") then return end
+		local lower=string.lower(tostring(item.Name or ""))
+		local crystalFolder=inCrystalFolder or lower:find("crystal",1,true)~=nil
+			or lower:find("hatch",1,true)~=nil
+		if addCrystal(item,inCrystalFolder) then return end
+		for _,child in ipairs(item:GetChildren()) do
+			if inspected>=320 then break end
+			local childName=string.lower(tostring(child.Name or ""))
+			local branch=crystalFolder or childName:find("crystal",1,true)
+				or childName:find("hatch",1,true) or childName:find("egg",1,true)
+				or childName:find("industrial",1,true) or childName:find("gym",1,true)
+				or childName:find("station",1,true) or childName:find("display",1,true)
+				or childName:find("interact",1,true) or childName:find("catalog",1,true)
+				or childName:find("definition",1,true) or childName:find("data",1,true)
+				or childName:find("asset",1,true) or childName:find("pet",1,true)
+			if branch then inspect(child,depth+1,crystalFolder) end
+		end
+	end
+
+	for _,root in ipairs(roots) do
+		if inspected>=320 then break end
+		inspect(root,1,false)
+	end
+
+	-- Industrial Crystal and its six pets were verified in the Aug. 22 update.
+	-- Keep it selectable even when its gym has not streamed to the client yet.
+	local industrialKey=shopNameKey("Industrial Crystal")
+	if not catalog[industrialKey] then
+		catalog[industrialKey]={name="Industrial Crystal",id="Industrial Crystal"}
 		table.insert(names,"Industrial Crystal")
 	end
 
+	if #names==1 and names[1]=="Industrial Crystal" then
+		for _,name in ipairs(FALLBACK_CRYSTALS) do
+			local key=shopNameKey(name)
+			if not catalog[key] then
+				catalog[key]={name=name,id=name}
+				table.insert(names,name)
+			end
+		end
+	end
 	table.sort(names,function(a,b)
 		return string.lower(a)<string.lower(b)
 	end)
+	Runtime.crystalCatalog=catalog
+	Runtime.crystalNames=names
+	Runtime.crystalCatalogAt=now
 	return names
 end
 
-local function resolveCrystalName(wanted)
-	local wantedLower=string.lower(tostring(wanted or ""))
-	local names=availableCrystalNames()
-
-	for _,name in ipairs(names) do
-		if string.lower(name)==wantedLower then return name end
+local function crystalPetNames(crystalName)
+	local crystalKey=shopNameKey(crystalName)
+	local fixed=CRYSTAL_PET_NAMES[crystalKey]
+	if fixed then
+		local result={}
+		for _,name in ipairs(fixed) do table.insert(result,name) end
+		return result
 	end
 
-	local alias=wantedLower=="frost crystal" and "frozen crystal"
-		or (wantedLower=="frozen crystal" and "frost crystal")
-	if alias then
-		for _,name in ipairs(names) do
-			if string.lower(name)==alias then return name end
+	local cached=Runtime.crystalPetCache and Runtime.crystalPetCache[crystalKey]
+	if cached and os.clock()-(cached.at or 0)<5 then
+		local result={}
+		for _,name in ipairs(cached.names or {}) do table.insert(result,name) end
+		return result
+	end
+
+	local petLookup={}
+	for _,entry in ipairs(shopCatalog("pet")) do
+		petLookup[shopNameKey(entry.name)]=entry.name
+	end
+	local result={}
+	local seen={}
+	local function add(name)
+		local key=shopNameKey(name)
+		local exact=petLookup[key]
+		if exact and not seen[key] then
+			seen[key]=true
+			table.insert(result,exact)
+		end
+	end
+	local inspected=0
+	local function inspectContents(item,depth)
+		if not item or depth>5 or inspected>=180 then return end
+		inspected=inspected+1
+		add(shopDisplayName(item) or item.Name)
+		if item:IsA("StringValue") then
+			local ok,value=safe(function() return item.Value end)
+			if ok then add(value) end
+		elseif item:IsA("ObjectValue") then
+			local ok,value=safe(function() return item.Value end)
+			if ok and value then add(shopDisplayName(value) or value.Name) end
+		end
+		for _,field in ipairs({"PetName","petName","ItemName","itemName","DisplayName","displayName"}) do
+			local value=crystalMetadataValue(item,{field})
+			if value then add(value) end
+		end
+		for _,child in ipairs(item:GetChildren()) do inspectContents(child,depth+1) end
+	end
+
+	availableCrystalNames()
+	local entry=Runtime.crystalCatalog[crystalKey]
+	if entry and entry.source then inspectContents(entry.source,1) end
+
+	local searched={}
+	local function findCrystalData(item,depth)
+		if not item or searched[item] or depth>6 or inspected>=360 then return end
+		searched[item]=true
+		local itemKey=shopNameKey(item.Name)
+		local explicit=crystalMetadataValue(item,{
+			"CrystalName","crystalName","CrystalDisplayName","crystalDisplayName","HatchName",
+		})
+		if itemKey==crystalKey or (explicit and shopNameKey(explicit)==crystalKey) then
+			inspectContents(item,1)
+			return
+		end
+		for _,child in ipairs(item:GetChildren()) do findCrystalData(child,depth+1) end
+	end
+	if #result==0 then
+		for _,root in ipairs(shopContainers()) do
+			findCrystalData(root,1)
+			if inspected>=360 then break end
 		end
 	end
 
-	return wanted
+	table.sort(result,function(a,b) return string.lower(a)<string.lower(b) end)
+	Runtime.crystalPetCache=Runtime.crystalPetCache or {}
+	Runtime.crystalPetCache[crystalKey]={names=result,at=os.clock()}
+	local copy={}
+	for _,name in ipairs(result) do table.insert(copy,name) end
+	return copy
+end
+
+local function resolveCrystalName(wanted)
+	availableCrystalNames()
+	local wantedLower=string.lower(tostring(wanted or ""))
+	local entry=Runtime.crystalCatalog[shopNameKey(wantedLower)]
+	if not entry then
+		local alias=wantedLower=="frost crystal" and "frozen crystal"
+			or (wantedLower=="frozen crystal" and "frost crystal")
+		entry=alias and Runtime.crystalCatalog[shopNameKey(alias)] or nil
+	end
+	return entry and entry.id or wanted,entry
+end
+
+local function normalizeCrystalSelection(forceRefresh)
+	local names=availableCrystalNames(forceRefresh)
+	local key=shopNameKey(Runtime.selectedCrystal)
+	if Runtime.crystalCatalog[key] then
+		Runtime.selectedCrystal=Runtime.crystalCatalog[key].name
+	elseif #names>0 then
+		Runtime.selectedCrystal=names[1]
+	else
+		Runtime.selectedCrystal=nil
+	end
+	return Runtime.selectedCrystal
 end
 
 local function folderOwnsNamed(folderName,targetName)
@@ -2052,18 +2336,104 @@ local function startKillAutomation(mode)
 	end)
 end
 
+local function findCrystalRemote()
+	local legacyFolder=ReplicatedStorage:FindFirstChild("rEvents")
+	local legacy=legacyFolder and legacyFolder:FindFirstChild("openCrystalRemote")
+	if legacy and (legacy:IsA("RemoteFunction") or legacy:IsA("RemoteEvent")) then
+		return legacy,true
+	end
+
+	local containers={ReplicatedStorage}
+	local seen={[ReplicatedStorage]=true}
+	local function addContainer(item)
+		if item and not seen[item] then
+			seen[item]=true
+			table.insert(containers,item)
+		end
+	end
+	for _,name in ipairs({
+		"rEvents","Remotes","remotes","Events","events","Network","network",
+		"CrystalRemotes","crystalRemotes","PetCrystals","petCrystals","Crystals","crystals",
+	}) do
+		addContainer(ReplicatedStorage:FindFirstChild(name))
+	end
+	local baseCount=#containers
+	for index=1,baseCount do
+		local parent=containers[index]
+		for _,name in ipairs({
+			"Crystals","crystals","Crystal","crystal","PetCrystals","petCrystals",
+			"CrystalRemotes","crystalRemotes","Hatching","hatching",
+		}) do
+			addContainer(parent:FindFirstChild(name))
+		end
+	end
+
+	local knownNames={
+		"openCrystalRemote","OpenCrystalRemote","openCrystalEvent","OpenCrystalEvent",
+		"openCrystal","OpenCrystal","hatchCrystalRemote","HatchCrystalRemote",
+		"hatchCrystal","HatchCrystal","crystalOpenRemote","CrystalOpenRemote",
+		"crystalHatchRemote","CrystalHatchRemote",
+	}
+	for _,container in ipairs(containers) do
+		for _,name in ipairs(knownNames) do
+			local remote=container:FindFirstChild(name)
+			if remote and (remote:IsA("RemoteFunction") or remote:IsA("RemoteEvent")) then
+				return remote,shopNameKey(name)=="opencrystalremote"
+			end
+		end
+	end
+
+	local inspected=0
+	for _,container in ipairs(containers) do
+		for _,item in ipairs(container:GetChildren()) do
+			inspected=inspected+1
+			if inspected>120 then return nil,false end
+			if item:IsA("RemoteFunction") or item:IsA("RemoteEvent") then
+				local lower=string.lower(tostring(item.Name or ""))
+				if lower:find("crystal",1,true)
+					and (lower:find("open",1,true) or lower:find("hatch",1,true))
+					and not lower:find("rebirth",1,true)
+					and not lower:find("shop",1,true)
+					and not lower:find("buy",1,true)
+					and not lower:find("purchase",1,true) then
+					return item,shopNameKey(item.Name)=="opencrystalremote"
+				end
+			end
+		end
+	end
+	return nil,false
+end
+
 local function openCrystalOnce(name)
-	local events=ReplicatedStorage:FindFirstChild("rEvents")
-	local remote=events and events:FindFirstChild("openCrystalRemote")
-	if not remote then return false,"openCrystalRemote не найден" end
-	local resolved=resolveCrystalName(name)
+	local remote,legacy=findCrystalRemote()
+	if not remote then return false,"remote открытия кристаллов не найден" end
+	local amount=tonumber(Runtime.crystalAmount) or 1
+	if amount~=1 and amount~=3 and amount~=10 then
+		return false,"доступно только открытие 1, 3 или 10 кристаллов"
+	end
+	local resolved,entry=resolveCrystalName(name)
+	if resolved==nil or tostring(resolved)=="" then
+		return false,"кристалл не найден в игре"
+	end
+	local action=entry and entry.action or nil
+	if legacy then
+		action=amount==1 and (action or "openCrystal") or "openCrystalBulk"
+	end
 
 	local ok,response=safe(function()
 		if remote:IsA("RemoteFunction") then
-			return remote:InvokeServer("openCrystal",resolved)
-		else
-			remote:FireServer("openCrystal",resolved)
+			if action then
+				if amount>1 then return remote:InvokeServer(action,resolved,amount) end
+				return remote:InvokeServer(action,resolved)
+			end
+			if amount>1 then return remote:InvokeServer(resolved,amount) end
+			return remote:InvokeServer(resolved)
 		end
+		if action then
+			if amount>1 then remote:FireServer(action,resolved,amount)
+			else remote:FireServer(action,resolved) end
+		elseif amount>1 then remote:FireServer(resolved,amount)
+		else remote:FireServer(resolved) end
 	end)
 	if not ok then return false,response,resolved end
 	if response==false then return false,"сервер отклонил открытие кристалла",resolved end
@@ -2076,6 +2446,165 @@ local function openCrystalOnce(name)
 		end
 	end
 	return true,nil,resolved,response
+end
+
+local function findPetSellRemote()
+	local events=ReplicatedStorage:FindFirstChild("rEvents")
+	local remote=events and events:FindFirstChild("sellPetEvent")
+	if remote and (remote:IsA("RemoteEvent") or remote:IsA("RemoteFunction")) then
+		return remote
+	end
+	return nil
+end
+
+local function protectedCleanupName(name)
+	local key=shopNameKey(name)
+	return key:find("apex",1,true)~=nil
+end
+
+local function protectedCleanupPet(item)
+	if not item or protectedCleanupName(item.Name) then return true end
+	for _,field in ipairs({
+		"Equipped","equipped","IsEquipped","isEquipped","equippedValue",
+		"Locked","locked","IsLocked","isLocked","Favorite","favorite",
+		"Favourite","favourite","Protected","protected","Bugged","bugged",
+		"IsBugged","isBugged","Modded","modded","IsModded","isModded",
+		"Evolved","evolved","IsEvolved","isEvolved",
+	}) do
+		local ok,value=safe(function() return item:GetAttribute(field) end)
+		if ok and (value==true or value==1 or tostring(value):lower()=="true"
+			or tostring(value)=="1") then
+			return true
+		end
+		local marker=item:FindFirstChild(field)
+		if marker then
+			ok,value=safe(function() return marker.Value end)
+			if ok and (value==true or value==1 or tostring(value):lower()=="true"
+				or tostring(value)=="1") then
+				return true
+			end
+		end
+	end
+	for _,field in ipairs({"Level","level","PetLevel","petLevel"}) do
+		local ok,value=safe(function() return tonumber(item:GetAttribute(field)) end)
+		if ok and value and value>1 then return true end
+		local marker=item:FindFirstChild(field)
+		if marker then
+			ok,value=safe(function() return tonumber(marker.Value) end)
+			if ok and value and value>1 then return true end
+		end
+	end
+	for _,field in ipairs({"XP","xp","Xp","PetXP","petXP","Experience","experience"}) do
+		local ok,value=safe(function() return tonumber(item:GetAttribute(field)) end)
+		if ok and value and value>0 then return true end
+		local marker=item:FindFirstChild(field)
+		if marker then
+			ok,value=safe(function() return tonumber(marker.Value) end)
+			if ok and value and value>0 then return true end
+		end
+	end
+	local parent=item.Parent
+	for _=1,4 do
+		if not parent or parent==lp then break end
+		local lower=string.lower(tostring(parent.Name or ""))
+		if lower:find("equip",1,true) or lower:find("locked",1,true)
+			or lower:find("favorite",1,true) then return true end
+		parent=parent.Parent
+	end
+	return false
+end
+
+local function cleanupSelectedPets(limit)
+	if not Runtime.petCleanupEnabled then return 0 end
+	local remote=findPetSellRemote()
+	if not remote then return nil,"sellPetEvent не найден" end
+	local folder=lp:FindFirstChild("petsFolder")
+	if not folder then return nil,"инвентарь питомцев не найден" end
+
+	local selected={}
+	for name,enabled in pairs(Runtime.petCleanupTargets or {}) do
+		local key=shopNameKey(name)
+		if enabled and not protectedCleanupName(name) then selected[key]=true end
+	end
+	if next(selected)==nil then return 0 end
+
+	local now=os.clock()
+	Runtime.petCleanupPending=Runtime.petCleanupPending or {}
+	for pet,sentAt in pairs(Runtime.petCleanupPending) do
+		if not pet.Parent or now-sentAt>2 then Runtime.petCleanupPending[pet]=nil end
+	end
+
+	-- Send actual inventory instances from petsFolder/<rarity>/<pet>.
+	local inventory={}
+	for _,group in ipairs(folder:GetChildren()) do
+		if group:IsA("Folder") or group:IsA("Configuration") then
+			for _,pet in ipairs(group:GetChildren()) do
+				if #inventory>=1000 then break end
+				table.insert(inventory,pet)
+			end
+		else
+			table.insert(inventory,group)
+		end
+		if #inventory>=1000 then break end
+	end
+
+	local maxCount=math.min(10,math.max(1,tonumber(limit) or 1))
+	local sold=0
+	local remaining=#inventory
+	for _,pet in ipairs(inventory) do
+		if Runtime.petCleanupPending[pet] then remaining=remaining-1 end
+	end
+	for _,pet in ipairs(inventory) do
+		if sold>=maxCount or remaining<=1 then break end
+		if selected[shopNameKey(pet.Name)] and not Runtime.petCleanupPending[pet]
+			and not protectedCleanupPet(pet) then
+			local ok,result=safe(function()
+				if remote:IsA("RemoteFunction") then
+					return remote:InvokeServer("sellPet",pet)
+				end
+				remote:FireServer("sellPet",pet)
+			end)
+			local rejected=result==false or (type(result)=="table"
+				and (result.success==false or result.Success==false or result.ok==false))
+			if ok and not rejected then
+				Runtime.petCleanupPending[pet]=now
+				Runtime.petCleanupSold=(Runtime.petCleanupSold or 0)+1
+				sold=sold+1
+				remaining=remaining-1
+			end
+		end
+	end
+	return sold
+end
+
+local function startPetCleanupAutomation()
+	if selectedCount(Runtime.petCleanupTargets)==0 then
+		return false,"ВЫБЕРИ ПИТОМЦЕВ ДЛЯ УДАЛЕНИЯ"
+	end
+	if not findPetSellRemote() then return false,"sellPetEvent не найден" end
+	if not lp:FindFirstChild("petsFolder") then return false,"инвентарь питомцев не найден" end
+	Runtime.petCleanupToken=(Runtime.petCleanupToken or 0)+1
+	Runtime.petCleanupEnabled=true
+	local token=Runtime.petCleanupToken
+	task.spawn(function()
+		while Runtime.alive and Runtime.petCleanupEnabled and Runtime.petCleanupToken==token do
+			if not Runtime.networkPaused then
+				local removed,errorMessage=cleanupSelectedPets(10)
+				if removed==nil then
+					Runtime.petCleanupEnabled=false
+					Runtime.petCleanupToken=Runtime.petCleanupToken+1
+					if Runtime.leverRefs.petCleanup then Runtime.leverRefs.petCleanup.Set(false,true) end
+					setStatus("АВТОУДАЛЕНИЕ: "..tostring(errorMessage))
+					return
+				end
+				if removed>0 then
+					setStatus("УДАЛЕНО ИЗ ИНВЕНТАРЯ: "..tostring(Runtime.petCleanupSold))
+				end
+			end
+			task.wait(0.25)
+		end
+	end)
+	return true
 end
 
 local function buyShopItemOnce(name,kind)
@@ -2113,6 +2642,7 @@ local function stopCrystalAutomation(message)
 end
 
 local function startCrystalAutomation(mode)
+	if mode=="crystal" then normalizeCrystalSelection(true) end
 	if mode=="pet" then normalizeShopSelection("pet") end
 	if mode=="aura" then normalizeShopSelection("aura") end
 	local targetName=purchaseTarget(mode)
@@ -2124,31 +2654,52 @@ local function startCrystalAutomation(mode)
 	Runtime.crystalMode=mode
 	Runtime.purchaseAttempts=0
 	local token=Runtime.crystalToken
+	local failedCrystalAttempts=0
 	refreshExtraUI()
-	setStatus((mode=="crystal" and "ОТКРЫТИЕ: " or "ПРЯМАЯ ПОКУПКА: ")..targetName)
+	setStatus((mode=="crystal"
+		and ("ОТКРЫТИЕ ×"..tostring(Runtime.crystalAmount or 1)..": ")
+		or "ПРЯМАЯ ПОКУПКА: ")..targetName)
 
 	task.spawn(function()
 		while Runtime.alive and Runtime.crystalMode==mode and Runtime.crystalToken==token do
+			local delay=0.5
 			if not Runtime.networkPaused then
 				local ok,err,resolved
 				if mode=="crystal" then
+					if Runtime.petCleanupEnabled then
+						local sold,cleanupError=cleanupSelectedPets(Runtime.crystalAmount)
+						if sold==nil then
+							stopCrystalAutomation("АВТОУДАЛЕНИЕ: "..tostring(cleanupError))
+							return
+						end
+						if sold>0 then task.wait(0.12) end
+					end
 					ok,err,resolved=openCrystalOnce(targetName)
 				else
 					ok,err,resolved=buyShopItemOnce(targetName,mode)
 				end
 				if ok then
+					failedCrystalAttempts=0
 					Runtime.purchaseAttempts=Runtime.purchaseAttempts+1
-					local action=mode=="crystal" and "ОТКРЫТИЕ" or "ПОКУПКА"
+					local action=mode=="crystal"
+						and ("ОТКРЫТИЕ ×"..tostring(Runtime.crystalAmount or 1))
+						or "ПОКУПКА"
 					setStatus(action.." #"..Runtime.purchaseAttempts..": "..tostring(resolved))
 				else
 					if mode~="crystal" then
 						stopCrystalAutomation("НЕ КУПЛЕНО: "..tostring(err))
 						return
 					end
-					setStatus("ОШИБКА ПОКУПКИ: "..tostring(err))
+					failedCrystalAttempts=failedCrystalAttempts+1
+					if failedCrystalAttempts>=2 then
+						stopCrystalAutomation("КРИСТАЛЛ ОСТАНОВЛЕН: "..tostring(err))
+						return
+					end
+					setStatus("ОШИБКА КРИСТАЛЛА: "..tostring(err))
+					delay=1.25
 				end
 			end
-			task.wait(0.5)
+			task.wait(delay)
 		end
 	end)
 	return true
@@ -2157,6 +2708,10 @@ end
 local function stopExtraAutomation(message)
 	stopKillAutomation(nil)
 	stopCrystalAutomation(nil)
+	Runtime.petCleanupEnabled=false
+	Runtime.petCleanupToken=(Runtime.petCleanupToken or 0)+1
+	if Runtime.leverRefs.petCleanup then Runtime.leverRefs.petCleanup.Set(false,true) end
+	if Runtime.closeDeleteConfirmation then safe(Runtime.closeDeleteConfirmation) end
 	if message then setStatus(message) end
 end
 
@@ -3504,8 +4059,15 @@ brand.TextColor3=THEME.Accent
 brand.TextSize=12
 
 local title=label(topBar,"ROCK BUG HUB",14,Enum.Font.GothamBold,THEME.Text)
-title.Size=UDim2.new(1,-160,0,20)
+title.Size=UDim2.new(1,-188,0,20)
 title.Position=UDim2.fromOffset(49,5)
+
+local versionLabel=label(topBar,"v"..tostring(DISPLAY_VERSION or "1.0"),8,Enum.Font.GothamBold,THEME.Muted)
+versionLabel.Name="VersionLabel"
+versionLabel.Size=UDim2.fromOffset(32,16)
+versionLabel.Position=UDim2.new(1,-130,0,7)
+versionLabel.TextXAlignment=Enum.TextXAlignment.Right
+versionLabel.TextWrapped=false
 
 local author=label(topBar,"MUSCLE LEGENDS",8,Enum.Font.GothamBold,THEME.Muted)
 author.Size=UDim2.new(1,-155,0,14)
@@ -4302,6 +4864,91 @@ pickerDone.Size=UDim2.new(1,-20,0,34)
 pickerDone.Position=UDim2.new(0,10,1,-42)
 pickerDone.ZIndex=83
 
+local showDeleteConfirmation
+do
+	local confirmationShade=Instance.new("TextButton")
+	confirmationShade.Name="DeleteConfirmation"
+	confirmationShade.Parent=main
+	confirmationShade.Size=UDim2.new(1,0,1,0)
+	confirmationShade.BackgroundColor3=Color3.fromRGB(3,5,12)
+	confirmationShade.BackgroundTransparency=0.10
+	confirmationShade.BorderSizePixel=0
+	confirmationShade.Text=""
+	confirmationShade.AutoButtonColor=false
+	confirmationShade.Visible=false
+	confirmationShade.ZIndex=95
+
+	local confirmationPanel=Instance.new("Frame")
+	confirmationPanel.Parent=confirmationShade
+	confirmationPanel.Size=UDim2.new(1,-40,0,202)
+	confirmationPanel.Position=UDim2.new(0.5,0,0.5,0)
+	confirmationPanel.AnchorPoint=Vector2.new(0.5,0.5)
+	confirmationPanel.BackgroundColor3=THEME.Bg
+	confirmationPanel.BackgroundTransparency=0.02
+	confirmationPanel.BorderSizePixel=0
+	confirmationPanel.ZIndex=96
+	corner(confirmationPanel,13)
+	neonStroke(confirmationPanel,2,0.06)
+	gradient(confirmationPanel,THEME.Panel,THEME.Bg,120)
+
+	local confirmationTitle=label(confirmationPanel,"ВНИМАНИЕ: УДАЛЕНИЕ",11,
+		Enum.Font.GothamBlack,THEME.Danger)
+	confirmationTitle.Size=UDim2.new(1,-22,0,28)
+	confirmationTitle.Position=UDim2.fromOffset(11,8)
+	confirmationTitle.ZIndex=97
+
+	local confirmationText=label(confirmationPanel,"",9,Enum.Font.Gotham,THEME.Text)
+	confirmationText.Size=UDim2.new(1,-22,0,111)
+	confirmationText.Position=UDim2.fromOffset(11,40)
+	confirmationText.TextWrapped=true
+	confirmationText.TextYAlignment=Enum.TextYAlignment.Top
+	confirmationText.ZIndex=97
+
+	local cancelButton=button(confirmationPanel,"ОТМЕНА",THEME.SurfaceAlt)
+	cancelButton.Size=UDim2.new(0.48,-13,0,33)
+	cancelButton.Position=UDim2.new(0,10,1,-43)
+	cancelButton.TextSize=9
+	cancelButton.ZIndex=98
+
+	local confirmButton=button(confirmationPanel,"ПОДТВЕРДИТЬ",THEME.Danger)
+	confirmButton.Size=UDim2.new(0.52,-13,0,33)
+	confirmButton.Position=UDim2.new(0.48,3,1,-43)
+	confirmButton.TextSize=8
+	confirmButton.ZIndex=98
+
+	local pendingSelection=nil
+	local function closeDeleteConfirmation()
+		pendingSelection=nil
+		confirmationShade.Visible=false
+	end
+
+	showDeleteConfirmation=function(selected,onConfirm)
+		local names={}
+		for name,enabled in pairs(selected or {}) do
+			if enabled then table.insert(names,tostring(name)) end
+		end
+		table.sort(names)
+		local visible={}
+		for index=1,math.min(#names,3) do visible[index]=names[index] end
+		local preview=table.concat(visible,", ")
+		if #names>3 then preview=preview.." и ещё "..tostring(#names-3) end
+		confirmationText.Text="Все выбранные питомцы будут удаляться из инвентаря, "
+			.."включая уже имеющихся:\n\n"..preview
+			.."\n\nApex, защищённые и последний питомец останутся."
+		pendingSelection={selected=selected,onConfirm=onConfirm}
+		confirmationShade.Visible=true
+	end
+
+	Runtime.closeDeleteConfirmation=closeDeleteConfirmation
+	addConn(cancelButton.Activated:Connect(closeDeleteConfirmation))
+	addConn(confirmButton.Activated:Connect(function()
+		local pending=pendingSelection
+		if not pending then return end
+		closeDeleteConfirmation()
+		if pending.onConfirm then pending.onConfirm(pending.selected) end
+	end))
+end
+
 local pickerState=nil
 local pickerItems={}
 local pickerItemConnections={}
@@ -4336,19 +4983,21 @@ local function renderPicker(resetScroll)
 		local hay=string.lower(tostring(option.label or "").." "..tostring(option.sub or ""))
 		if query=="" or hay:find(query,1,true) then
 			visibleCount=visibleCount+1
-			local chosen=pickerState.selected[id]==true
+			local disabled=option.disabled==true
+			local chosen=not disabled and pickerState.selected[id]==true
 			local item=button(pickerList,"",chosen and THEME.SurfaceAlt or THEME.Surface)
 			item.Size=UDim2.new(1,-2,0,45)
 			item.LayoutOrder=visibleCount
 			item.ZIndex=83
-			item.BackgroundTransparency=chosen and 0.02 or 0.20
+			item.BackgroundTransparency=disabled and 0.38 or (chosen and 0.02 or 0.20)
 			local itemStroke=item:FindFirstChild("NeonEdge")
 			if itemStroke then
 				itemStroke.Transparency=chosen and 0.02 or 0.66
 				itemStroke.Thickness=chosen and 2 or 1
 			end
 
-			local nameLabel=label(item,option.label,10,Enum.Font.GothamBlack,chosen and THEME.Accent2 or THEME.Text)
+			local nameLabel=label(item,option.label,10,Enum.Font.GothamBlack,
+				disabled and THEME.Muted or (chosen and THEME.Accent2 or THEME.Text))
 			nameLabel.Size=UDim2.new(1,-48,0,20)
 			nameLabel.Position=UDim2.fromOffset(9,3)
 			nameLabel.ZIndex=84
@@ -4356,7 +5005,8 @@ local function renderPicker(resetScroll)
 			subLabel.Size=UDim2.new(1,-48,0,16)
 			subLabel.Position=UDim2.fromOffset(9,23)
 			subLabel.ZIndex=84
-			local marker=label(item,chosen and "ON" or "›",9,Enum.Font.GothamBlack,chosen and THEME.Accent2 or THEME.Muted)
+			local marker=label(item,disabled and "ЗАЩ" or (chosen and "ON" or "›"),
+				disabled and 7 or 9,Enum.Font.GothamBlack,chosen and THEME.Accent2 or THEME.Muted)
 			marker.Size=UDim2.fromOffset(34,45)
 			marker.Position=UDim2.new(1,-40,0,0)
 			marker.TextXAlignment=Enum.TextXAlignment.Center
@@ -4364,6 +5014,7 @@ local function renderPicker(resetScroll)
 
 			local itemConnection=item.Activated:Connect(function()
 				if not pickerState then return end
+				if option.disabled then return end
 				if pickerState.multiple then
 					pickerState.selected[id]=not pickerState.selected[id]
 					renderPicker(false)
@@ -5162,10 +5813,23 @@ killHint.TextXAlignment=Enum.TextXAlignment.Center
 
 normalizeShopSelection("pet")
 normalizeShopSelection("aura")
+do
+	local currentCrystalNames=availableCrystalNames(true)
+	local selectedIsAvailable=false
+	for _,name in ipairs(currentCrystalNames) do
+		if string.lower(name)==string.lower(tostring(Runtime.selectedCrystal or "")) then
+			selectedIsAvailable=true
+			break
+		end
+	end
+	if not selectedIsAvailable and #currentCrystalNames>0 then
+		Runtime.selectedCrystal=currentCrystalNames[1]
+	end
+end
 
-local crystalFeaturePanel,crystalFeatureBody=makeFeaturePanel(crystalPage,"АВТОПОКУПКА",106,3)
+local crystalFeaturePanel,crystalFeatureBody=makeFeaturePanel(crystalPage,"ОТКРЫТИЕ / ПОКУПКА",106,3)
 crystalFeaturePanel.LayoutOrder=2
-local crystalSettingsPanel,crystalSettingsBody=makeSettingsPanel(crystalPage,"ЧТО ПОКУПАТЬ",141)
+local crystalSettingsPanel,crystalSettingsBody=makeSettingsPanel(crystalPage,"ВЫБОР ТОВАРА",211)
 crystalSettingsPanel.LayoutOrder=1
 
 Runtime.leverRefs.crystal={}
@@ -5177,7 +5841,7 @@ local function turnOffOtherCrystalLevers(activeMode)
 end
 
 local crystalLever
-crystalLever=makeFeatureToggle(crystalFeatureBody,"C","КРИСТАЛЛЫ","открывать каждые 0.5 с",false,function(on,api)
+crystalLever=makeFeatureToggle(crystalFeatureBody,"C","АВТОКРИСТАЛЛ","режимы ×1 / ×3 / ×10",false,function(on,api)
 	if on then
 		turnOffOtherCrystalLevers("crystal")
 		if not startCrystalAutomation("crystal") then api.Set(false,true) end
@@ -5186,6 +5850,24 @@ crystalLever=makeFeatureToggle(crystalFeatureBody,"C","КРИСТАЛЛЫ","от
 	end
 end)
 Runtime.leverRefs.crystal.crystal=crystalLever
+
+local petCleanupLever
+petCleanupLever=makeFeatureToggle(crystalFeatureBody,"D","АВТОУДАЛЕНИЕ","только отмеченные питомцы",false,function(on,api)
+	if on then
+		local started,errorMessage=startPetCleanupAutomation()
+		if not started then
+			api.Set(false,true)
+			setStatus("АВТОУДАЛЕНИЕ: "..tostring(errorMessage))
+			return
+		end
+		setStatus("АВТОУДАЛЕНИЕ: только отмеченные питомцы")
+	else
+		Runtime.petCleanupEnabled=false
+		Runtime.petCleanupToken=(Runtime.petCleanupToken or 0)+1
+		setStatus("АВТОУДАЛЕНИЕ: выключено")
+	end
+end)
+Runtime.leverRefs.petCleanup=petCleanupLever
 
 local petLever
 petLever=makeFeatureToggle(crystalFeatureBody,"P","КУПИТЬ ПЕТА","покупка за гемы",false,function(on,api)
@@ -5209,19 +5891,147 @@ auraLever=makeFeatureToggle(crystalFeatureBody,"A","КУПИТЬ АУРУ","по
 end)
 Runtime.leverRefs.crystal.aura=auraLever
 
+local cleanupSelection
+local cleanupSelectionLabel
+local normalizeCleanupSelectionForCrystal
 local crystalSelection
 crystalSelection=makeSelectionRow(crystalSettingsBody,"КРИСТАЛЛ",Runtime.selectedCrystal,function()
 	local options={}
-	for _,name in ipairs(availableCrystalNames()) do
-		table.insert(options,{id=name,label=name,sub="рулетка • открытие каждые 0.5 сек"})
+	for _,name in ipairs(availableCrystalNames(true)) do
+		table.insert(options,{id=name,label=name,sub="кристалл из игры • открытие каждые 0.5 сек"})
 	end
-	openPicker("ВЫБОР КРИСТАЛЛА",options,{
+	openPicker("КРИСТАЛЛЫ ИЗ ИГРЫ",options,{
 		selected={[Runtime.selectedCrystal]=true},
 		onDone=function(option)
 			stopCrystalAutomation(nil)
 			Runtime.selectedCrystal=option.label
+			normalizeCleanupSelectionForCrystal()
 			refreshExtraUI()
 			setStatus("КРИСТАЛЛ: "..Runtime.selectedCrystal)
+		end,
+	})
+end)
+
+local crystalAmountRow=Instance.new("Frame")
+crystalAmountRow.Parent=crystalSettingsBody
+crystalAmountRow.Size=UDim2.new(1,0,0,32)
+crystalAmountRow.BackgroundColor3=THEME.Surface
+crystalAmountRow.BackgroundTransparency=0.20
+crystalAmountRow.BorderSizePixel=0
+corner(crystalAmountRow,7)
+neonStroke(crystalAmountRow,1,0.66)
+
+local crystalAmountTitle=label(crystalAmountRow,"ОТКРЫТЬ",8,Enum.Font.GothamBlack,THEME.Accent2)
+crystalAmountTitle.Size=UDim2.new(0.38,-7,1,0)
+crystalAmountTitle.Position=UDim2.fromOffset(7,0)
+
+local crystalAmountButtons={}
+local function paintCrystalAmount()
+	local selected=tonumber(Runtime.crystalAmount) or 1
+	for amount,choice in pairs(crystalAmountButtons) do
+		local active=amount==selected
+		choice.BackgroundColor3=active and THEME.Success or THEME.SurfaceAlt
+		choice.BackgroundTransparency=active and 0.04 or 0.12
+		choice.TextColor3=active and THEME.Bg or THEME.Text
+		local edge=choice:FindFirstChild("NeonEdge")
+		if edge then
+			edge.Color=active and THEME.Success or THEME.Border
+			edge.Transparency=active and 0.15 or 0.72
+		end
+	end
+end
+
+for index,amount in ipairs({1,3,10}) do
+	local choice=button(crystalAmountRow,"×"..tostring(amount),THEME.SurfaceAlt)
+	choice.Size=UDim2.new(0.19,-3,0,26)
+	choice.Position=UDim2.new(0.39+(index-1)*0.20,0,0,3)
+	choice.TextSize=11
+	crystalAmountButtons[amount]=choice
+	addConn(choice.Activated:Connect(function()
+		Runtime.crystalAmount=amount
+		paintCrystalAmount()
+		setStatus("КРИСТАЛЛЫ: открытие ×"..tostring(amount))
+	end))
+end
+paintCrystalAmount()
+
+cleanupSelectionLabel=function()
+	local count=selectedCount(Runtime.petCleanupTargets)
+	if count==0 then return "ВЫБРАТЬ" end
+	if count==1 then
+		for name,enabled in pairs(Runtime.petCleanupTargets or {}) do
+			if enabled then return name end
+		end
+	end
+	return tostring(count).." выбрано"
+end
+
+normalizeCleanupSelectionForCrystal=function()
+	local allowed={}
+	for _,name in ipairs(crystalPetNames(Runtime.selectedCrystal)) do
+		allowed[shopNameKey(name)]=name
+	end
+	local chosen={}
+	for name,enabled in pairs(Runtime.petCleanupTargets or {}) do
+		local exact=allowed[shopNameKey(name)]
+		if enabled and exact and not protectedCleanupName(exact) then chosen[exact]=true end
+	end
+	Runtime.petCleanupTargets=chosen
+	if selectedCount(chosen)==0 and Runtime.petCleanupEnabled then
+		Runtime.petCleanupEnabled=false
+		Runtime.petCleanupToken=(Runtime.petCleanupToken or 0)+1
+		if Runtime.leverRefs.petCleanup then Runtime.leverRefs.petCleanup.Set(false,true) end
+	end
+end
+normalizeCleanupSelectionForCrystal()
+
+cleanupSelection=makeSelectionRow(crystalSettingsBody,"УДАЛЯТЬ",cleanupSelectionLabel(),function()
+	local options={}
+	local names=crystalPetNames(Runtime.selectedCrystal)
+	if #names==0 then
+		setStatus("ПИТОМЦЫ КРИСТАЛЛА НЕ НАЙДЕНЫ: "..tostring(Runtime.selectedCrystal))
+		return
+	end
+	for _,name in ipairs(names) do
+		local protected=protectedCleanupName(name)
+		table.insert(options,{
+			id=name,
+			label=name,
+			sub=protected and "Apex защищён от удаления"
+				or ("из "..tostring(Runtime.selectedCrystal).." • будет удаляться"),
+			disabled=protected,
+		})
+	end
+	openPicker("ПИТОМЦЫ • "..tostring(Runtime.selectedCrystal),options,{
+		multiple=true,
+		selected=Runtime.petCleanupTargets,
+		onDone=function(selected)
+			local allowed={}
+			for _,name in ipairs(crystalPetNames(Runtime.selectedCrystal)) do
+				allowed[shopNameKey(name)]=name
+			end
+			local chosen={}
+			for name,enabled in pairs(selected or {}) do
+				local exact=allowed[shopNameKey(name)]
+				if enabled and exact and not protectedCleanupName(exact) then chosen[exact]=true end
+			end
+			local function applyCleanupSelection(confirmed)
+				Runtime.petCleanupTargets=confirmed
+				if selectedCount(confirmed)==0 and Runtime.petCleanupEnabled then
+					Runtime.petCleanupEnabled=false
+					Runtime.petCleanupToken=(Runtime.petCleanupToken or 0)+1
+					if Runtime.leverRefs.petCleanup then
+						Runtime.leverRefs.petCleanup.Set(false,true)
+					end
+				end
+				refreshExtraUI()
+				setStatus("АВТОУДАЛЕНИЕ: "..cleanupSelectionLabel())
+			end
+			if selectedCount(chosen)==0 then
+				applyCleanupSelection(chosen)
+				return
+			end
+			showDeleteConfirmation(chosen,applyCleanupSelection)
 		end,
 	})
 end)
@@ -5272,6 +6082,8 @@ Runtime.refreshExtraUI=function()
 	whiteSelection.Set(selectedCount(Runtime.killWhitelist).." игроков")
 	blackSelection.Set(selectedCount(Runtime.killBlacklist).." игроков")
 	crystalSelection.Set(Runtime.selectedCrystal)
+	paintCrystalAmount()
+	cleanupSelection.Set(cleanupSelectionLabel())
 	petSelection.Set(Runtime.selectedPet or "ВЫБРАТЬ")
 	auraSelection.Set(Runtime.selectedAura or "ВЫБРАТЬ")
 end
