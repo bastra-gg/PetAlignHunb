@@ -1,6539 +1,2965 @@
--- RockBugHub v20 Validated Compact + AutoKill/Shop + Mobile patch
--- Clean rebuild: single scheduler, hard stop, adaptive network throttle.
--- No getgc patching, no full workspace scans inside fast loops, no unknown train remote spam.
-
-local Players=game:GetService("Players")
-local ReplicatedStorage=game:GetService("ReplicatedStorage")
-local RunService=game:GetService("RunService")
-local Stats=game:GetService("Stats")
-local VirtualUser=game:GetService("VirtualUser")
-local UserInputService=game:GetService("UserInputService")
-local StarterGui=game:GetService("StarterGui")
-local NetworkClient=nil
-pcall(function() NetworkClient=game:GetService("NetworkClient") end)
-
--- Delta/auto-execute can run before the client has finished creating LocalPlayer.
-if not game:IsLoaded() then
-	game.Loaded:Wait()
-end
-
-local lp=Players.LocalPlayer
-while not lp do
-	task.wait()
-	lp=Players.LocalPlayer
-end
-
-local playerGui=lp:WaitForChild("PlayerGui",60)
-if not playerGui then
-	warn("[RockBugHub] PlayerGui was not created")
-	pcall(function()
-		StarterGui:SetCore("SendNotification",{
-			Title="RockBugHub",
-			Text="Ошибка запуска: PlayerGui не найден",
-			Duration=8,
-		})
-	end)
-	return
-end
-
-pcall(function()
-	StarterGui:SetCore("SendNotification",{
-		Title="RockBugHub",
-		Text="Скрипт загружен, создаю интерфейс...",
-		Duration=3,
-	})
-end)
-
-local HUB_VERSION="RockBugHub_v20_ValidatedCompact"
-local DISPLAY_VERSION="1.5"
-
-local ENV=(type(getgenv)=="function" and getgenv()) or _G
-
--- Stop previous clean-runtime build.
-pcall(function()
-	if ENV.RockBugRuntime and type(ENV.RockBugRuntime.Stop)=="function" then
-		ENV.RockBugRuntime:Stop("replaced")
-	end
-end)
-
--- Remove old windows only. No invasive getgc scan.
-pcall(function()
-	for _,g in ipairs(playerGui:GetChildren()) do
-		if g:IsA("ScreenGui") and tostring(g.Name):find("RockBugHub",1,true) then
-			g:Destroy()
-		end
-	end
-end)
-
-local Runtime={
-	alive=true,
-	mode=nil,              -- nil / "bug" / "train"
-	modeToken=0,
-	connections={},
-	selectedTrain=nil,
-	selectedRock=nil,
-	autoRockSelection=true,
-	petGradeIndex=5,
-	lastAutoRockRebs=nil,
-	autoRockReason=nil,
-	autoRebirth=false,
-	rebirthInFlight=false,
-	rebirthToken=0,
-	rebirthGoalEnabled=false,
-	rebirthGoal=100,
-	rebirthGoalCurrent=nil,
-	rebirthGoalCompleted=false,
-	rebirthGoalAwaitingFrom=nil,
-	rebirthGoalAwaitingSince=0,
-	rebirthGoalAwaitingUntil=0,
-	rebirthGoalReadFailures=0,
-	rebirthGoalStatusAt=0,
-	rebirthCounter=nil,
-	rebirthCounterSource=nil,
-	rebirthCounterExact=false,
-	rebirthCounterWatched=nil,
-	rebirthCounterConn=nil,
-	autoSize=false,
-	sizeTarget=1,
-	sizeInFlight=false,
-	kingLock=false,
-	kingCF=nil,
-	kingRoot=nil,
-	kingSavedAnchored=nil,
-	kingPresenceInFlight=false,
-	kingPresenceToken=0,
-	kingTriggerPart=nil,
-	kingTouchTrigger=nil,
-	kingTouchContacts={},
-	kingHoldPosition=nil,
-	kingHoldGyro=nil,
-	nextKingTouchPulse=0,
-	lockRock=false,
-	lockPosition=false,
-	lockCF=nil,
-	positionCF=nil,
-	activeTool=nil,
-	nextAction=0,
-	nextEquip=0,
-	nextNearCheck=0,
-	nextPosTick=0,
-	nextRebirth=0,
-	nextSize=0,
-	nextKingTick=0,
-	nextNetUpdate=0,
-	nextCooldownSweep=0,
-	punchCycle=0,
-	pingMs=0,
-	pingAvailable=false,
-	netGuardEnabled=true,
-	autoWifiHold=true,
-	networkPaused=false,
-	manualNetworkHold=false,
-	networkState="HEALTHY",
-	networkBadSamples=0,
-	networkGoodSamples=0,
-	networkHoldSince=0,
-	networkLastGoodAt=os.clock(),
-	networkProbeDeadline=os.clock()+5,
-	networkProbeUnsupported=false,
-	networkReason=nil,
-	networkRecoveries=0,
-	networkHoldRoot=nil,
-	networkHoldCF=nil,
-	networkHoldSavedAnchored=nil,
-	nextNetworkHoldTick=0,
-	networkReplicatorSeen=false,
-	networkReplicatorMissingSince=nil,
-	networkHttpSupported=false,
-	networkHttpProbeInFlight=false,
-	networkHttpProbeStartedAt=0,
-	networkHttpProbeGeneration=0,
-	networkHttpLastSuccess=os.clock(),
-	networkHttpLastFinish=0,
-	networkTrafficLastSeen=os.clock(),
-	networkHttpBadSamples=0,
-	networkHttpRequiredRecovery=false,
-	nextNetworkHttpProbe=0,
-	transientFailures={},
-	respawnGeneration=0,
-	autoResumeAfterRespawn=true,
-	schedulerRestarts=0,
-	remoteTokens=0,
-	remoteLastRefill=os.clock(),
-	remoteSentWindow=0,
-	remoteWindowStart=os.clock(),
-	remotePps=0,
-	directRemoteEnabled=true,
-	antiAfkEnabled=true,
-	visualLow=false,
-	visualSaved={},
-	killMode="off",
-	killToken=0,
-	killWhitelist={},
-	killBlacklist={},
-	crystalMode="off",
-	crystalToken=0,
-	crystalCatalog={},
-	crystalNames={},
-	crystalCatalogAt=nil,
-	crystalPetCache={},
-	crystalAmount=1,
-	petCleanupEnabled=false,
-	petCleanupTargets={["Core Pup"]=true,["Volt Talon"]=true},
-	petCleanupPending={},
-	petCleanupSold=0,
-	petCleanupToken=0,
-	purchaseAttempts=0,
-	selectedCrystal="Blue Crystal",
-	selectedPet=nil,
-	selectedAura=nil,
-	characterCollisionSaved={},
-	characterLockSaved=nil,
-	lastSchedulerTick=0,
-	lastError=nil,
-	status="ready",
-	ui=nil,
-	leverRefs={},
-}
-
-ENV.RockBugRuntime=Runtime
-
--- Fallbacks are used only until the current shop replicates. Live shop folders
--- and their nested rarity/category folders are inspected on every selection,
--- so newly released pets appear with their real in-game names automatically.
-local FALLBACK_SHOP_PETS={
-	"Orange Hedgehog","Blue Birdie","Red Kitty","Blue Bunny","Dark Vampy",
-	"Silver Dog","Dark Golem","Green Butterfly","Crimson Falcon",
-	"Yellow Butterfly","Purple Dragon","Orange Pegasus","Blue Pheonix",
-	"Red Dragon","Purple Falcon","Blue Firecaster","Golden Pheonix",
-	"Red Firecaster","White Pegasus","Infernal Dragon","Green Firecaster",
-	"White Pheonix","Magic Butterfly","Ultra Birdie","Frostwave Legends Penguin",
-	"Phantom Genesis Dragon","Dark Legends Manticore","Ultimate Supernova Pegasus",
-	"Aether Spirit Bunny","Cybernetic Showdown Dragon","Eternal Strike Leviathan",
-	"Lighting Strike Phantom","Darkstar Hunter","Golden Viking","Muscle Sensei",
-	"Neon Guardian","Core Pup","Volt Talon","Reactor Beast",
-	"Plasma Ravager","Titan Reactor","Apex Overlord",
-}
-
--- Only verified update names are listed here. Other new pets are read from
--- replicated definitions and the game's own shop instead of being invented.
-local SHOP_UPDATE_PETS={
-	"Core Pup","Volt Talon","Reactor Beast",
-	"Plasma Ravager","Titan Reactor","Apex Overlord",
-}
-local SHOP_UPDATE_PET_NAME_SET={}
-for _,name in ipairs(SHOP_UPDATE_PETS) do
-	SHOP_UPDATE_PET_NAME_SET[string.lower(name)]=true
-end
-
-local FALLBACK_SHOP_AURAS={
-	"Astral Electro","Azure Tundra","Blue Aura","Dark Electro","Dark Lightning","Dark Storm",
-	"Electro","Enchanted Mirage","Entropic Blast","Eternal Megastrike","Grand Supernova",
-	"Green Aura","Inferno","Lightning","Muscle King","Power Lightning","Purple Aura",
-	"Purple Nova","Red Aura","Supernova","Ultra Inferno","Ultra Mirage","Unstable Mirage",
-	"Yellow Aura",
-}
-
--- Most direct-shop aura object names do not contain the word "Aura". Keep an
--- exact-name lookup so they are not incorrectly mixed into the pet selector.
-local SHOP_AURA_NAME_SET={}
-for _,name in ipairs(FALLBACK_SHOP_AURAS) do
-	SHOP_AURA_NAME_SET[string.lower(name)]=true
-end
-
-local SHOP_KNOWN_PET_NAME_SET={}
-for _,name in ipairs(FALLBACK_SHOP_PETS) do
-	local key=string.lower(name)
-	if not SHOP_UPDATE_PET_NAME_SET[key] then
-		SHOP_KNOWN_PET_NAME_SET[key]=true
-	end
-end
-
-local FALLBACK_CRYSTALS={
-	"Blue Crystal","Green Crystal","Frost Crystal","Mythical Crystal",
-	"Inferno Crystal","Legends Crystal","Muscle Elite Crystal",
-	"Galaxy Oracle Crystal","Dark Nebula Crystal","Sky Eclipse Crystal","Jungle Crystal",
-	"Industrial Crystal",
-}
-
--- Pet-only contents for crystals whose names are stable. Auras are deliberately
--- excluded: the cleanup picker must only show pets from the selected crystal.
-local CRYSTAL_PET_NAMES={
-	["bluecrystal"]={
-		"Orange Hedgehog","Blue Birdie","Red Kitty","Blue Bunny","Dark Vampy",
-	},
-	["greencrystal"]={
-		"Silver Dog","Dark Golem","Green Butterfly","Crimson Falcon",
-	},
-	["frostcrystal"]={
-		"Yellow Butterfly","Purple Dragon","Orange Pegasus","Blue Pheonix",
-	},
-	["frozencrystal"]={
-		"Yellow Butterfly","Purple Dragon","Orange Pegasus","Blue Pheonix",
-	},
-	["mythicalcrystal"]={
-		"Red Dragon","Purple Falcon","Blue Firecaster","Golden Pheonix",
-	},
-	["infernocrystal"]={
-		"Red Firecaster","White Pegasus","Golden Pheonix","Infernal Dragon",
-	},
-	["legendscrystal"]={
-		"Green Firecaster","White Pheonix","Magic Butterfly","Ultra Birdie",
-	},
-	["muscleelitecrystal"]={
-		"Frostwave Legends Penguin","Phantom Genesis Dragon","Dark Legends Manticore",
-		"Ultimate Supernova Pegasus","Aether Spirit Bunny","Cybernetic Showdown Dragon",
-	},
-	["galaxyoraclecrystal"]={
-		"Eternal Strike Leviathan","Lighting Strike Phantom","Darkstar Hunter",
-	},
-	["junglecrystal"]={
-		"Golden Viking","Muscle Sensei","Neon Guardian",
-	},
-	["industrialcrystal"]={
-		"Core Pup","Volt Talon","Reactor Beast","Plasma Ravager","Titan Reactor","Apex Overlord",
-	},
-}
-
-Runtime.selectedPet="Muscle King"
-Runtime.selectedAura="Muscle King"
-
-local function safe(fn)
-	local ok,res=pcall(fn)
-	return ok,res
-end
-
-local function shopPrice(item)
-	if not item then return nil end
-	for _,field in ipairs({"priceValue","Price","price","Cost","cost","GemPrice","gemPrice","gemsCost"}) do
-		local value=item:FindFirstChild(field)
-		if value then
-			local ok,price=safe(function() return tonumber(value.Value) end)
-			if ok and price then return price end
-		end
-		local ok,price=safe(function() return tonumber(item:GetAttribute(field)) end)
-		if ok and price then return price end
-	end
-	local value=item:FindFirstChild("priceValue",true)
-	if not value then return nil end
-	local ok,price=safe(function() return tonumber(value.Value) end)
-	return ok and price or nil
-end
-
-local function shopNameKey(name)
-	return string.lower(tostring(name or "")):gsub("<[^>]+>",""):gsub("[^%w]","")
-end
-
-local function shopDisplayName(item)
-	if not item then return nil end
-	for _,field in ipairs({
-		"DisplayName","displayName","PetName","petName","ItemName","itemName","Title","title",
-	}) do
-		local ok,value=safe(function() return item:GetAttribute(field) end)
-		if ok and type(value)=="string" and value:match("%S") then return value end
-		local child=item:FindFirstChild(field)
-		if child then
-			ok,value=safe(function() return child.Value end)
-			if ok and type(value)=="string" and value:match("%S") then return value end
-		end
-	end
-	local name=tostring(item.Name or "")
-	if item:IsA("StringValue") and (
-		name:lower()=="name" or name:lower()=="petname" or name:lower()=="displayname"
-	) then
-		local ok,value=safe(function() return item.Value end)
-		if ok and type(value)=="string" and value:match("%S") then return value end
-	end
-	return name
-end
-
-local function isAuraShopItem(item)
-	if not item then return false end
-	local name=string.lower(tostring(shopDisplayName(item) or item.Name))
-	if SHOP_AURA_NAME_SET[name] then return true end
-	-- All current direct-shop auras expose this marker, including the 19 whose
-	-- object names do not contain "Aura". Its presence is the type signal; the
-	-- stored BoolValue itself is false in the live catalog.
-	if item:FindFirstChild("isPowerUp",true) then return true end
-	if string.find(name,"aura",1,true) or string.find(name,"trail",1,true) then
-		return true
-	end
-	if item:IsA("Trail") or item:FindFirstChildWhichIsA("Trail",true) then
-		return true
-	end
-	for _,attributeName in ipairs({"Type","ItemType","Category"}) do
-		local ok,value=safe(function() return item:GetAttribute(attributeName) end)
-		if ok and type(value)=="string" then
-			local lower=string.lower(value)
-			if string.find(lower,"aura",1,true) or string.find(lower,"trail",1,true) then
-				return true
-			end
-		end
-	end
-	return false
-end
-
-local function shopContainers()
-	local result={}
-	local seen={}
-	local searched={}
-	local function remember(item)
-		if item and not seen[item] and not item:IsA("RemoteEvent") and not item:IsA("RemoteFunction")
-			and not item:IsA("LocalScript") and not item:IsA("ModuleScript") then
-			seen[item]=true
-			table.insert(result,item)
-		end
-	end
-
-	for _,name in ipairs({
-		"cPetShopFolder","petShopFolder","PetShopFolder","petShop","PetShop",
-		"shopPets","ShopPets","petShopItems","PetShopItems","petShopCatalog",
-		"PetShopCatalog","petDefinitions","PetDefinitions","petData","PetData",
-		"petsFolder","PetsFolder","petFolder","PetFolder","Pets","pets",
-		"petModels","PetModels","petAssets","PetAssets","petChances","PetChances",
-		"crystalChances","CrystalChances","eggChances","EggChances",
-		"apexPets","ApexPets","apexShop","ApexShop","apexPetShop","ApexPetShop",
-	}) do
-		remember(ReplicatedStorage:FindFirstChild(name))
-	end
-
-	local function search(parent,depth)
-		if not parent or searched[parent] or depth>4 then return end
-		searched[parent]=true
-		for _,child in ipairs(parent:GetChildren()) do
-			if not child:IsA("RemoteEvent") and not child:IsA("RemoteFunction")
-				and not child:IsA("LocalScript") and not child:IsA("ModuleScript") then
-				local lower=string.lower(tostring(child.Name))
-				local product=lower:find("pet",1,true) or lower:find("aura",1,true)
-					or lower:find("trail",1,true) or lower:find("apex",1,true)
-					or lower:find("chance",1,true)
-				local branch=product or lower:find("shop",1,true) or lower:find("shared",1,true)
-					or lower:find("asset",1,true) or lower:find("data",1,true)
-					or lower:find("catalog",1,true) or lower:find("definition",1,true)
-					or lower:find("item",1,true) or lower:find("storage",1,true)
-					or lower:find("module",1,true) or lower:find("game",1,true)
-				if (product or lower:find("shop",1,true))
-					and (child:IsA("Folder") or child:IsA("Configuration")) then
-					remember(child)
-				end
-				if branch then search(child,depth+1) end
-			end
-		end
-	end
-	search(ReplicatedStorage,1)
-	return result
-end
-
-local function isShopCategory(item)
-	if not item then return false end
-	local name=string.lower(tostring(item.Name))
-	if name=="pets" or name=="pet" or name=="auras" or name=="aura"
-		or name=="trails" or name=="items" or name=="shop" or name=="catalog"
-		or name=="basic" or name=="advanced" or name=="rare" or name=="epic"
-		or name=="unique" or name=="legendary" or name=="mythical"
-		or name=="mythic" or name=="secret" or name=="limited" or name=="new"
-		or name=="apex" or name=="eggs" or name=="crystals" or name=="chances" then
-		return true
-	end
-	if not item:IsA("Folder") and not item:IsA("Configuration") then return false end
-	local displayName=string.lower(tostring(shopDisplayName(item) or name))
-	if SHOP_KNOWN_PET_NAME_SET[displayName] or SHOP_AURA_NAME_SET[displayName]
-		or SHOP_UPDATE_PET_NAME_SET[displayName] or displayName~=name then return false end
-	for _,field in ipairs({"priceValue","Price","price","Cost","cost","GemPrice","gemPrice","gemsCost"}) do
-		if item:FindFirstChild(field) then return false end
-		local ok,value=safe(function() return item:GetAttribute(field) end)
-		if ok and value~=nil then return false end
-	end
-	for _,child in ipairs(item:GetChildren()) do
-		if shopPrice(child)~=nil or child:IsA("Folder") or child:IsA("Model") then return true end
-	end
-	return false
-end
-
-local function shopCatalog(kind)
-	local result={}
-	local seen={}
-	local function add(name,item,price)
-		name=tostring(name or ""):gsub("^%s+",""):gsub("%s+$","")
-		local key=shopNameKey(name)
-		if name=="" or key=="" or seen[key] then return end
-		seen[key]=true
-		table.insert(result,{
-			name=name,
-			price=price,
-			item=item,
-			id=item and tostring(item.Name) or nil,
-			isNew=kind=="pet" and not SHOP_KNOWN_PET_NAME_SET[string.lower(name)],
-		})
-	end
-	local function inspect(folder,depth,inheritedKind)
-		if not folder or depth>6 then return end
-		for _,item in ipairs(folder:GetChildren()) do
-			if not item:IsA("RemoteFunction") and not item:IsA("RemoteEvent")
-				and not item:IsA("LocalScript") and not item:IsA("ModuleScript")
-				and not item:IsA("IntValue") and not item:IsA("NumberValue")
-				and not item:IsA("BoolValue") then
-				if isShopCategory(item) then
-					local lower=string.lower(tostring(item.Name))
-					local nextKind=(lower:find("aura",1,true) or lower:find("trail",1,true)) and "aura"
-						or ((lower:find("pet",1,true) or lower=="apex") and "pet" or inheritedKind)
-					inspect(item,depth+1,nextKind)
-				else
-					local actual=item
-					if item:IsA("ObjectValue") then
-						local ok,value=safe(function() return item.Value end)
-						if ok and value then actual=value end
-					end
-					local name=shopDisplayName(actual)
-					local aura=inheritedKind=="aura" or (inheritedKind~="pet" and isAuraShopItem(actual))
-					if ((kind=="aura" and aura) or (kind=="pet" and not aura)) then
-						add(name,actual,shopPrice(actual) or shopPrice(item))
-					end
-				end
-			end
-		end
-	end
-
-	for _,folder in ipairs(shopContainers()) do
-		local lower=string.lower(tostring(folder.Name))
-		inspect(folder,1,(lower:find("aura",1,true) or lower:find("trail",1,true)) and "aura" or nil)
-	end
-
-	if kind=="pet" and playerGui then
-		for _,node in ipairs(playerGui:GetDescendants()) do
-			if node:IsA("TextLabel") or node:IsA("TextButton") then
-				local insideOwnWindow=false
-				local shopContext=false
-				local parent=node
-				for _=1,10 do
-					if not parent then break end
-					if parent==Runtime.uiRoot then insideOwnWindow=true break end
-					local parentName=string.lower(tostring(parent.Name or ""))
-					if parentName:find("pet",1,true) or parentName:find("shop",1,true)
-						or parentName:find("apex",1,true) or parentName:find("crystal",1,true)
-						or parentName:find("egg",1,true) then shopContext=true end
-					parent=parent.Parent
-				end
-				if not insideOwnWindow then
-					local ok,label=safe(function() return tostring(node.Text or "") end)
-					if ok then
-						label=label:gsub("<[^>]+>","")
-						for line in label:gmatch("[^\r\n]+") do
-							local candidate=line:match("([Aa][Pp][Ee][Xx]%s+[A-Za-z][A-Za-z%s'%-]*)")
-							if not candidate and shopContext then
-								local fieldName=string.lower(tostring(node.Name or ""))
-								if fieldName:find("petname",1,true) or fieldName:find("displayname",1,true)
-									or fieldName:find("itemname",1,true) or fieldName=="title"
-									or fieldName=="name" then
-									candidate=line:match("^%s*([A-Za-z][A-Za-z%s'%-]+)%s*$")
-								end
-							end
-							if candidate then
-								candidate=candidate:gsub("%s+$","")
-								local lower=string.lower(candidate)
-								local _,spaces=candidate:gsub("%s+","")
-								if #candidate<=48 and spaces>=1 and spaces<=4
-									and not SHOP_AURA_NAME_SET[lower]
-									and not lower:find("crystal",1,true)
-									and not lower:find(" shop",1,true) and not lower:find(" pets",1,true)
-									and not lower:find(" egg",1,true) and not lower:find(" rarity",1,true)
-									and not lower:find(" gems",1,true) and not lower:find(" buy",1,true)
-									and not lower:find(" purchase",1,true) and not lower:find(" inventory",1,true)
-									and not lower:find(" chance",1,true) and not lower:find(" level",1,true) then
-									add(candidate,nil,nil)
-								end
-							end
-						end
-					end
-				end
-			end
-		end
-	end
-
-	local fallback=kind=="aura" and FALLBACK_SHOP_AURAS or FALLBACK_SHOP_PETS
-	for _,name in ipairs(fallback) do
-		add(name,nil,nil)
-	end
-	if kind=="pet" then
-		for _,name in ipairs(SHOP_UPDATE_PETS) do
-			add(name,nil,nil)
-		end
-	end
-
-	table.sort(result,function(a,b)
-		if a.isNew~=b.isNew then return a.isNew==true end
-		local ap=a.price or math.huge
-		local bp=b.price or math.huge
-		if ap==bp then return string.lower(a.name)<string.lower(b.name) end
-		return ap<bp
-	end)
-	return result
-end
-
-local function findShopItem(name,kind)
-	local wanted=shopNameKey(name)
-	if wanted=="" then return nil end
-	for _,entry in ipairs(shopCatalog(kind or "pet")) do
-		if (shopNameKey(entry.name)==wanted or shopNameKey(entry.id)==wanted)
-			and entry.item and entry.item.Parent then
-			return entry.item,entry
-		end
-	end
-	if not kind then
-		for _,entry in ipairs(shopCatalog("aura")) do
-			if (shopNameKey(entry.name)==wanted or shopNameKey(entry.id)==wanted)
-				and entry.item and entry.item.Parent then
-				return entry.item,entry
-			end
-		end
-	end
-	local direct=ReplicatedStorage:FindFirstChild(tostring(name or ""),true)
-	if direct and direct.Parent and (not kind or (kind=="aura")==isAuraShopItem(direct)) then
-		return direct,{name=shopDisplayName(direct),id=tostring(direct.Name),item=direct}
-	end
-	return nil
-end
-
-local function formatShopPrice(price)
-	if not price then return "цена из игры" end
-	local text=tostring(math.floor(price+0.5))
-	local formatted=text:reverse():gsub("(%d%d%d)","%1 "):reverse():gsub("^ ","")
-	return formatted.." гемов"
-end
-
-local function normalizeShopSelection(kind)
-	local key=kind=="aura" and "selectedAura" or "selectedPet"
-	local current=Runtime[key]
-	local catalog=shopCatalog(kind)
-	for _,entry in ipairs(catalog) do
-		if entry.name==current then return current end
-	end
-	Runtime[key]=catalog[1] and catalog[1].name or nil
-	return Runtime[key]
-end
-
-local function addConn(c)
-	if c then
-		table.insert(Runtime.connections,c)
-	end
-	return c
-end
-
-local function disconnectAll()
-	for _,c in ipairs(Runtime.connections) do
-		safe(function() c:Disconnect() end)
-	end
-	Runtime.connections={}
-end
-
-local function char()
-	return lp.Character
-end
-
-local function hum()
-	local c=char()
-	return c and c:FindFirstChildWhichIsA("Humanoid")
-end
-
-local function root()
-	local c=char()
-	return c and c:FindFirstChild("HumanoidRootPart")
-end
-
-local function setStatus(text)
-	Runtime.status=tostring(text or "")
-	if Runtime.ui and Runtime.ui.status and Runtime.ui.status.Parent then
-		Runtime.ui.status.Text=Runtime.status
-	end
-end
-
-local function formatServerDuration(value)
-	local seconds=math.max(0,math.floor(tonumber(value) or 0))
-	local days=math.floor(seconds/86400)
-	seconds=seconds%86400
-	local hours=math.floor(seconds/3600)
-	local minutes=math.floor((seconds%3600)/60)
-	local secs=seconds%60
-	if days>0 then
-		return ("%dд %02d:%02d:%02d"):format(days,hours,minutes,secs)
-	end
-	return ("%02d:%02d:%02d"):format(hours,minutes,secs)
-end
-
-local function observedServerAge()
-	-- Roblox does not replicate the real server process uptime to LocalScripts.
-	-- On a freshly opened VIP server this connection timer is the closest safe
-	-- estimate because the owner normally creates the instance with the first join.
-	local ok,value=safe(function() return workspace.DistributedGameTime end)
-	if ok and type(value)=="number" and value==value and value>=0 then
-		return value
-	end
-	return nil
-end
-
-local function setNetText()
-	if Runtime.ui and Runtime.ui.uptime and Runtime.ui.uptime.Parent then
-		local age=observedServerAge()
-		local isVip=tostring(game.PrivateServerId or "")~=""
-		local prefix=isVip and "VIP-СЕРВЕР ~ " or "В СЕРВЕРЕ "
-		Runtime.ui.uptime.Text=prefix..(age and formatServerDuration(age) or "--:--:--")
-	end
-
-	if Runtime.ui and Runtime.ui.net and Runtime.ui.net.Parent then
-		local pingText=Runtime.pingAvailable and tostring(math.floor((Runtime.pingMs or 0)+0.5)).."ms" or "?"
-		if Runtime.networkPaused then
-			local held=math.max(0,os.clock()-(Runtime.networkHoldSince or os.clock()))
-			Runtime.ui.net.Text=("СЕТЬ: ПАУЗА %.1fs | %s"):format(held,pingText)
-		elseif Runtime.networkProbeUnsupported then
-			Runtime.ui.net.Text=("СЕТЬ: ОГРАНИЧЕНО | УДАР %.1f/s"):format(Runtime.remotePps or 0)
-		else
-			Runtime.ui.net.Text=("PING %s | УДАР %.1f/s"):format(pingText,Runtime.remotePps or 0)
-		end
-	end
-end
-
--- ---------- ROCK DATA ----------
-
-local ROCKS={
-	{id="AncientJungle",label="Древний лес",req=10000000,mult=16.25},
-	{id="MuscleKing",label="Король мышц",req=5000000,mult=12.5},
-	{id="Legends",label="Легенды",req=1000000,mult=2.5},
-	{id="Inferno",label="Инферно",req=750000,mult=1.125},
-	{id="Mystic",label="Мистический",req=400000,mult=0.75},
-	{id="Frozen",label="Ледяной",req=150000,mult=0.375},
-	{id="Golden",label="Золотой",req=5000,mult=0.2},
-	{id="Large",label="Большой",req=100,mult=0.075},
-	{id="Punching",label="Пробивной",req=10,mult=0.05},
-	{id="Tiny",label="Маленький",req=0,mult=0.025},
-}
-
-local rockCache={}
-
-local function valOf(v)
-	if not v then return nil end
-	local ok,res=pcall(function() return v.Value end)
-	if not ok then return nil end
-	return tonumber(res)
-end
-
-local function hasHands(obj)
-	if not obj then return false end
-	return obj:FindFirstChild("LeftHand",true)~=nil and obj:FindFirstChild("RightHand",true)~=nil
-end
-
-local function findRockModelFromValue(valueObj)
-	local p=valueObj
-	for _=1,8 do
-		if not p or p==workspace then break end
-		if hasHands(p) then return p end
-		p=p.Parent
-	end
-
-	p=valueObj
-	for _=1,8 do
-		if not p or p==workspace then break end
-		if p:IsA("Model") then return p end
-		p=p.Parent
-	end
-
-	return valueObj.Parent
-end
-
-local function biggestPart(obj)
-	if not obj then return nil end
-	if obj:IsA("BasePart") then return obj end
-
-	local best=nil
-	local bestVol=-1
-
-	for _,d in ipairs(obj:GetDescendants()) do
-		if d:IsA("BasePart") then
-			local vol=d.Size.X*d.Size.Y*d.Size.Z
-			if vol>bestVol then
-				bestVol=vol
-				best=d
-			end
-		end
-	end
-
-	return best
-end
-
-local function scanRocks()
-	local found={}
-	local descendants=workspace:GetDescendants()
-
-	for i,v in ipairs(descendants) do
-		if tostring(v.Name)=="neededDurability" then
-			local req=valOf(v)
-
-			if req~=nil then
-				local model=findRockModelFromValue(v)
-				local body=biggestPart(model)
-				local left=model and model:FindFirstChild("LeftHand",true)
-				local right=model and model:FindFirstChild("RightHand",true)
-				local hit=right or left or body
-
-				if body or hit then
-					-- If duplicates exist, prefer the one with actual hands.
-					local current=found[req]
-					local better=(not current) or (hasHands(model) and not hasHands(current.model))
-
-					if better then
-						found[req]={
-							req=req,
-							model=model,
-							body=body,
-							hit=hit,
-							left=left,
-							right=right,
-							name=model and model.Name or "?",
-						}
-					end
-				end
-			end
-		end
-
-		-- Do not hold the client for the whole scan on large maps.
-		if i%800==0 then task.wait() end
-	end
-
-	rockCache=found
-	return found
-end
-
-local function getRockInfo(row)
-	if not row then return nil end
-	return rockCache[row.req]
-end
-
--- ---------- REBIRTH READER / AUTO ROCK ----------
-
-local function parseCompactNumber(text)
-	local s=tostring(text or ""):lower()
-	s=s:gsub("%s+"," ")
-
-	-- Number + optional suffix immediately after the number.
-	local raw,suffix=s:match("([%d][%d,%.]*)%s*([kmbt]?)")
-	if not raw then return nil end
-
-	-- Support decimal comma (1,5K), but keep 1,000 and 1,000,000 as grouped integers.
-	if not raw:find(".",1,true) and raw:match("^%d+,%d%d?$") then
-		raw=raw:gsub(",",".")
-	else
-		raw=raw:gsub(",","")
-	end
-	local n=tonumber(raw)
-	if not n then return nil end
-
-	local mult={k=1e3,m=1e6,b=1e9,t=1e12}
-	if suffix~="" then
-		n=n*(mult[suffix] or 1)
-	end
-
-	return math.floor(n+0.5)
-end
-
-local function looksLikeRebirthName(s)
-	s=tostring(s or ""):lower()
-	return s:find("rebirth",1,true)
-		or s:find("rebs",1,true)
-		or s:find("реб",1,true)
-		or s:find("перерожд",1,true)
-end
-
-local function readRebirthValue(object)
-	if not object or not object.Parent then return nil end
-	local ok,value=pcall(function() return object.Value end)
-	if not ok then return nil end
-	return tonumber(value) or parseCompactNumber(value)
-end
-
-local function rebirthCounterNameScore(name)
-	local text=tostring(name or ""):lower():gsub("[%s_%-]","")
-	if text:find("cost",1,true) or text:find("price",1,true)
-		or text:find("need",1,true) or text:find("require",1,true) then
-		return 0
-	end
-	if text=="rebirths" or text=="rebirth" or text=="rebs"
-		or text=="ребирты" or text=="ребы" or text=="перерождения" then
-		return 3
-	end
-	return looksLikeRebirthName(text) and 1 or 0
-end
-
-local function isExactRebirthCounterObject(object,score)
-	if not object or not object.Parent or (tonumber(score) or 0)<3 then return false end
-	if not (object:IsA("IntValue") or object:IsA("NumberValue") or object:IsA("StringValue")) then return false end
-	local ok,raw=pcall(function() return object.Value end)
-	if not ok then return false end
-	local number=tonumber(raw)
-	return number~=nil and number==number and number~=math.huge and number~=-math.huge
-		and number>=0 and math.abs(number-math.floor(number+0.5))<0.000001
-end
-
-local function rememberRebirthCounter(object,source,score)
-	if object and object.Parent and object:IsA("ValueBase") then
-		Runtime.rebirthCounter=object
-		Runtime.rebirthCounterSource=source
-		local resolvedScore=tonumber(score) or rebirthCounterNameScore(object.Name)
-		Runtime.rebirthCounterExact=isExactRebirthCounterObject(object,resolvedScore)
-	end
-end
-
-local function readRebirths()
-	-- Once a real ValueBase is found, every later check is a local property read.
-	-- No repeated descendant or GUI scan is needed during auto rebirth.
-	local cached=Runtime.rebirthCounter
-	if cached and cached.Parent and Runtime.rebirthCounterExact and Runtime.rebirthCounterSource=="leaderstats" then
-		local number=readRebirthValue(cached)
-		if number~=nil then return number,Runtime.rebirthCounterSource or "cached",cached end
-	elseif not cached or not cached.Parent then
-		Runtime.rebirthCounter=nil
-		Runtime.rebirthCounterSource=nil
-		Runtime.rebirthCounterExact=false
-	end
-
-	local leader=lp:FindFirstChild("leaderstats")
-	if leader then
-		local best,bestNumber,bestScore=nil,nil,0
-		for _,d in ipairs(leader:GetChildren()) do
-			local score=d:IsA("ValueBase") and rebirthCounterNameScore(d.Name) or 0
-			if score>bestScore then
-				local number=readRebirthValue(d)
-				if number~=nil then
-					best,bestNumber,bestScore=d,number,score
-				end
-			end
-		end
-		if best then
-			rememberRebirthCounter(best,"leaderstats",bestScore)
-			return bestNumber,"leaderstats",best
-		end
-	end
-
-	if cached and cached.Parent then
-		local number=readRebirthValue(cached)
-		if number~=nil then return number,Runtime.rebirthCounterSource or "cached",cached end
-	end
-
-	-- Slow discovery is only a fallback until a real counter has been cached.
-	local checked=0
-	local best,bestNumber,bestScore=nil,nil,0
-	for _,d in ipairs(lp:GetDescendants()) do
-		checked=checked+1
-		if checked>1800 then break end
-
-		local score=d:IsA("ValueBase") and rebirthCounterNameScore(d.Name) or 0
-		if score>bestScore then
-			local number=readRebirthValue(d)
-			if number~=nil then
-				best,bestNumber,bestScore=d,number,score
-				if score>=3 then break end
-			end
-		end
-	end
-	if best then
-		rememberRebirthCounter(best,"value",bestScore)
-		return bestNumber,"value",best
-	end
-
-	-- Conservative GUI fallback.
-	local pg=lp:FindFirstChild("PlayerGui")
-	if pg then
-		local scanned=0
-
-		for _,d in ipairs(pg:GetDescendants()) do
-			-- Never parse RockBugHub's own labels (goal input/status) as the
-			-- game's rebirth counter.
-			if Runtime.uiRoot and d:IsDescendantOf(Runtime.uiRoot) then continue end
-
-			scanned=scanned+1
-			if scanned>2600 then break end
-
-			if d:IsA("TextLabel") or d:IsA("TextButton") or d:IsA("TextBox") then
-				local text=tostring(d.Text or "")
-				if looksLikeRebirthName(text) or looksLikeRebirthName(d.Name) then
-					local n=parseCompactNumber(text)
-					if n then return n,"gui",nil end
-				end
-			end
-		end
-	end
-
-	return nil,"not found",nil
-end
-
-local function formatWholeNumber(value)
-	local number=math.max(0,math.floor(tonumber(value) or 0))
-	local text=("%.0f"):format(number)
-	return text:reverse():gsub("(%d%d%d)","%1 "):reverse():gsub("^ ","")
-end
-
-local function refreshRebirthGoalUI(current,overrideText)
-	if current~=nil then Runtime.rebirthGoalCurrent=math.max(0,math.floor(tonumber(current) or 0)) end
-	local ui=Runtime.ui and Runtime.ui.rebirthGoalProgress
-	if not ui or not ui.Parent then return end
-
-	local target=math.max(1,math.floor(tonumber(Runtime.rebirthGoal) or 1))
-	local known=Runtime.rebirthGoalCurrent
-	if overrideText then
-		ui.Text=overrideText
-	elseif Runtime.rebirthGoalCompleted then
-		ui.Text=("ЦЕЛЬ ДОСТИГНУТА • %s / %s"):format(formatWholeNumber(known or target),formatWholeNumber(target))
-	elseif Runtime.rebirthGoalEnabled then
-		if known~=nil then
-			ui.Text=("Сейчас: %s • цель: %s • осталось: %s"):format(
-				formatWholeNumber(known),formatWholeNumber(target),formatWholeNumber(math.max(0,target-known))
-			)
-		else
-			ui.Text=("Сейчас: — • цель: %s"):format(formatWholeNumber(target))
-		end
-	else
-		ui.Text=("Лимит выключен • цель: %s"):format(formatWholeNumber(target))
-	end
-end
-
-local PET_GRADES={
-	{name="BASIC",base=250},
-	{name="UNCOMMON",base=500},
-	{name="RARE",base=750},
-	{name="EPIC",base=1000},
-	{name="UNIQUE",base=1250},
-}
-
-local function currentPetGrade()
-	return PET_GRADES[math.clamp(tonumber(Runtime.petGradeIndex) or 5,1,#PET_GRADES)]
-end
-
-local function compactXp(value40)
-	local value=value40/40
-	if value==math.floor(value) then return tostring(math.floor(value)) end
-	local text=("%.3f"):format(value):gsub("0+$","")
-	return (text:gsub("%.$",""))
-end
-
-local function chooseSafeRockByRebirths()
-	local rebs,source=readRebirths()
-	local grade=currentPetGrade()
-
-	if rebs then
-		rebs=math.max(0,math.floor(rebs+0.5))
-		local maxPetXp40=grade.base*19*20/2*40
-
-		-- Rocks are ordered from strongest to weakest. Pick the strongest available
-		-- multiplier that still fits into the pet's level 19 XP range at these rebirths.
-		-- This avoids the old "no exact division -> Tiny" fallback.
-		for rockIndex,row in ipairs(ROCKS) do
-			if rockCache[row.req] then
-				local multiplier40=math.floor(row.mult*40+0.5)
-				local hitXp40=(rebs+20)*multiplier40
-
-				if hitXp40>0 and hitXp40<=maxPetXp40 then
-					local bestForRock=nil
-
-					for level=1,19 do
-						local targetXp40=grade.base*level*(level+1)/2*40
-						if targetXp40>=hitXp40 then
-							local hits=math.max(1,math.floor(targetXp40/hitXp40))
-							local remainder=targetXp40-(hits*hitXp40)
-							local accuracy=1-(remainder/targetXp40)
-							local candidate={
-								row=row,
-								rockIndex=rockIndex,
-								level=level,
-								hits=hits,
-								hitXp40=hitXp40,
-								remainder40=remainder,
-								accuracy=accuracy,
-							}
-
-							if not bestForRock
-								or candidate.accuracy>bestForRock.accuracy
-								or (candidate.accuracy==bestForRock.accuracy and candidate.hits<bestForRock.hits)
-								or (candidate.accuracy==bestForRock.accuracy and candidate.hits==bestForRock.hits and candidate.level<bestForRock.level) then
-								bestForRock=candidate
-							end
-						end
-					end
-
-					if bestForRock then
-						local exact=bestForRock.remainder40==0
-						local percent=math.floor(bestForRock.accuracy*1000+0.5)/10
-						local reason=("%d реб • %s XP • L%d / %d уд. • %.1f%%"):format(
-							rebs,compactXp(bestForRock.hitXp40),bestForRock.level,bestForRock.hits,percent
-						)
-						local calc={
-							rebirths=rebs,
-							xp40=bestForRock.hitXp40,
-							level=bestForRock.level,
-							hits=bestForRock.hits,
-							accuracy=percent,
-							grade=grade.name,
-							exact=exact,
-							source=source,
-						}
-						return row,reason,rebs,exact,calc
-					end
-				end
-			end
-		end
-
-		-- At extreme rebirth counts even Tiny can exceed the pet XP range. In that
-		-- case the weakest available rock is the only safe direction and the UI says why.
-		for i=#ROCKS,1,-1 do
-			local row=ROCKS[i]
-			if rockCache[row.req] then
-				local hitXp40=(rebs+20)*math.floor(row.mult*40+0.5)
-				local calc={
-					rebirths=rebs,
-					xp40=hitXp40,
-					level=19,
-					hits=1,
-					accuracy=0,
-					grade=grade.name,
-					exact=false,
-					overLimit=true,
-					source=source,
-				}
-				return row,("%d реб • XP выше лимита питомца"):format(rebs),rebs,false,calc
-			end
-		end
-	end
-
-	for i=#ROCKS,1,-1 do
-		local row=ROCKS[i]
-		if rockCache[row.req] then
-			return row,"ребы не найдены ("..tostring(source)..")",nil,false,{grade=grade.name,exact=false}
-		end
-	end
-
-	return ROCKS[#ROCKS],"камни не найдены",nil,false,{grade=grade.name,exact=false}
-end
-
-local function applyAutoRockSelection(force)
-	if not Runtime.autoRockSelection and not force then return false end
-	local row,reason,rebs,exact,calc=chooseSafeRockByRebirths()
-	if not force and rebs~=nil and Runtime.lastAutoRockRebs==rebs then return false end
-
-	local previous=Runtime.selectedRock
-	Runtime.selectedRock=row
-	Runtime.lastAutoRockRebs=rebs
-	Runtime.autoRockReason=reason
-	Runtime.autoRockExact=exact
-	Runtime.autoRockCalc=calc
-
-	if Runtime.ui then
-		if Runtime.ui.autoRockTitle and Runtime.ui.autoRockTitle.Parent then
-			Runtime.ui.autoRockTitle.Text="АВТОПОДБОР ПО РЕБЁРТАМ"
-		end
-		if Runtime.ui.autoRockName and Runtime.ui.autoRockName.Parent then
-			Runtime.ui.autoRockName.Text=row.label.."  •  питомец "..tostring(calc and calc.grade or "-")
-		end
-		if Runtime.ui.autoRockStats and Runtime.ui.autoRockStats.Parent then
-			local rebText=calc and calc.rebirths~=nil and tostring(calc.rebirths) or "не найдены"
-			local xpText=calc and calc.xp40 and compactXp(calc.xp40) or "?"
-			if calc and calc.overLimit then
-				Runtime.ui.autoRockStats.Text=("Ребёрты: %s  •  XP/удар: %s  •  превышен лимит питомца"):format(rebText,xpText)
-			elseif calc and calc.level and calc.hits then
-				Runtime.ui.autoRockStats.Text=("Ребёрты: %s  •  XP/удар: %s  •  цель L%d  •  %d уд.  •  %.1f%%"):format(
-					rebText,xpText,calc.level,calc.hits,tonumber(calc.accuracy) or (calc.exact and 100 or 0)
-				)
-			else
-				Runtime.ui.autoRockStats.Text=("Ребёрты: %s  •  XP/удар: %s  •  данные персонажа не найдены"):format(rebText,xpText)
-			end
-		end
-	end
-
-	if type(Runtime.refreshRockList)=="function" then Runtime.refreshRockList() end
-	if previous and previous.id~=row.id and Runtime.mode=="bug" and type(Runtime.teleportInsideSelected)=="function" then
-		Runtime.teleportInsideSelected()
-	end
-	return true
-end
-
--- ---------- TOOL HELPERS ----------
-
-local function toolName(tool)
-	return tostring(tool and tool.Name or ""):lower()
-end
-
-local function containsAny(s,words)
-	s=tostring(s or ""):lower()
-	for _,w in ipairs(words) do
-		if s:find(tostring(w):lower(),1,true) then return true end
-	end
-	return false
-end
-
-local PUNCH_GOOD={"punch","fist","combat","кулак","удар"}
-local PUNCH_BAD={"weight","dumb","barbell","bench","push","sit","handstand","tread","гант","гир","штанг","отжим","пресс","бег"}
-
-local function isPunchTool(tool)
-	if not tool or not tool:IsA("Tool") then return false end
-
-	local n=toolName(tool)
-	if containsAny(n,PUNCH_BAD) then return false end
-	if containsAny(n,PUNCH_GOOD) then return true end
-
-	for _,d in ipairs(tool:GetDescendants()) do
-		if containsAny(d.Name,PUNCH_BAD) then return false end
-		if containsAny(d.Name,PUNCH_GOOD) then return true end
-	end
-
-	return false
-end
-
-local TRAIN_TYPES={
-	{id="Punch",label="PUNCH",desc="удары / сила",words={"punch","fist","combat","кулак","удар"}},
-	{id="Weight",label="WEIGHT",desc="вес / гантели / штанга",words={"weight","dumb","dumbbell","barbell","bench","вес","гант","штанг","гир"}},
-	{id="Push",label="PUSH",desc="отжимания",words={"push","pushup","push-up","отжим"}},
-	{id="Sit",label="SIT",desc="пресс / situps",words={"sit","situp","sit-up","abs","пресс"}},
-	{id="Hand",label="HANDSTAND",desc="стойка на руках",words={"handstand","hand stand","стойк"}},
-	{id="Tread",label="TREADMILL",desc="бег / agility",words={"tread","treadmill","agility","speed","бег","дорож","ловк","скор"}},
-}
-
-local function toolMatchesTrain(tool,t)
-	if not tool or not tool:IsA("Tool") then return false end
-
-	if t.id=="Punch" then
-		return isPunchTool(tool)
-	end
-
-	local n=toolName(tool)
-	if containsAny(n,t.words) then return true end
-
-	for _,d in ipairs(tool:GetDescendants()) do
-		if containsAny(d.Name,t.words) then return true end
-	end
-
-	return false
-end
-
-local function findTool(predicate)
-	local c=char()
-	local bp=lp:FindFirstChildOfClass("Backpack")
-
-	if c then
-		for _,tool in ipairs(c:GetChildren()) do
-			if tool:IsA("Tool") and predicate(tool) then
-				return tool,true
-			end
-		end
-	end
-
-	if bp then
-		for _,tool in ipairs(bp:GetChildren()) do
-			if tool:IsA("Tool") and predicate(tool) then
-				return tool,false
-			end
-		end
-	end
-
-	return nil,false
-end
-
-local function equipTool(tool)
-	if not tool then return false end
-
-	local c=char()
-	local h=hum()
-	if not c or not h then return false end
-
-	if tool.Parent==c then
-		return true
-	end
-
-	safe(function() h:UnequipTools() end)
-	task.wait(0.04)
-	safe(function() h:EquipTool(tool) end)
-	task.wait(0.06)
-
-	return tool.Parent==c
-end
-
-local COOLDOWN_NAMES={
-	"Cooldown","cooldown","CD","cd","Delay","delay",
-	"AttackCooldown","attackCooldown","SwingCooldown","swingCooldown",
-	"AttackTime","attackTime","PunchCooldown","punchCooldown",
-	"LastUse","lastUse","LastSwing","lastSwing","LastAttack","lastAttack",
-	"CanUse","canUse","CanSwing","canSwing","Ready","ready"
-}
-
-local function clearCooldownsOnce(tool)
-	if not tool then return end
-	safe(function() tool.Enabled=true end)
-
-	local function fix(obj)
-		for _,name in ipairs(COOLDOWN_NAMES) do
-			local child=obj:FindFirstChild(name)
-
-			if child then
-				safe(function()
-					if child:IsA("NumberValue") or child:IsA("IntValue") then child.Value=0 end
-					if child:IsA("BoolValue") then child.Value=true end
-					if child:IsA("StringValue") then child.Value="0" end
-				end)
-			end
-
-			safe(function()
-				local v=obj:GetAttribute(name)
-				if v~=nil then
-					if type(v)=="number" then obj:SetAttribute(name,0) end
-					if type(v)=="boolean" then obj:SetAttribute(name,true) end
-					if type(v)=="string" then obj:SetAttribute(name,"0") end
-				end
-			end)
-		end
-	end
-
-	fix(tool)
-	for _,d in ipairs(tool:GetDescendants()) do
-		fix(d)
-	end
-end
-
-local function findPunchTool()
-	return findTool(isPunchTool)
-end
-
-local function findTrainTool(t)
-	return findTool(function(tool)
-		return toolMatchesTrain(tool,t)
-	end)
-end
-
-local function textOfGui(obj)
-	local s=tostring(obj.Name)
-
-	if obj:IsA("TextButton") or obj:IsA("TextLabel") or obj:IsA("TextBox") then
-		s=s.." "..tostring(obj.Text or "")
-	end
-
-	return s:lower()
-end
-
-local function guiMatchesTrain(text,t)
-	local normalized=(" "..tostring(text or ""):lower():gsub("[^%w]+"," ").." ")
-
-	for _,word in ipairs(t.words) do
-		local w=tostring(word):lower()
-
-		-- Short ASCII words such as "sit" and "abs" must be whole words;
-		-- otherwise "position" would incorrectly match "sit".
-		if #w<=3 and w:match("^[%w]+$") then
-			if normalized:find(" "..w.." ",1,true) then return true end
-		elseif tostring(text or ""):lower():find(w,1,true) then
-			return true
-		end
-	end
-
-	return false
-end
-
-local function guiIsActuallyVisible(obj,playerGui)
-	local current=obj
-
-	while current and current~=playerGui do
-		if current:IsA("GuiObject") and not current.Visible then return false end
-		if current:IsA("LayerCollector") and not current.Enabled then return false end
-		current=current.Parent
-	end
-
-	return current==playerGui
-end
-
-local function findGuiButtonForTrain(t)
-	local pg=lp:FindFirstChild("PlayerGui")
-	if not pg then return nil end
-
-	local scanned=0
-
-	for _,d in ipairs(pg:GetDescendants()) do
-		scanned=scanned+1
-		if scanned>2600 then break end
-
-		if (d:IsA("TextButton") or d:IsA("ImageButton")) and d.Active and guiIsActuallyVisible(d,pg) then
-			local full=string.lower(d:GetFullName())
-
-			-- Never click trading or purchasing UI by fuzzy matching.
-			local blocked=containsAny(full,{"trade","purchase","shop","store","buy","магаз","купить"})
-			if not blocked then
-				local txt=textOfGui(d)
-				if guiMatchesTrain(txt,t) then
-					return d
-				end
-			end
-		end
-	end
-
-	return nil
-end
-
-local function trySelectTrainFromGui(t)
-	local btn=findGuiButtonForTrain(t)
-	if not btn then return false end
-
-	local activated=safe(function()
-		btn:Activate()
-	end)
-
-	-- Executor-specific signal firing is only a fallback. Calling both paths
-	-- can toggle a button twice or execute a purchase/action twice.
-	if not activated and type(firesignal)=="function" then
-		activated=safe(function()
-			firesignal(btn.Activated)
-		end)
-	end
-
-	if activated then task.wait(0.18) end
-	return activated
-end
-
-local function ensurePunchTool()
-	local tool,equipped=findPunchTool()
-
-	if not tool then
-		return nil,"Punch Tool не найден"
-	end
-
-	if not equipped and not equipTool(tool) then
-		return nil,"не удалось надеть Punch"
-	end
-
-	return tool,"Punch: "..tool.Name
-end
-
-local function ensureTrainTool(t)
-	local tool,equipped=findTrainTool(t)
-
-	if not tool then
-		trySelectTrainFromGui(t)
-		tool,equipped=findTrainTool(t)
-	end
-
-	if not tool then
-		return nil,t.label..": предмет не найден"
-	end
-
-	if not equipped and not equipTool(tool) then
-		return nil,t.label..": не удалось надеть"
-	end
-
-	return tool,t.label..": "..tool.Name
-end
-
--- ---------- NETWORK CONTROL ----------
-
-local NET_HOLD_PING_MS=900
-local NET_RECOVER_PING_MS=650
-local NET_RECOVER_SAMPLES=3
-local NET_MIN_HOLD_SECONDS=1.5
-local NET_OFFLINE_AFTER_SECONDS=6
-local NET_HTTP_INTERVAL=1.25
-local NET_HTTP_TIMEOUT=2.75
-local NET_REPLICATOR_GRACE=1.0
-local NET_HTTP_URL="https://clients3.google.com/generate_204"
-
-local function resolveHttpRequest()
-	local candidates={}
-	local function addCandidate(candidate)
-		if type(candidate)=="function" then table.insert(candidates,candidate) end
-	end
-	addCandidate(ENV.request)
-	addCandidate(ENV.http_request)
-	addCandidate(type(ENV.syn)=="table" and ENV.syn.request or nil)
-	addCandidate(type(ENV.http)=="table" and ENV.http.request or nil)
-
-	for _,candidate in ipairs(candidates) do
-		if type(candidate)=="function" then
-			return function(url)
-				return candidate({
-					Url=url,
-					Method="GET",
-					Headers={["Cache-Control"]="no-cache"},
-				})
-			end
-		end
-	end
-
-	-- Delta's loader already exposes HttpGet even when no request alias exists.
-	return function(url)
-		return game:HttpGet(url,true)
-	end
-end
-
-local networkHttpRequest=resolveHttpRequest()
-
-local function getReceiveKbps()
-	local ok,value=safe(function() return Stats.DataReceiveKbps end)
-	if ok and type(value)=="number" and value==value and value>=0 then
-		return value
-	end
-	return nil
-end
-
-local function hasClientReplicator()
-	if not NetworkClient then return nil end
-	local ok,present=safe(function()
-		for _,child in ipairs(NetworkClient:GetChildren()) do
-			if child:IsA("ClientReplicator") then return true end
-		end
-		return false
-	end)
-	if not ok then return nil end
-	return present
-end
-
-local function beginNetworkHttpProbe(now)
-	if not Runtime.autoWifiHold or Runtime.networkHttpProbeInFlight or now<Runtime.nextNetworkHttpProbe then return end
-	Runtime.nextNetworkHttpProbe=now+NET_HTTP_INTERVAL
-	Runtime.networkHttpProbeInFlight=true
-	Runtime.networkHttpProbeStartedAt=now
-	Runtime.networkHttpProbeGeneration=Runtime.networkHttpProbeGeneration+1
-	local generation=Runtime.networkHttpProbeGeneration
-
-	task.spawn(function()
-		local nonce=tostring(math.floor(os.clock()*1000))
-		local ok,response=safe(function()
-			return networkHttpRequest(NET_HTTP_URL.."?rh="..nonce)
-		end)
-		local finished=os.clock()
-		if not Runtime.alive or generation~=Runtime.networkHttpProbeGeneration then return end
-
-		Runtime.networkHttpProbeInFlight=false
-		Runtime.networkHttpLastFinish=finished
-
-		-- Any real HTTP response proves that DNS/routing works. Some request APIs
-		-- represent the expected 204 response as an empty string, others as a table.
-		local gotResponse=ok
-		if type(response)=="table" then
-			local code=tonumber(response.StatusCode or response.Status or response.status_code)
-			if code then gotResponse=code>=100 and code<600 end
-		end
-
-		if gotResponse then
-			Runtime.networkHttpSupported=true
-			Runtime.networkHttpLastSuccess=finished
-			Runtime.networkHttpBadSamples=0
-		else
-			Runtime.networkHttpBadSamples=Runtime.networkHttpBadSamples+1
-		end
-	end)
-end
-
-local function validPing(value)
-	return type(value)=="number" and value==value and value>0 and value<math.huge
-end
-
-local function getPingMs()
-	-- Player:GetNetworkPing() is the lightest probe when the client exposes it.
-	local directOk,direct=safe(function()
-		return lp:GetNetworkPing()*1000
-	end)
-	if not directOk or not validPing(direct) then direct=nil end
-
-	-- Data Ping also sees replication queues/retransmissions, so use the worse of
-	-- both probes instead of hiding a replication stall behind a healthy raw ping.
-	local ok,res=safe(function()
-		local network=Stats:FindFirstChild("Network")
-		local server=network and network:FindFirstChild("ServerStatsItem")
-		local ping=server and server:FindFirstChild("Data Ping")
-
-		if ping then
-			local text=tostring(ping:GetValueString())
-			return tonumber(text:match("([%d%.]+)"))
-		end
-	end)
-
-	if not ok or not validPing(res) then res=nil end
-	if direct and res then return math.max(direct,res) end
-	if direct then return direct end
-	if res then return res end
-
-	-- Unknown is deliberately nil. Treating it as 0 would enable full remote rate
-	-- exactly while replication statistics are unavailable.
-	return nil
-end
-
-local function releaseNetworkCharacterHold()
-	local heldRoot=Runtime.networkHoldRoot
-	if heldRoot and heldRoot.Parent and Runtime.networkHoldSavedAnchored~=nil then
-		safe(function()
-			if Runtime.kingLock and Runtime.kingRoot==heldRoot then
-				-- King Gym must remain an unanchored, physical character after
-				-- a network hold; the dedicated BodyMovers keep it in place.
-				heldRoot.Anchored=false
-				Runtime.nextKingTick=0
-			else
-				heldRoot.Anchored=Runtime.networkHoldSavedAnchored
-			end
-			heldRoot.AssemblyLinearVelocity=Vector3.new(0,0,0)
-			heldRoot.AssemblyAngularVelocity=Vector3.new(0,0,0)
-		end)
-	end
-
-	Runtime.networkHoldRoot=nil
-	Runtime.networkHoldCF=nil
-	Runtime.networkHoldSavedAnchored=nil
-	Runtime.nextNetworkHoldTick=0
-end
-
-local function keepNetworkCharacterHold()
-	local r=root()
-	if not r then return false end
-
-	if Runtime.networkHoldRoot~=r then
-		releaseNetworkCharacterHold()
-		Runtime.networkHoldRoot=r
-		Runtime.networkHoldCF=r.CFrame
-		Runtime.networkHoldSavedAnchored=r.Anchored
-	end
-
-	local cf=Runtime.networkHoldCF or r.CFrame
-	safe(function()
-		r.CFrame=cf
-		r.AssemblyLinearVelocity=Vector3.new(0,0,0)
-		r.AssemblyAngularVelocity=Vector3.new(0,0,0)
-		-- A false-positive Wi-Fi hold must not remove King Gym physics.
-		local kingPhysical=Runtime.kingLock and Runtime.kingRoot==r
-		if kingPhysical then
-			if Runtime.kingHoldPosition and Runtime.kingHoldPosition.Parent==r then
-				Runtime.kingHoldPosition.Position=cf.Position
-			end
-			if Runtime.kingHoldGyro and Runtime.kingHoldGyro.Parent==r then
-				Runtime.kingHoldGyro.CFrame=cf
-			end
-		end
-		r.Anchored=not kingPhysical
-	end)
-	return true
-end
-
-local function enterNetworkHold(reason,now)
-	if not Runtime.netGuardEnabled then return end
-	now=now or os.clock()
-
-	if not Runtime.networkPaused then
-		Runtime.networkPaused=true
-		Runtime.networkHoldSince=now
-		Runtime.networkState="SUSPECT"
-		Runtime.transientFailures={}
-		Runtime.remoteTokens=0
-		Runtime.nextAction=now+0.25
-		Runtime.nextRebirth=now+0.5
-		Runtime.nextSize=now+0.5
-	end
-
-	Runtime.networkReason=tostring(reason or "connection unstable")
-	keepNetworkCharacterHold()
-	setStatus("СЕТЬ: ПАУЗА • "..Runtime.networkReason)
-end
-
-local function leaveNetworkHold(now,reason)
-	now=now or os.clock()
-	local wasPaused=Runtime.networkPaused
-	Runtime.networkPaused=false
-	Runtime.networkState="HEALTHY"
-	Runtime.networkBadSamples=0
-	Runtime.networkGoodSamples=0
-	Runtime.networkHoldSince=0
-	Runtime.networkReason=nil
-	Runtime.networkLastGoodAt=now
-	Runtime.networkHttpRequiredRecovery=false
-	Runtime.transientFailures={}
-	Runtime.remoteTokens=0
-	Runtime.remoteLastRefill=now
-	Runtime.nextAction=now+0.25
-	if Runtime.rebirthGoalEnabled and Runtime.rebirthGoalAwaitingFrom~=nil then
-		-- A request may have reached the server just before Wi-Fi disappeared.
-		-- Give its replicated Value a fresh settle window after recovery before
-		-- allowing any retry, especially when this was the final rebirth.
-		Runtime.rebirthGoalAwaitingUntil=math.max(Runtime.rebirthGoalAwaitingUntil or 0,now+2.5)
-		Runtime.nextRebirth=Runtime.rebirthGoalAwaitingUntil
-	else
-		Runtime.nextRebirth=now+0.5
-	end
-	Runtime.nextSize=now+0.5
-	releaseNetworkCharacterHold()
-
-	if wasPaused then
-		Runtime.networkRecoveries=Runtime.networkRecoveries+1
-		setStatus("СЕТЬ ВОССТАНОВЛЕНА • режим продолжен")
-	end
-end
-
-local function noteNetworkFailure(reason)
-	if not Runtime.netGuardEnabled then return end
-	Runtime.networkBadSamples=math.max(1,Runtime.networkBadSamples or 0)
-	Runtime.networkGoodSamples=0
-	enterNetworkHold(reason or "remote error",os.clock())
-end
-
-local function updateNetworkGuard(now)
-	local sample=getPingMs()
-	local receiveKbps=getReceiveKbps()
-	local replicatorPresent=hasClientReplicator()
-
-	if sample then
-		Runtime.pingMs=sample
-		Runtime.pingAvailable=true
-		Runtime.networkProbeUnsupported=false
-	end
-	if receiveKbps and receiveKbps>0.01 then
-		Runtime.networkTrafficLastSeen=now
-	end
-
-	-- ClientReplicator represents the actual Roblox server connection. Only a
-	-- transition from seen -> missing is authoritative, so restricted executors
-	-- cannot create a false offline state merely by hiding NetworkClient children.
-	if replicatorPresent==true then
-		Runtime.networkReplicatorSeen=true
-		Runtime.networkReplicatorMissingSince=nil
-	elseif replicatorPresent==false and Runtime.networkReplicatorSeen then
-		Runtime.networkReplicatorMissingSince=Runtime.networkReplicatorMissingSince or now
-	end
-
-	if Runtime.netGuardEnabled then
-		beginNetworkHttpProbe(now)
-	end
-
-	if not Runtime.netGuardEnabled then
-		Runtime.networkBadSamples=0
-		Runtime.networkGoodSamples=0
-		return sample
-	end
-
-	if Runtime.manualNetworkHold then
-		enterNetworkHold("manual WiFi hold",now)
-		Runtime.networkState="MANUAL HOLD"
-		return sample
-	end
-
-	-- Give Stats/GetNetworkPing five seconds to appear. If this executor never
-	-- exposes either probe, fall back to a permanently conservative rate instead
-	-- of freezing every existing feature forever.
-	if sample==nil and not Runtime.pingAvailable and not Runtime.networkHttpSupported
-		and not Runtime.networkReplicatorSeen and now>=Runtime.networkProbeDeadline then
-		if Runtime.networkPaused then leaveNetworkHold(now,"LIMITED / NO PING PROBE") end
-		Runtime.networkProbeUnsupported=true
-		Runtime.networkState="LIMITED"
-		Runtime.networkBadSamples=0
-		Runtime.networkGoodSamples=0
-		return nil
-	end
-
-	local invalid=(sample==nil)
-	local replicatorMissing=Runtime.networkReplicatorSeen
-		and Runtime.networkReplicatorMissingSince~=nil
-		and now-Runtime.networkReplicatorMissingSince>=NET_REPLICATOR_GRACE
-	local httpTimedOut=Runtime.autoWifiHold
-		and Runtime.networkHttpSupported
-		and Runtime.networkHttpProbeInFlight
-		and now-Runtime.networkHttpProbeStartedAt>=NET_HTTP_TIMEOUT
-	local httpFailed=Runtime.autoWifiHold
-		and Runtime.networkHttpSupported
-		and Runtime.networkHttpBadSamples>=2
-
-	if httpTimedOut or httpFailed or replicatorMissing then
-		Runtime.networkHttpRequiredRecovery=true
-	end
-
-	local recentHttpSuccess=Runtime.networkHttpSupported
-		and now-Runtime.networkHttpLastSuccess<=math.max(3,NET_HTTP_INTERVAL*2.5)
-	local replicatorReady=not Runtime.networkReplicatorSeen or replicatorPresent==true
-	local confirmedOnline=recentHttpSuccess and replicatorReady
-	local bad=replicatorMissing or httpTimedOut or httpFailed
-		or (invalid and not confirmedOnline)
-		or (sample~=nil and sample>=NET_HOLD_PING_MS)
-	local good=((sample~=nil and sample<=NET_RECOVER_PING_MS) or (invalid and confirmedOnline))
-		and not replicatorMissing and not httpTimedOut and not httpFailed
-
-	if bad then
-		Runtime.networkBadSamples=Runtime.networkBadSamples+1
-		Runtime.networkGoodSamples=0
-		local reason
-		if replicatorMissing then
-			reason="Roblox connection missing"
-		elseif httpTimedOut then
-			reason="WiFi probe timeout"
-		elseif httpFailed then
-			reason="WiFi probe failed"
-		else
-			reason=invalid and "ping unavailable" or ("ping "..math.floor(sample).."ms")
-		end
-		enterNetworkHold(reason,now)
-
-		if Runtime.networkBadSamples>=2 then
-			Runtime.networkState="GRACE"
-		end
-	elseif good then
-		Runtime.networkBadSamples=0
-		Runtime.networkGoodSamples=math.min(NET_RECOVER_SAMPLES,Runtime.networkGoodSamples+1)
-		Runtime.networkLastGoodAt=now
-		if not Runtime.networkPaused then Runtime.networkState="HEALTHY" end
-	else
-		-- Middle band is intentional hysteresis: do not oscillate between hold/resume.
-		Runtime.networkBadSamples=math.max(0,Runtime.networkBadSamples-1)
-		Runtime.networkGoodSamples=0
-	end
-
-	if Runtime.networkPaused then
-		local held=now-Runtime.networkHoldSince
-		if held>=NET_OFFLINE_AFTER_SECONDS and Runtime.networkState~="HEALTHY" then
-			Runtime.networkState="OFFLINE WAIT"
-		end
-
-		local recoveredAfterHold=Runtime.networkHttpLastSuccess>=Runtime.networkHoldSince
-			or Runtime.networkTrafficLastSeen>=Runtime.networkHoldSince
-		local recoveryProof=not Runtime.networkHttpRequiredRecovery
-			or (recoveredAfterHold and replicatorReady)
-		if good and recoveryProof and Runtime.networkGoodSamples>=NET_RECOVER_SAMPLES and held>=NET_MIN_HOLD_SECONDS then
-			leaveNetworkHold(now,"RECOVERED")
-		end
-	end
-
-	return sample
-end
-
-local function clearTransientFailure(key)
-	Runtime.transientFailures[key]=nil
-end
-
-local function transientFailureExpired(key,now,grace)
-	local started=Runtime.transientFailures[key]
-	if not started then
-		Runtime.transientFailures[key]=now
-		return false,0
-	end
-
-	local elapsed=now-started
-	return elapsed>=grace,elapsed
-end
-
-local function effectiveRates()
-	if Runtime.networkPaused then
-		return 1,0
-	end
-	if Runtime.netGuardEnabled and not Runtime.pingAvailable then
-		return 3,1
-	end
-
-	local ping=Runtime.pingMs or 0
-
-	if ping>=700 then
-		return 3,0
-	elseif ping>=450 then
-		return 4,1
-	elseif ping>=300 then
-		return 6,3
-	elseif ping>=200 then
-		return 8,5
-	end
-
-	return 9,5
-end
-
-local function refillRemoteTokens()
-	if Runtime.networkPaused then
-		Runtime.remoteTokens=0
-		Runtime.remoteLastRefill=os.clock()
-		return
-	end
-
-	local now=os.clock()
-	local _,limit=effectiveRates()
-	local elapsed=now-Runtime.remoteLastRefill
-
-	Runtime.remoteLastRefill=now
-	Runtime.remoteTokens=math.min(limit,Runtime.remoteTokens+elapsed*limit)
-end
-
-local function findMuscleRemote()
-	local direct=lp:FindFirstChild("muscleEvent")
-	if direct and direct:IsA("RemoteEvent") then return direct end
-
-	local events=ReplicatedStorage:FindFirstChild("rEvents")
-	local remote=events and events:FindFirstChild("muscleEvent")
-
-	if remote and remote:IsA("RemoteEvent") then
-		return remote
-	end
-
-	return nil
-end
-
-local function updateRemotePps()
-	local now=os.clock()
-	local elapsed=now-Runtime.remoteWindowStart
-
-	if elapsed>=1 then
-		Runtime.remotePps=Runtime.remoteSentWindow/elapsed
-		Runtime.remoteSentWindow=0
-		Runtime.remoteWindowStart=now
-	end
-end
-
-local function countRemoteSent()
-	Runtime.remoteSentWindow=Runtime.remoteSentWindow+1
-	updateRemotePps()
-end
-
-local function tryPunchRemote()
-	if not Runtime.directRemoteEnabled then return false end
-	if Runtime.networkPaused then return false,"network hold" end
-
-	refillRemoteTokens()
-
-	if Runtime.remoteTokens<1 then
-		return false
-	end
-
-	local remote=findMuscleRemote()
-	if not remote then return false end
-
-	Runtime.remoteTokens=Runtime.remoteTokens-1
-
-	local hand=(Runtime.punchCycle%2==0) and "rightHand" or "leftHand"
-
-	local ok=safe(function()
-		remote:FireServer("punch",hand)
-	end)
-
-	if ok then
-		countRemoteSent()
-		return true
-	end
-
-	local _,limit=effectiveRates()
-	Runtime.remoteTokens=math.min(limit,Runtime.remoteTokens+1)
-	noteNetworkFailure("punch remote error")
-
-	return false
-end
-
-local function tryTrainRemote()
-	if not Runtime.directRemoteEnabled then return false end
-	if Runtime.networkPaused then return false,"network hold" end
-
-	refillRemoteTokens()
-
-	if Runtime.remoteTokens<1 then
-		return false
-	end
-
-	local remote=findMuscleRemote()
-	if not remote then return false end
-
-	Runtime.remoteTokens=Runtime.remoteTokens-1
-
-	local ok=safe(function()
-		remote:FireServer("rep")
-	end)
-
-	if ok then
-		countRemoteSent()
-		return true
-	end
-
-	local _,limit=effectiveRates()
-	Runtime.remoteTokens=math.min(limit,Runtime.remoteTokens+1)
-	noteNetworkFailure("train remote error")
-
-	return false
-end
-
--- ---------- AUTO KILL / CRYSTALS ----------
-
-local function selectedCount(values)
-	local count=0
-	for _,enabled in pairs(values or {}) do
-		if enabled then count=count+1 end
-	end
-	return count
-end
-
-local function refreshExtraUI()
-	if type(Runtime.refreshExtraUI)=="function" then
-		safe(Runtime.refreshExtraUI)
-	end
-end
-
-local function crystalMetadataValue(item,fields,allowNumber)
-	if not item then return nil end
-	for _,field in ipairs(fields) do
-		local ok,value=safe(function() return item:GetAttribute(field) end)
-		if ok and ((type(value)=="string" and value:match("%S"))
-			or (allowNumber and type(value)=="number")) then
-			return value
-		end
-		local child=item:FindFirstChild(field)
-		if child then
-			ok,value=safe(function() return child.Value end)
-			if ok and ((type(value)=="string" and value:match("%S"))
-				or (allowNumber and type(value)=="number")) then
-				return value
-			end
-		end
-	end
-	return nil
-end
-
-local function availableCrystalNames(forceRefresh)
-	local now=os.clock()
-	if not forceRefresh and Runtime.crystalCatalogAt
-		and now-Runtime.crystalCatalogAt<3 and #Runtime.crystalNames>0 then
-		return Runtime.crystalNames
-	end
-
-	local names={}
-	local catalog={}
-	local roots={}
-	local rootSeen={}
-	local visited={}
-	local inspected=0
-	local rootNames={
-		"mapCrystalsFolder","crystalsFolder","CrystalsFolder","crystalFolder","CrystalFolder",
-		"Crystals","crystals","PetCrystals","petCrystals","CrystalDisplays","crystalDisplays",
-		"CrystalShop","crystalShop","CrystalStations","crystalStations","Hatchables","hatchables",
-		"Eggs","eggs","IndustrialGym","industrialGym","Gyms","gyms","Map","map","World",
-		"Assets","assets","Shared","shared","GameData","gameData","Definitions","definitions",
-	}
-	local categoryNames={
-		crystal=true,crystals=true,egg=true,eggs=true,hatchables=true,hatching=true,
-		categories=true,category=true,catalog=true,catalogue=true,definitions=true,
-		data=true,config=true,configuration=true,displays=true,stations=true,
-		models=true,assets=true,items=true,shop=true,gyms=true,map=true,world=true,
-		mapcrystalsfolder=true,crystalsfolder=true,crystalfolder=true,
-		petcrystals=true,crystaldisplays=true,crystalshop=true,crystalstations=true,
-		crystaldata=true,crystaldefinitions=true,crystalcatalog=true,crystalchances=true,
-	}
-
-	local function addRoot(item)
-		if item and not rootSeen[item] then
-			rootSeen[item]=true
-			table.insert(roots,item)
-		end
-	end
-
-	for _,parent in ipairs({workspace,ReplicatedStorage}) do
-		for _,name in ipairs(rootNames) do
-			addRoot(parent:FindFirstChild(name))
-		end
-		local checked=0
-		for _,child in ipairs(parent:GetChildren()) do
-			checked=checked+1
-			if checked>100 then break end
-			local lower=string.lower(tostring(child.Name or ""))
-			if lower:find("crystal",1,true) or lower:find("hatch",1,true)
-				or lower:find("industrial",1,true) or lower:find("gym",1,true) then
-				addRoot(child)
-			end
-		end
-	end
-
-	local function addCrystal(item,inCrystalFolder)
-		if not item or item:IsA("RemoteEvent") or item:IsA("RemoteFunction")
-			or item:IsA("LocalScript") or item:IsA("ModuleScript") then return false end
-		local rawName=tostring(item.Name or "")
-		local rawKey=shopNameKey(rawName)
-		if rawKey=="" or categoryNames[rawKey]
-			or (rawKey:find("crystal",1,true) and (
-				rawKey:match("folders?$") or rawKey:match("systems?$")
-				or rawKey:match("remotes?$") or rawKey:match("events?$")
-				or rawKey:match("definitions?$") or rawKey:match("catalogs?$")
-				or rawKey:match("configs?$") or rawKey:match("chances?$")
-				or rawKey:match("displays?$") or rawKey:match("stations?$")
-				or rawKey:match("models?$") or rawKey:match("assets?$")
-			)) then return false end
-		local explicitName=crystalMetadataValue(item,{
-			"CrystalName","crystalName","CrystalDisplayName","crystalDisplayName","HatchName",
-		})
-		local display=explicitName or crystalMetadataValue(item,{
-			"DisplayName","displayName","Title","title",
-		}) or rawName
-		local lowerRaw=string.lower(rawName)
-		local lowerDisplay=string.lower(tostring(display))
-		local namedCrystal=lowerRaw:find("crystal",1,true)
-			or lowerDisplay:find("crystal",1,true)
-		local structure=item:IsA("Model") or item:IsA("Folder")
-			or item:IsA("Configuration") or item:IsA("ObjectValue")
-		if not explicitName and not namedCrystal and not inCrystalFolder then return false end
-		if not structure and not explicitName then return false end
-		if not explicitName and not namedCrystal and not crystalMetadataValue(item,{
-			"CrystalId","crystalId","CrystalID","OpenId","HatchId",
-		},true) then return false end
-
-		local name=tostring(display):gsub("^%s+",""):gsub("%s+$","")
-		local key=shopNameKey(name)
-		if key=="" or categoryNames[key] then return false end
-		if not catalog[key] then
-			local requestId=crystalMetadataValue(item,{
-				"CrystalId","crystalId","CrystalID","OpenId","HatchId","Id","ID",
-			},true) or rawName
-			catalog[key]={
-				name=name,
-				id=requestId,
-				action=crystalMetadataValue(item,{"OpenAction","openAction","RemoteAction"}),
-				source=item,
-			}
-			table.insert(names,name)
-		end
-		return true
-	end
-
-	local function inspect(item,depth,inCrystalFolder)
-		if not item or visited[item] or depth>5 or inspected>=320 then return end
-		visited[item]=true
-		inspected=inspected+1
-		if item:IsA("RemoteEvent") or item:IsA("RemoteFunction")
-			or item:IsA("LocalScript") or item:IsA("ModuleScript") then return end
-		local lower=string.lower(tostring(item.Name or ""))
-		local crystalFolder=inCrystalFolder or lower:find("crystal",1,true)~=nil
-			or lower:find("hatch",1,true)~=nil
-		if addCrystal(item,inCrystalFolder) then return end
-		for _,child in ipairs(item:GetChildren()) do
-			if inspected>=320 then break end
-			local childName=string.lower(tostring(child.Name or ""))
-			local branch=crystalFolder or childName:find("crystal",1,true)
-				or childName:find("hatch",1,true) or childName:find("egg",1,true)
-				or childName:find("industrial",1,true) or childName:find("gym",1,true)
-				or childName:find("station",1,true) or childName:find("display",1,true)
-				or childName:find("interact",1,true) or childName:find("catalog",1,true)
-				or childName:find("definition",1,true) or childName:find("data",1,true)
-				or childName:find("asset",1,true) or childName:find("pet",1,true)
-			if branch then inspect(child,depth+1,crystalFolder) end
-		end
-	end
-
-	for _,root in ipairs(roots) do
-		if inspected>=320 then break end
-		inspect(root,1,false)
-	end
-
-	-- Industrial Crystal and its six pets were verified in the Aug. 22 update.
-	-- Keep it selectable even when its gym has not streamed to the client yet.
-	local industrialKey=shopNameKey("Industrial Crystal")
-	if not catalog[industrialKey] then
-		catalog[industrialKey]={name="Industrial Crystal",id="Industrial Crystal"}
-		table.insert(names,"Industrial Crystal")
-	end
-
-	if #names==1 and names[1]=="Industrial Crystal" then
-		for _,name in ipairs(FALLBACK_CRYSTALS) do
-			local key=shopNameKey(name)
-			if not catalog[key] then
-				catalog[key]={name=name,id=name}
-				table.insert(names,name)
-			end
-		end
-	end
-	table.sort(names,function(a,b)
-		return string.lower(a)<string.lower(b)
-	end)
-	Runtime.crystalCatalog=catalog
-	Runtime.crystalNames=names
-	Runtime.crystalCatalogAt=now
-	return names
-end
-
-local function crystalPetNames(crystalName)
-	local crystalKey=shopNameKey(crystalName)
-	local fixed=CRYSTAL_PET_NAMES[crystalKey]
-	if fixed then
-		local result={}
-		for _,name in ipairs(fixed) do table.insert(result,name) end
-		return result
-	end
-
-	local cached=Runtime.crystalPetCache and Runtime.crystalPetCache[crystalKey]
-	if cached and os.clock()-(cached.at or 0)<5 then
-		local result={}
-		for _,name in ipairs(cached.names or {}) do table.insert(result,name) end
-		return result
-	end
-
-	local petLookup={}
-	for _,entry in ipairs(shopCatalog("pet")) do
-		petLookup[shopNameKey(entry.name)]=entry.name
-	end
-	local result={}
-	local seen={}
-	local function add(name)
-		local key=shopNameKey(name)
-		local exact=petLookup[key]
-		if exact and not seen[key] then
-			seen[key]=true
-			table.insert(result,exact)
-		end
-	end
-	local inspected=0
-	local function inspectContents(item,depth)
-		if not item or depth>5 or inspected>=180 then return end
-		inspected=inspected+1
-		add(shopDisplayName(item) or item.Name)
-		if item:IsA("StringValue") then
-			local ok,value=safe(function() return item.Value end)
-			if ok then add(value) end
-		elseif item:IsA("ObjectValue") then
-			local ok,value=safe(function() return item.Value end)
-			if ok and value then add(shopDisplayName(value) or value.Name) end
-		end
-		for _,field in ipairs({"PetName","petName","ItemName","itemName","DisplayName","displayName"}) do
-			local value=crystalMetadataValue(item,{field})
-			if value then add(value) end
-		end
-		for _,child in ipairs(item:GetChildren()) do inspectContents(child,depth+1) end
-	end
-
-	availableCrystalNames()
-	local entry=Runtime.crystalCatalog[crystalKey]
-	if entry and entry.source then inspectContents(entry.source,1) end
-
-	local searched={}
-	local function findCrystalData(item,depth)
-		if not item or searched[item] or depth>6 or inspected>=360 then return end
-		searched[item]=true
-		local itemKey=shopNameKey(item.Name)
-		local explicit=crystalMetadataValue(item,{
-			"CrystalName","crystalName","CrystalDisplayName","crystalDisplayName","HatchName",
-		})
-		if itemKey==crystalKey or (explicit and shopNameKey(explicit)==crystalKey) then
-			inspectContents(item,1)
-			return
-		end
-		for _,child in ipairs(item:GetChildren()) do findCrystalData(child,depth+1) end
-	end
-	if #result==0 then
-		for _,root in ipairs(shopContainers()) do
-			findCrystalData(root,1)
-			if inspected>=360 then break end
-		end
-	end
-
-	table.sort(result,function(a,b) return string.lower(a)<string.lower(b) end)
-	Runtime.crystalPetCache=Runtime.crystalPetCache or {}
-	Runtime.crystalPetCache[crystalKey]={names=result,at=os.clock()}
-	local copy={}
-	for _,name in ipairs(result) do table.insert(copy,name) end
-	return copy
-end
-
-local function resolveCrystalName(wanted)
-	availableCrystalNames()
-	local wantedLower=string.lower(tostring(wanted or ""))
-	local entry=Runtime.crystalCatalog[shopNameKey(wantedLower)]
-	if not entry then
-		local alias=wantedLower=="frost crystal" and "frozen crystal"
-			or (wantedLower=="frozen crystal" and "frost crystal")
-		entry=alias and Runtime.crystalCatalog[shopNameKey(alias)] or nil
-	end
-	return entry and entry.id or wanted,entry
-end
-
-local function normalizeCrystalSelection(forceRefresh)
-	local names=availableCrystalNames(forceRefresh)
-	local key=shopNameKey(Runtime.selectedCrystal)
-	if Runtime.crystalCatalog[key] then
-		Runtime.selectedCrystal=Runtime.crystalCatalog[key].name
-	elseif #names>0 then
-		Runtime.selectedCrystal=names[1]
-	else
-		Runtime.selectedCrystal=nil
-	end
-	return Runtime.selectedCrystal
-end
-
-local function folderOwnsNamed(folderName,targetName)
-	local folder=lp:FindFirstChild(folderName)
-	if not folder then return false end
-	local target=string.lower(tostring(targetName or ""))
-
-	for _,item in ipairs(folder:GetDescendants()) do
-		if string.lower(tostring(item.Name))==target then return true end
-		if item:IsA("StringValue") then
-			local ok,value=safe(function() return string.lower(tostring(item.Value)) end)
-			if ok and value==target then return true end
-		end
-	end
-
-	return false
-end
-
-local function ownsPet(name)
-	return folderOwnsNamed("petsFolder",name)
-end
-
-local function ownsAura(name)
-	return folderOwnsNamed("trailsFolder",name) or folderOwnsNamed("aurasFolder",name)
-end
-
-local function shouldKillPlayer(player,mode)
-	if not player or player==lp then return false end
-	if mode=="all" then return true end
-	if mode=="whitelist" then return Runtime.killWhitelist[player.UserId]~=true end
-	if mode=="blacklist" then return Runtime.killBlacklist[player.UserId]==true end
-	return false
-end
-
-local function touchKillTarget(player,tool)
-	local localCharacter=char()
-	local targetCharacter=player and player.Character
-	local targetHumanoid=targetCharacter and targetCharacter:FindFirstChildWhichIsA("Humanoid")
-	local targetRoot=targetCharacter and targetCharacter:FindFirstChild("HumanoidRootPart")
-
-	if not localCharacter or not targetRoot or not targetHumanoid or targetHumanoid.Health<=0 then return end
-
-	if tool and tool.Parent then
-		clearCooldownsOnce(tool)
-		safe(function() tool:Activate() end)
-	end
-	tryPunchRemote()
-
-	if type(firetouchinterest)=="function" then
-		for _,handName in ipairs({"RightHand","LeftHand","Right Arm","Left Arm"}) do
-			local hand=localCharacter:FindFirstChild(handName,true)
-			if hand and hand:IsA("BasePart") then
-				safe(function()
-					firetouchinterest(hand,targetRoot,0)
-					firetouchinterest(hand,targetRoot,1)
-				end)
-			end
-		end
-	end
-end
-
-local function stopKillAutomation(message)
-	Runtime.killToken=Runtime.killToken+1
-	Runtime.killMode="off"
-	for _,lever in pairs(Runtime.leverRefs.kill or {}) do
-		if lever then lever.Set(false,true) end
-	end
-	refreshExtraUI()
-	if message then setStatus(message) end
-end
-
-local function startKillAutomation(mode)
-	Runtime.killToken=Runtime.killToken+1
-	Runtime.killMode=mode
-	local token=Runtime.killToken
-	refreshExtraUI()
-	setStatus("АВТОКИЛ: "..string.upper(mode))
-
-	task.spawn(function()
-		while Runtime.alive and Runtime.killMode==mode and Runtime.killToken==token do
-			if not Runtime.networkPaused then
-				local tool=ensurePunchTool()
-				for _,player in ipairs(Players:GetPlayers()) do
-					if Runtime.killToken~=token then break end
-					if shouldKillPlayer(player,mode) then
-						touchKillTarget(player,tool)
-					end
-				end
-			end
-			task.wait(0.10)
-		end
-	end)
-end
-
-local function findCrystalRemote()
-	local legacyFolder=ReplicatedStorage:FindFirstChild("rEvents")
-	local legacy=legacyFolder and legacyFolder:FindFirstChild("openCrystalRemote")
-	if legacy and (legacy:IsA("RemoteFunction") or legacy:IsA("RemoteEvent")) then
-		return legacy,true
-	end
-
-	local containers={ReplicatedStorage}
-	local seen={[ReplicatedStorage]=true}
-	local function addContainer(item)
-		if item and not seen[item] then
-			seen[item]=true
-			table.insert(containers,item)
-		end
-	end
-	for _,name in ipairs({
-		"rEvents","Remotes","remotes","Events","events","Network","network",
-		"CrystalRemotes","crystalRemotes","PetCrystals","petCrystals","Crystals","crystals",
-	}) do
-		addContainer(ReplicatedStorage:FindFirstChild(name))
-	end
-	local baseCount=#containers
-	for index=1,baseCount do
-		local parent=containers[index]
-		for _,name in ipairs({
-			"Crystals","crystals","Crystal","crystal","PetCrystals","petCrystals",
-			"CrystalRemotes","crystalRemotes","Hatching","hatching",
-		}) do
-			addContainer(parent:FindFirstChild(name))
-		end
-	end
-
-	local knownNames={
-		"openCrystalRemote","OpenCrystalRemote","openCrystalEvent","OpenCrystalEvent",
-		"openCrystal","OpenCrystal","hatchCrystalRemote","HatchCrystalRemote",
-		"hatchCrystal","HatchCrystal","crystalOpenRemote","CrystalOpenRemote",
-		"crystalHatchRemote","CrystalHatchRemote",
-	}
-	for _,container in ipairs(containers) do
-		for _,name in ipairs(knownNames) do
-			local remote=container:FindFirstChild(name)
-			if remote and (remote:IsA("RemoteFunction") or remote:IsA("RemoteEvent")) then
-				return remote,shopNameKey(name)=="opencrystalremote"
-			end
-		end
-	end
-
-	local inspected=0
-	for _,container in ipairs(containers) do
-		for _,item in ipairs(container:GetChildren()) do
-			inspected=inspected+1
-			if inspected>120 then return nil,false end
-			if item:IsA("RemoteFunction") or item:IsA("RemoteEvent") then
-				local lower=string.lower(tostring(item.Name or ""))
-				if lower:find("crystal",1,true)
-					and (lower:find("open",1,true) or lower:find("hatch",1,true))
-					and not lower:find("rebirth",1,true)
-					and not lower:find("shop",1,true)
-					and not lower:find("buy",1,true)
-					and not lower:find("purchase",1,true) then
-					return item,shopNameKey(item.Name)=="opencrystalremote"
-				end
-			end
-		end
-	end
-	return nil,false
-end
-
-local function openCrystalOnce(name)
-	local remote,legacy=findCrystalRemote()
-	if not remote then return false,"remote открытия кристаллов не найден" end
-	local amount=tonumber(Runtime.crystalAmount) or 1
-	if amount~=1 and amount~=3 and amount~=10 then
-		return false,"доступно только открытие 1, 3 или 10 кристаллов"
-	end
-	local resolved,entry=resolveCrystalName(name)
-	if resolved==nil or tostring(resolved)=="" then
-		return false,"кристалл не найден в игре"
-	end
-	local action=entry and entry.action or nil
-	if legacy then
-		action=amount==1 and (action or "openCrystal") or "openCrystalBulk"
-	end
-
-	local ok,response=safe(function()
-		if remote:IsA("RemoteFunction") then
-			if action then
-				if amount>1 then return remote:InvokeServer(action,resolved,amount) end
-				return remote:InvokeServer(action,resolved)
-			end
-			if amount>1 then return remote:InvokeServer(resolved,amount) end
-			return remote:InvokeServer(resolved)
-		end
-		if action then
-			if amount>1 then remote:FireServer(action,resolved,amount)
-			else remote:FireServer(action,resolved) end
-		elseif amount>1 then remote:FireServer(resolved,amount)
-		else remote:FireServer(resolved) end
-	end)
-	if not ok then return false,response,resolved end
-	if response==false then return false,"сервер отклонил открытие кристалла",resolved end
-	if type(response)=="table" then
-		for _,field in ipairs({"success","Success","ok","Ok"}) do
-			if response[field]==false then
-				return false,tostring(response.message or response.Message or response.error
-					or response.Error or "сервер отклонил открытие кристалла"),resolved
-			end
-		end
-	end
-	return true,nil,resolved,response
-end
-
-local function findPetSellRemote()
-	local events=ReplicatedStorage:FindFirstChild("rEvents")
-	local remote=events and events:FindFirstChild("sellPetEvent")
-	if remote and (remote:IsA("RemoteEvent") or remote:IsA("RemoteFunction")) then
-		return remote
-	end
-	return nil
-end
-
-local function protectedCleanupName(name)
-	local key=shopNameKey(name)
-	return key:find("apex",1,true)~=nil
-end
-
-local function protectedCleanupPet(item)
-	if not item or protectedCleanupName(item.Name) then return true end
-	for _,field in ipairs({
-		"Equipped","equipped","IsEquipped","isEquipped","equippedValue",
-		"Locked","locked","IsLocked","isLocked","Favorite","favorite",
-		"Favourite","favourite","Protected","protected","Bugged","bugged",
-		"IsBugged","isBugged","Modded","modded","IsModded","isModded",
-		"Evolved","evolved","IsEvolved","isEvolved",
-	}) do
-		local ok,value=safe(function() return item:GetAttribute(field) end)
-		if ok and (value==true or value==1 or tostring(value):lower()=="true"
-			or tostring(value)=="1") then
-			return true
-		end
-		local marker=item:FindFirstChild(field)
-		if marker then
-			ok,value=safe(function() return marker.Value end)
-			if ok and (value==true or value==1 or tostring(value):lower()=="true"
-				or tostring(value)=="1") then
-				return true
-			end
-		end
-	end
-	for _,field in ipairs({"Level","level","PetLevel","petLevel"}) do
-		local ok,value=safe(function() return tonumber(item:GetAttribute(field)) end)
-		if ok and value and value>1 then return true end
-		local marker=item:FindFirstChild(field)
-		if marker then
-			ok,value=safe(function() return tonumber(marker.Value) end)
-			if ok and value and value>1 then return true end
-		end
-	end
-	for _,field in ipairs({"XP","xp","Xp","PetXP","petXP","Experience","experience"}) do
-		local ok,value=safe(function() return tonumber(item:GetAttribute(field)) end)
-		if ok and value and value>0 then return true end
-		local marker=item:FindFirstChild(field)
-		if marker then
-			ok,value=safe(function() return tonumber(marker.Value) end)
-			if ok and value and value>0 then return true end
-		end
-	end
-	local parent=item.Parent
-	for _=1,4 do
-		if not parent or parent==lp then break end
-		local lower=string.lower(tostring(parent.Name or ""))
-		if lower:find("equip",1,true) or lower:find("locked",1,true)
-			or lower:find("favorite",1,true) then return true end
-		parent=parent.Parent
-	end
-	return false
-end
-
-local function cleanupSelectedPets(limit)
-	if not Runtime.petCleanupEnabled then return 0 end
-	local remote=findPetSellRemote()
-	if not remote then return nil,"sellPetEvent не найден" end
-	local folder=lp:FindFirstChild("petsFolder")
-	if not folder then return nil,"инвентарь питомцев не найден" end
-
-	local selected={}
-	for name,enabled in pairs(Runtime.petCleanupTargets or {}) do
-		local key=shopNameKey(name)
-		if enabled and not protectedCleanupName(name) then selected[key]=true end
-	end
-	if next(selected)==nil then return 0 end
-
-	local now=os.clock()
-	Runtime.petCleanupPending=Runtime.petCleanupPending or {}
-	for pet,sentAt in pairs(Runtime.petCleanupPending) do
-		if not pet.Parent or now-sentAt>2 then Runtime.petCleanupPending[pet]=nil end
-	end
-
-	-- Send actual inventory instances from petsFolder/<rarity>/<pet>.
-	local inventory={}
-	for _,group in ipairs(folder:GetChildren()) do
-		if group:IsA("Folder") or group:IsA("Configuration") then
-			for _,pet in ipairs(group:GetChildren()) do
-				if #inventory>=1000 then break end
-				table.insert(inventory,pet)
-			end
-		else
-			table.insert(inventory,group)
-		end
-		if #inventory>=1000 then break end
-	end
-
-	local maxCount=math.min(10,math.max(1,tonumber(limit) or 1))
-	local sold=0
-	local remaining=#inventory
-	for _,pet in ipairs(inventory) do
-		if Runtime.petCleanupPending[pet] then remaining=remaining-1 end
-	end
-	for _,pet in ipairs(inventory) do
-		if sold>=maxCount or remaining<=1 then break end
-		if selected[shopNameKey(pet.Name)] and not Runtime.petCleanupPending[pet]
-			and not protectedCleanupPet(pet) then
-			local ok,result=safe(function()
-				if remote:IsA("RemoteFunction") then
-					return remote:InvokeServer("sellPet",pet)
-				end
-				remote:FireServer("sellPet",pet)
-			end)
-			local rejected=result==false or (type(result)=="table"
-				and (result.success==false or result.Success==false or result.ok==false))
-			if ok and not rejected then
-				Runtime.petCleanupPending[pet]=now
-				Runtime.petCleanupSold=(Runtime.petCleanupSold or 0)+1
-				sold=sold+1
-				remaining=remaining-1
-			end
-		end
-	end
-	return sold
-end
-
-local function startPetCleanupAutomation()
-	if selectedCount(Runtime.petCleanupTargets)==0 then
-		return false,"ВЫБЕРИ ПИТОМЦЕВ ДЛЯ УДАЛЕНИЯ"
-	end
-	if not findPetSellRemote() then return false,"sellPetEvent не найден" end
-	if not lp:FindFirstChild("petsFolder") then return false,"инвентарь питомцев не найден" end
-	Runtime.petCleanupToken=(Runtime.petCleanupToken or 0)+1
-	Runtime.petCleanupEnabled=true
-	local token=Runtime.petCleanupToken
-	task.spawn(function()
-		while Runtime.alive and Runtime.petCleanupEnabled and Runtime.petCleanupToken==token do
-			if not Runtime.networkPaused then
-				local removed,errorMessage=cleanupSelectedPets(10)
-				if removed==nil then
-					Runtime.petCleanupEnabled=false
-					Runtime.petCleanupToken=Runtime.petCleanupToken+1
-					if Runtime.leverRefs.petCleanup then Runtime.leverRefs.petCleanup.Set(false,true) end
-					setStatus("АВТОУДАЛЕНИЕ: "..tostring(errorMessage))
-					return
-				end
-				if removed>0 then
-					setStatus("УДАЛЕНО ИЗ ИНВЕНТАРЯ: "..tostring(Runtime.petCleanupSold))
-				end
-			end
-			task.wait(0.25)
-		end
-	end)
-	return true
-end
-
-local function buyShopItemOnce(name,kind)
-	local folder=ReplicatedStorage:FindFirstChild("cPetShopFolder")
-	local remote=ReplicatedStorage:FindFirstChild("cPetShopRemote")
-	if not folder then return false,"cPetShopFolder не найден" end
-	if not remote then return false,"cPetShopRemote не найден" end
-
-	local requested=tostring(name or ""):gsub("^%s+",""):gsub("%s+$","")
-	if requested=="" then return false,"товар не выбран" end
-	local item=folder:FindFirstChild(requested)
-	if not item then return false,"товар не найден: "..requested end
-
-	local ok,response=safe(function()
-		return remote:InvokeServer(item)
-	end)
-	return ok,response,requested
-end
-
-local function purchaseTarget(mode)
-	if mode=="crystal" then return Runtime.selectedCrystal end
-	if mode=="pet" then return Runtime.selectedPet end
-	if mode=="aura" then return Runtime.selectedAura end
-	return nil
-end
-
-local function stopCrystalAutomation(message)
-	Runtime.crystalToken=Runtime.crystalToken+1
-	Runtime.crystalMode="off"
-	for _,lever in pairs(Runtime.leverRefs.crystal or {}) do
-		if lever then lever.Set(false,true) end
-	end
-	refreshExtraUI()
-	if message then setStatus(message) end
-end
-
-local function startCrystalAutomation(mode)
-	if mode=="crystal" then normalizeCrystalSelection(true) end
-	if mode=="pet" then normalizeShopSelection("pet") end
-	if mode=="aura" then normalizeShopSelection("aura") end
-	local targetName=purchaseTarget(mode)
-	if not targetName then
-		setStatus("СНАЧАЛА ВЫБЕРИ ЦЕЛЬ")
-		return false
-	end
-	Runtime.crystalToken=Runtime.crystalToken+1
-	Runtime.crystalMode=mode
-	Runtime.purchaseAttempts=0
-	local token=Runtime.crystalToken
-	local failedCrystalAttempts=0
-	refreshExtraUI()
-	setStatus((mode=="crystal"
-		and ("ОТКРЫТИЕ ×"..tostring(Runtime.crystalAmount or 1)..": ")
-		or "ПРЯМАЯ ПОКУПКА: ")..targetName)
-
-	task.spawn(function()
-		while Runtime.alive and Runtime.crystalMode==mode and Runtime.crystalToken==token do
-			local delay=0.5
-			if not Runtime.networkPaused then
-				local ok,err,resolved
-				if mode=="crystal" then
-					if Runtime.petCleanupEnabled then
-						local sold,cleanupError=cleanupSelectedPets(Runtime.crystalAmount)
-						if sold==nil then
-							stopCrystalAutomation("АВТОУДАЛЕНИЕ: "..tostring(cleanupError))
-							return
-						end
-						if sold>0 then task.wait(0.12) end
-					end
-					ok,err,resolved=openCrystalOnce(targetName)
-				else
-					ok,err,resolved=buyShopItemOnce(targetName,mode)
-				end
-				if ok then
-					failedCrystalAttempts=0
-					Runtime.purchaseAttempts=Runtime.purchaseAttempts+1
-					local action=mode=="crystal"
-						and ("ОТКРЫТИЕ ×"..tostring(Runtime.crystalAmount or 1))
-						or "ПОКУПКА"
-					setStatus(action.." #"..Runtime.purchaseAttempts..": "..tostring(resolved))
-				else
-					if mode~="crystal" then
-						stopCrystalAutomation("НЕ КУПЛЕНО: "..tostring(err))
-						return
-					end
-					failedCrystalAttempts=failedCrystalAttempts+1
-					if failedCrystalAttempts>=2 then
-						stopCrystalAutomation("КРИСТАЛЛ ОСТАНОВЛЕН: "..tostring(err))
-						return
-					end
-					setStatus("ОШИБКА КРИСТАЛЛА: "..tostring(err))
-					delay=1.25
-				end
-			end
-			task.wait(delay)
-		end
-	end)
-	return true
-end
-
-local function stopExtraAutomation(message)
-	stopKillAutomation(nil)
-	stopCrystalAutomation(nil)
-	Runtime.petCleanupEnabled=false
-	Runtime.petCleanupToken=(Runtime.petCleanupToken or 0)+1
-	if Runtime.leverRefs.petCleanup then Runtime.leverRefs.petCleanup.Set(false,true) end
-	if Runtime.closeDeleteConfirmation then safe(Runtime.closeDeleteConfirmation) end
-	if message then setStatus(message) end
-end
-
--- ---------- REBIRTH / MUSCLE KING ----------
-
-local DEFAULT_KING_CF=CFrame.new(
-	-8625.93262,17.2325287,-5730.47217,
-	0.765763462,-1.84813775e-09,0.643122315,
-	-1.32089262e-09,1,4.44647785e-09,
-	-0.643122315,-4.25444568e-09,0.765763462
-)
-
-local function findRebirthRemote()
-	local events=ReplicatedStorage:FindFirstChild("rEvents")
-	local remote=events and events:FindFirstChild("rebirthRemote")
-
-	if remote and (remote:IsA("RemoteFunction") or remote:IsA("RemoteEvent")) then
-		return remote
-	end
-
-	return nil
-end
-
-local function tryRebirth(remote)
-	if Runtime.networkPaused then return false,"network hold" end
-	remote=remote or findRebirthRemote()
-	if not remote then return false,"rebirthRemote не найден" end
-
-	local response=nil
-	local ok,err=safe(function()
-		if remote:IsA("RemoteFunction") then
-			response=remote:InvokeServer("rebirthRequest")
-		else
-			remote:FireServer("rebirthRequest")
-		end
-	end)
-
-	return ok,err,remote:IsA("RemoteFunction"),response
-end
-
-local function clearRebirthGoalPending()
-	Runtime.rebirthGoalAwaitingFrom=nil
-	Runtime.rebirthGoalAwaitingSince=0
-	Runtime.rebirthGoalAwaitingUntil=0
-	Runtime.rebirthGoalReadFailures=0
-end
-
-local function stopRebirthAutomation(reason,completed,current)
-	Runtime.rebirthToken=Runtime.rebirthToken+1
-	Runtime.autoRebirth=false
-	Runtime.rebirthGoalEnabled=false
-	Runtime.rebirthGoalCompleted=completed==true
-	Runtime.nextRebirth=0
-	clearRebirthGoalPending()
-
-	if current~=nil then Runtime.rebirthGoalCurrent=math.max(0,math.floor(tonumber(current) or 0)) end
-	if Runtime.leverRefs.autoRebirth then Runtime.leverRefs.autoRebirth.Set(false,true) end
-	if Runtime.leverRefs.rebirthGoal then Runtime.leverRefs.rebirthGoal.Set(false,true) end
-	refreshRebirthGoalUI(Runtime.rebirthGoalCurrent)
-	if reason then setStatus(reason) end
-end
-
-local function stopRebirthAtGoal(current)
-	local target=math.max(1,math.floor(tonumber(Runtime.rebirthGoal) or 1))
-	local reached=math.max(0,math.floor(tonumber(current) or target))
-	stopRebirthAutomation(
-		("ЦЕЛЬ ДОСТИГНУТА: %s / %s • АВТОРЕБИРТ СТОП"):format(formatWholeNumber(reached),formatWholeNumber(target)),
-		true,
-		reached
-	)
-end
-
-local function observeRebirthCounter(counter,value)
-	if not Runtime.alive then return end
-	if counter and Runtime.rebirthCounterWatched and counter~=Runtime.rebirthCounterWatched then return end
-	local current=tonumber(value)
-	if current==nil then return end
-	current=math.max(0,math.floor(current+0.5))
-	Runtime.rebirthGoalCurrent=current
-
-	local awaiting=Runtime.rebirthGoalAwaitingFrom
-	if awaiting~=nil and current>awaiting then
-		clearRebirthGoalPending()
-	end
-	refreshRebirthGoalUI(current)
-
-	if Runtime.rebirthGoalEnabled then
-		local target=math.max(1,math.floor(tonumber(Runtime.rebirthGoal) or 1))
-		if current>=target then
-			stopRebirthAtGoal(current)
-		else
-			-- A real Value change is the acknowledgement. Continue immediately;
-			-- there is no fixed polling delay after a successful rebirth.
-			Runtime.nextRebirth=0
-		end
-	end
-end
-
-local function ensureRebirthCounterWatcher()
-	local current,source,counter=readRebirths()
-	local exactNumericCounter=counter and (counter:IsA("IntValue") or counter:IsA("NumberValue"))
-	if not exactNumericCounter
-		or not Runtime.rebirthCounterExact
-		or source~="leaderstats"
-		or not counter:IsDescendantOf(lp) then
-		if Runtime.rebirthCounterConn then safe(function() Runtime.rebirthCounterConn:Disconnect() end) end
-		Runtime.rebirthCounterConn=nil
-		Runtime.rebirthCounterWatched=nil
-		return current,source,nil
-	end
-
-	if Runtime.rebirthCounterWatched~=counter or not Runtime.rebirthCounterConn then
-		if Runtime.rebirthCounterConn then safe(function() Runtime.rebirthCounterConn:Disconnect() end) end
-		Runtime.rebirthCounterWatched=counter
-		local ok,connection=safe(function()
-			return counter:GetPropertyChangedSignal("Value"):Connect(function()
-				if not Runtime.alive or Runtime.rebirthCounterWatched~=counter then return end
-				local value=readRebirthValue(counter)
-				if value~=nil then observeRebirthCounter(counter,value) end
-			end)
-		end)
-		Runtime.rebirthCounterConn=ok and addConn(connection) or nil
-		if not Runtime.rebirthCounterConn then
-			Runtime.rebirthCounterWatched=nil
-			return current,source,nil
-		end
-	end
-
-	if current~=nil then observeRebirthCounter(counter,current) end
-	return current,source,counter
-end
-
-local function rebirthGoalRetryDelay(current,target,isRemoteFunction)
-	local pingSeconds=Runtime.pingAvailable and math.max(0,tonumber(Runtime.pingMs) or 0)/1000 or 0.1
-	-- Successful rebirths do not wait for this timeout: the Value signal schedules
-	-- the next request immediately. This is only a safety window before retrying a
-	-- request whose replicated acknowledgement never arrived.
-	local delay=math.clamp(0.35+pingSeconds*3,0.65,1.5)
-	if target-current<=2 then delay=math.max(delay,2.0) end
-	if not isRemoteFunction then delay=math.max(delay,1.0) end
-	return math.min(delay,2.5)
-end
-
-local function runRebirthAttempt(runToken)
-	local function currentRun()
-		return Runtime.alive
-			and Runtime.autoRebirth
-			and Runtime.rebirthToken==runToken
-	end
-
-	local before=nil
-	local counter=nil
-	local target=nil
-	if Runtime.rebirthGoalEnabled then
-		local value,_,resolvedCounter=ensureRebirthCounterWatcher()
-		if not currentRun() then return end
-
-		if value==nil or not resolvedCounter then
-			local now=os.clock()
-			Runtime.rebirthGoalCurrent=nil
-			Runtime.rebirthGoalReadFailures=Runtime.rebirthGoalReadFailures+1
-			Runtime.nextRebirth=now+1
-			refreshRebirthGoalUI(nil,"Точный счётчик Rebirths не найден • запрос на паузе")
-			if Runtime.rebirthGoalReadFailures==1 or now-Runtime.rebirthGoalStatusAt>=3 then
-				Runtime.rebirthGoalStatusAt=now
-				setStatus("ЦЕЛЬ: ТОЧНЫЙ СЧЁТЧИК REBIRTHS НЕ НАЙДЕН • ПАУЗА")
-			end
-			return
-		end
-
-		Runtime.rebirthGoalReadFailures=0
-		counter=resolvedCounter
-		before=math.max(0,math.floor(value+0.5))
-		target=math.max(1,math.floor(tonumber(Runtime.rebirthGoal) or 1))
-		refreshRebirthGoalUI(before)
-		if before>=target then
-			stopRebirthAtGoal(before)
-			return
-		end
-
-		local awaiting=Runtime.rebirthGoalAwaitingFrom
-		if awaiting~=nil then
-			if before>awaiting then
-				clearRebirthGoalPending()
-			else
-				local now=os.clock()
-				if now<Runtime.rebirthGoalAwaitingUntil then
-					Runtime.nextRebirth=Runtime.rebirthGoalAwaitingUntil
-					return
-				end
-
-				-- The previous request was rejected or its counter update never arrived.
-				-- Release exactly one slot and retry; inFlight still prevents overlap.
-				clearRebirthGoalPending()
-			end
-		end
-	end
-
-	if not currentRun() then return end
-	local remote=findRebirthRemote()
-	if not remote then
-		Runtime.nextRebirth=os.clock()+1
-		setStatus("AUTO REB: rebirthRemote не найден")
-		return
-	end
-	if target and not remote:IsA("RemoteFunction") then
-		stopRebirthAutomation("ЦЕЛЬ РЕБИРТОВ: НУЖЕН ТОЧНЫЙ REMOTEFUNCTION",false,before)
-		return
-	end
-
-	local isRemoteFunction=remote:IsA("RemoteFunction")
-	local retryDelay=target and rebirthGoalRetryDelay(before,target,isRemoteFunction) or 0.1
-	if Runtime.rebirthGoalEnabled then
-		-- Arm acknowledgement BEFORE InvokeServer: Value may change while the
-		-- yielding call is still waiting for its response.
-		local sentAt=os.clock()
-		Runtime.rebirthGoalAwaitingFrom=before
-		Runtime.rebirthGoalAwaitingSince=sentAt
-		Runtime.rebirthGoalAwaitingUntil=sentAt+retryDelay
-	end
-
-	local ok,err=tryRebirth(remote)
-	if not currentRun() then return end
-
-	if not ok then
-		if Runtime.rebirthGoalEnabled then
-			if Runtime.rebirthGoalAwaitingFrom==before then
-				-- An InvokeServer error does not prove that the server rejected the
-				-- request. Keep the same acknowledgement window to avoid a duplicate.
-				Runtime.nextRebirth=Runtime.rebirthGoalAwaitingUntil
-				setStatus("AUTO REB: ЖДУ СЧЁТЧИК ПОСЛЕ ОШИБКИ СЕТИ")
-			else
-				-- The Value signal already confirmed this request while it was yielding.
-				Runtime.nextRebirth=0
-			end
-		else
-			Runtime.nextRebirth=os.clock()+0.25
-			setStatus("AUTO REB: "..tostring(err))
-		end
-		return
-	end
-
-	if Runtime.rebirthGoalEnabled and counter then
-		local after=readRebirthValue(counter)
-		if after~=nil then observeRebirthCounter(counter,after) end
-		if not currentRun() then return end
-
-		if Runtime.rebirthGoalAwaitingFrom==before then
-			-- No change yet: wait only the short post-response replication window.
-			Runtime.rebirthGoalAwaitingUntil=math.max(Runtime.rebirthGoalAwaitingUntil,os.clock()+retryDelay)
-			Runtime.nextRebirth=Runtime.rebirthGoalAwaitingUntil
-		else
-			Runtime.nextRebirth=0
-		end
-	elseif not Runtime.rebirthGoalEnabled then
-		-- Unlimited mode is limited only by the yielding server call plus a tiny
-		-- client-side guard, matching the game's usual fast rebirth cadence.
-		Runtime.nextRebirth=os.clock()+0.05
-	end
-end
-
-local function findSizeRemote()
-	local events=ReplicatedStorage:FindFirstChild("rEvents")
-	local remote=events and events:FindFirstChild("changeSpeedSizeRemote")
-
-	if remote and (remote:IsA("RemoteFunction") or remote:IsA("RemoteEvent")) then
-		return remote
-	end
-
-	return nil
-end
-
-local function trySetSize(value)
-	if Runtime.networkPaused then return false,"network hold" end
-	local remote=findSizeRemote()
-	if not remote then return false,"changeSpeedSizeRemote не найден" end
-
-	local size=tonumber(value)
-	if not size then return false,"неверный размер" end
-	size=math.clamp(size,0.1,1000)
-
-	local ok,err=safe(function()
-		if remote:IsA("RemoteFunction") then
-			remote:InvokeServer("changeSize",size)
-		else
-			remote:FireServer("changeSize",size)
-		end
-	end)
-
-	return ok,err
-end
-
-local function kingTargetCF()
-	local custom=ENV.RockBugKingCF
-	if typeof(custom)=="CFrame" then return custom end
-	return DEFAULT_KING_CF
-end
-
-local function destroyKingPhysicalHold()
-	for _,field in ipairs({"kingHoldPosition","kingHoldGyro"}) do
-		local mover=Runtime[field]
-		if mover and mover.Parent then safe(function() mover:Destroy() end) end
-		Runtime[field]=nil
-	end
-
-	-- Also clean an orphan left by an interrupted creation between the two
-	-- BodyMovers or by a replaced runtime.
-	local candidates={Runtime.kingRoot,root()}
-	local seen={}
-	for _,candidate in ipairs(candidates) do
-		if candidate and not seen[candidate] then
-			seen[candidate]=true
-			for _,child in ipairs(candidate:GetChildren()) do
-				if child.Name=="RockBugKingPhysicalHold" or child.Name=="RockBugKingPhysicalGyro" then
-					safe(function() child:Destroy() end)
-				end
-			end
-		end
-	end
-end
-
-local function releaseKingTouch(clearTrigger)
-	local trigger=Runtime.kingTouchTrigger
-	if trigger and trigger.Parent and type(firetouchinterest)=="function" then
-		for _,part in ipairs(Runtime.kingTouchContacts or {}) do
-			if part and part.Parent and part:IsA("BasePart") then
-				safe(function() firetouchinterest(part,trigger,1) end)
-			end
-		end
-	end
-	Runtime.kingTouchContacts={}
-	Runtime.kingTouchTrigger=nil
-	if clearTrigger then Runtime.kingTriggerPart=nil end
-end
-
-local function kingTriggerScore(part,targetPosition)
-	local distance=(part.Position-targetPosition).Magnitude
-	if distance>320 then return nil end
-
-	local full=tostring(part:GetFullName()):lower()
-	local hasTouch=part:FindFirstChildOfClass("TouchTransmitter")~=nil
-	local kingNamed=full:find("muscle king",1,true) or full:find("muscleking",1,true) or full:find("king",1,true)
-	local zoneNamed=containsAny(full,{"trigger","zone","area","hill","capture","touch","boost"})
-	local excludedGeometry=containsAny(full,{"rock","mountain","machine","crystal","shop","neededdurability"})
-	if excludedGeometry then return nil end
-	if not hasTouch and not zoneNamed then return nil end
-	if not kingNamed and not zoneNamed and distance>35 then return nil end
-	local score=-distance*0.08
-
-	if hasTouch then score=score+100 end
-	if full:find("muscle king",1,true) or full:find("muscleking",1,true) then score=score+170 end
-	if full:find("king",1,true) then score=score+80 end
-	if zoneNamed then score=score+55 end
-	if part.CanTouch then score=score+8 end
-	if not part.CanCollide then score=score+6 end
-	if part.Size.X>=8 and part.Size.Z>=8 then score=score+8 end
-
-	-- A generic touch part can only be a very close fallback. Named King/zone
-	-- ancestry wins over unrelated portals or pads in the same area.
-	return score
-end
-
-local function findKingTriggerPart()
-	if Runtime.kingTriggerPart and Runtime.kingTriggerPart.Parent then
-		return Runtime.kingTriggerPart
-	end
-
-	local targetPosition=kingTargetCF().Position
-	local best=nil
-	local bestScore=-math.huge
-
-	local function consider(part)
-		if not part or not part:IsA("BasePart") then return end
-		local score=kingTriggerScore(part,targetPosition)
-		if score and score>bestScore then
-			best=part
-			bestScore=score
-		end
-	end
-
-	-- Spatial lookup avoids missing the zone merely because it appeared after
-	-- the old arbitrary 12,000-descendant scan limit.
-	local spatialOk,nearby=safe(function()
-		return workspace:GetPartBoundsInRadius(targetPosition,320)
-	end)
-	if spatialOk and type(nearby)=="table" then
-		for _,part in ipairs(nearby) do consider(part) end
-	end
-
-	if not best then
-		for _,part in ipairs(workspace:GetDescendants()) do consider(part) end
-	end
-
-	Runtime.kingTriggerPart=best
-	return best
-end
-
-local function kingPhysicalCF(trigger)
-	local base=Runtime.kingCF or kingTargetCF()
-	if not trigger or not trigger.Parent then return base end
-	if (trigger.Position-base.Position).Magnitude>160 then return base end
-
-	local localPosition=trigger.CFrame:PointToObjectSpace(base.Position)
-	local half=trigger.Size*0.5
-	local alreadyInside=
-		math.abs(localPosition.X)<=half.X+3
-		and math.abs(localPosition.Y)<=half.Y+4
-		and math.abs(localPosition.Z)<=half.Z+3
-	if alreadyInside then return base end
-
-	local y=trigger.Position.Y
-	if trigger.CanCollide or trigger.Size.Y<4 then
-		y=y+half.Y+2.8
-	end
-	return CFrame.new(trigger.Position.X,y,trigger.Position.Z)*base.Rotation
-end
-
-local function installKingPhysicalHold(r,cf)
-	destroyKingPhysicalHold()
-	r.Anchored=false
-	r.CFrame=cf
-	r.AssemblyLinearVelocity=Vector3.new(0,0,0)
-	r.AssemblyAngularVelocity=Vector3.new(0,0,0)
-
-	local ok,err=xpcall(function()
-		local position=Instance.new("BodyPosition")
-		position.Name="RockBugKingPhysicalHold"
-		position.MaxForce=Vector3.new(1e9,1e9,1e9)
-		position.P=50000
-		position.D=1800
-		position.Position=cf.Position
-		position.Parent=r
-		Runtime.kingHoldPosition=position
-
-		local gyro=Instance.new("BodyGyro")
-		gyro.Name="RockBugKingPhysicalGyro"
-		gyro.MaxTorque=Vector3.new(1e9,1e9,1e9)
-		gyro.P=40000
-		gyro.D=1200
-		gyro.CFrame=cf
-		gyro.Parent=r
-		Runtime.kingHoldGyro=gyro
-	end,function(e)
-		return tostring(e)
-	end)
-
-	if not ok then destroyKingPhysicalHold() end
-	return ok,err
-end
-
-local function pulseKingTouch(trigger)
-	Runtime.nextKingTouchPulse=os.clock()+2
-	if not trigger or not trigger.Parent or type(firetouchinterest)~="function" then return end
-	local c=char()
-	local contacts={
-		Runtime.kingRoot,
-		c and (c:FindFirstChild("LeftFoot") or c:FindFirstChild("Left Leg")),
-		c and (c:FindFirstChild("RightFoot") or c:FindFirstChild("Right Leg")),
-		c and (c:FindFirstChild("LowerTorso") or c:FindFirstChild("Torso")),
-	}
-
-	local openContacts=Runtime.kingTouchContacts or {}
-	local sameOpenTouch=Runtime.kingTouchTrigger==trigger and #openContacts>0
-	if sameOpenTouch then
-		for _,part in ipairs(openContacts) do
-			if not part or not part.Parent then
-				sameOpenTouch=false
-				break
-			end
-		end
-	end
-	if sameOpenTouch then return end
-	if #openContacts>0 or Runtime.kingTouchTrigger then releaseKingTouch(false) end
-
-	Runtime.kingTouchContacts={}
-	Runtime.kingTouchTrigger=trigger
-	for _,part in ipairs(contacts) do
-		if part and part.Parent and part:IsA("BasePart") then
-			table.insert(Runtime.kingTouchContacts,part)
-		-- Keep the touch open while King Gym is enabled. The old code sent
-		-- touch-end immediately, which explicitly removed physical presence.
-			safe(function() firetouchinterest(part,trigger,0) end)
-		end
-	end
-end
-
-local function triggerKingPresence(r)
-	if Runtime.kingPresenceInFlight or not Runtime.kingLock or not r or not r.Parent then return false end
-	Runtime.kingPresenceInFlight=true
-	local token=Runtime.kingPresenceToken
-
-	local ok,err=xpcall(function()
-		destroyKingPhysicalHold()
-		releaseKingTouch(false)
-
-		local trigger=findKingTriggerPart()
-		local cf=kingPhysicalCF(trigger)
-		Runtime.kingCF=cf
-		local entryCF=cf*CFrame.new(0,8,0)
-
-		r.Anchored=false
-		r.CFrame=entryCF
-		r.AssemblyAngularVelocity=Vector3.new(0,0,0)
-
-		-- Cross the zone over several replicated physics frames instead of an
-		-- instantaneous CFrame jump, so the server observes a real entry.
-		for step=1,12 do
-			if not Runtime.alive or Runtime.networkPaused or not Runtime.kingLock or Runtime.kingPresenceToken~=token
-				or Runtime.kingRoot~=r or not r.Parent then return end
-			local alpha=step/12
-			r.CFrame=entryCF:Lerp(cf,alpha)
-			r.AssemblyLinearVelocity=Vector3.new(0,-4,0)
-			r.AssemblyAngularVelocity=Vector3.new(0,0,0)
-			RunService.Heartbeat:Wait()
-		end
-
-		task.wait(0.12)
-		if not Runtime.alive or Runtime.networkPaused or not Runtime.kingLock or Runtime.kingPresenceToken~=token
-			or Runtime.kingRoot~=r or not r.Parent then return end
-
-		pulseKingTouch(trigger)
-		local holdOk,holdErr=installKingPhysicalHold(r,cf)
-		if not holdOk then error(holdErr or "physical hold failed") end
-	end,function(e)
-		return tostring(e)
-	end)
-
-	if Runtime.kingPresenceToken==token then Runtime.kingPresenceInFlight=false end
-	if not ok and Runtime.alive and Runtime.kingLock and Runtime.kingPresenceToken==token then
-		setStatus("KING PHYSICS: "..tostring(err))
-	end
-	return ok
-end
-
-local function disableKingLock()
-	local savedRoot=Runtime.kingRoot
-	Runtime.kingPresenceToken=Runtime.kingPresenceToken+1
-	Runtime.kingLock=false
-	destroyKingPhysicalHold()
-	releaseKingTouch(true)
-
-	if savedRoot and savedRoot.Parent and Runtime.kingSavedAnchored~=nil then
-		safe(function() savedRoot.Anchored=Runtime.kingSavedAnchored end)
-	end
-
-	Runtime.kingCF=nil
-	Runtime.kingRoot=nil
-	Runtime.kingSavedAnchored=nil
-	Runtime.kingPresenceInFlight=false
-	Runtime.nextKingTouchPulse=0
-end
-
-local function enableKingLock()
-	local r=root()
-	if not r then return false,"нет root" end
-
-	disableKingLock()
-
-	Runtime.kingCF=kingTargetCF()
-	Runtime.kingLock=true
-	Runtime.kingRoot=r
-	if Runtime.networkHoldRoot==r and Runtime.networkHoldSavedAnchored~=nil then
-		Runtime.kingSavedAnchored=Runtime.networkHoldSavedAnchored
-	else
-		Runtime.kingSavedAnchored=r.Anchored
-	end
-	Runtime.nextKingTick=0
-
-	if Runtime.networkPaused then
-		-- Network hold owns the root until replication is healthy again. The
-		-- scheduler will perform the physical entry immediately after release.
-		return true
-	end
-
-	local ok=triggerKingPresence(r)
-	if not ok then
-		disableKingLock()
-		return false,"не удалось создать физическое присутствие"
-	end
-	return true
-end
-
--- ---------- STABLE CHARACTER LOCK ----------
-
-local function restoreCharacterLock()
-	local saved=Runtime.characterLockSaved
-
-	-- Nothing was locked by this runtime, so do not overwrite game-owned state.
-	if not saved then
-		Runtime.characterCollisionSaved={}
-		return
-	end
-
-	-- Restore the exact instances that were changed. After respawn, using root()
-	-- here could apply the previous character's state to the new character.
-	local r=saved.root
-	local h=saved.humanoid
-
-	if r and r.Parent then
-		safe(function()
-			r.Anchored=saved.rootAnchored
-			r.AssemblyLinearVelocity=Vector3.new(0,0,0)
-			r.AssemblyAngularVelocity=Vector3.new(0,0,0)
-		end)
-	end
-
-	if h and h.Parent then
-		safe(function()
-			h.AutoRotate=saved.autoRotate
-			if saved.walkSpeed~=nil then h.WalkSpeed=saved.walkSpeed end
-		end)
-	end
-
-	for part,state in pairs(Runtime.characterCollisionSaved) do
-		if part and part.Parent then
-			safe(function()
-				part.CanCollide=state.CanCollide
-				part.CanTouch=state.CanTouch
-			end)
-		end
-	end
-
-	Runtime.characterCollisionSaved={}
-	Runtime.characterLockSaved=nil
-end
-
-local function lockCharacterAt(cf)
-	local c=char()
-	local r=root()
-	local h=hum()
-	if not c or not r then return false,"нет персонажа" end
-
-	-- Restore any previous lock first, then save a fresh clean state.
-	restoreCharacterLock()
-
-	Runtime.characterLockSaved={
-		character=c,
-		root=r,
-		humanoid=h,
-		rootAnchored=r.Anchored,
-		autoRotate=h and h.AutoRotate or true,
-		walkSpeed=h and h.WalkSpeed or 16,
-	}
-	Runtime.characterCollisionSaved={}
-
-	for _,part in ipairs(c:GetDescendants()) do
-		if part:IsA("BasePart") then
-			Runtime.characterCollisionSaved[part]={
-				CanCollide=part.CanCollide,
-				CanTouch=part.CanTouch,
-			}
-			part.CanCollide=false
-		end
-	end
-
-	if h then
-		h.AutoRotate=false
-		h.WalkSpeed=0
-	end
-
-	r.CFrame=cf
-	r.AssemblyLinearVelocity=Vector3.new(0,0,0)
-	r.AssemblyAngularVelocity=Vector3.new(0,0,0)
-
-	-- Keep the assembly movable so punch animation/touch can replicate.
-	-- The scheduler only corrects the CFrame after real drift.
-	r.Anchored=false
-
-	Runtime.lockCF=cf
-	return true
-end
-
--- ---------- SAFE TOUCH / LOCK ----------
-
-local function targetPart()
-	local info=getRockInfo(Runtime.selectedRock)
-	return info and (info.hit or info.body) or nil
-end
-
-local function oneTouch()
-	if type(firetouchinterest)~="function" then return end
-
-	local target=targetPart()
-	local c=char()
-
-	if not target or not c or not target:IsA("BasePart") then return end
-
-	local hands={
-		c:FindFirstChild("RightHand") or c:FindFirstChild("Right Arm"),
-		c:FindFirstChild("LeftHand") or c:FindFirstChild("Left Arm"),
-	}
-
-	if not hands[1] and not hands[2] then
-		hands[1]=c:FindFirstChild("HumanoidRootPart")
-	end
-
-	for _,hand in ipairs(hands) do
-		if hand and hand:IsA("BasePart") then
-			safe(function()
-				firetouchinterest(hand,target,0)
-				firetouchinterest(hand,target,1)
-			end)
-		end
-	end
-end
-
-local function insideRockCF(row)
-	local info=getRockInfo(row)
-	if not info then return nil,"камень не найден" end
-
-	local body=info.body
-	local left=info.left
-	local right=info.right
-	local hit=info.hit
-	local cf=nil
-
-	-- Stand inside the server-facing hit part so physical punches can register.
-	if hit and hit:IsA("BasePart") then
-		local offsetY=math.clamp(hit.Size.Y*0.03,0,0.75)
-		cf=hit.CFrame*CFrame.new(0,offsetY,0)
-	elseif left and left:IsA("BasePart") and right and right:IsA("BasePart") then
-		local center=(left.Position+right.Position)/2
-		local rot=(body and body:IsA("BasePart")) and (body.CFrame-body.Position) or CFrame.new()
-		cf=CFrame.new(center)*rot
-	elseif body and body:IsA("BasePart") then
-		local offsetY=math.clamp(body.Size.Y*0.08,0,2)
-		cf=body.CFrame*CFrame.new(0,offsetY,0)
-	end
-
-	if not cf then return nil,"нет точки внутри камня" end
-
-	local custom=ENV.RockBugInsideOffset
-	if typeof(custom)=="Vector3" then
-		cf=cf*CFrame.new(custom)
-	end
-
-	return cf
-end
-
-local function teleportInsideSelected()
-	local cf,err=insideRockCF(Runtime.selectedRock)
-	if not cf then return false,err end
-
-	local ok,why=lockCharacterAt(cf)
-	if not ok then return false,why end
-
-	Runtime.nextLockTick=0
-	return true
-end
-
-Runtime.teleportInsideSelected=teleportInsideSelected
-
-local function nearSelectedRock()
-	local r=root()
-	local target=targetPart()
-
-	if not r or not target then return false,"нет цели" end
-
-	local distance=(r.Position-target.Position).Magnitude
-	local maxSize=math.max(target.Size.X,target.Size.Y,target.Size.Z)
-	local limit=math.max(70,maxSize+38)
-
-	if distance>limit then
-		return false,"вышел из камня"
-	end
-
-	return true
-end
-
-local function insideSelectedRockLockZone(r)
-	local info=getRockInfo(Runtime.selectedRock)
-	local zone=info and (info.body or info.hit)
-	if not r or not zone or not zone:IsA("BasePart") then return false end
-
-	local localPosition=zone.CFrame:PointToObjectSpace(r.Position)
-	local half=zone.Size*0.5
-	local maxSize=math.max(zone.Size.X,zone.Size.Y,zone.Size.Z)
-	local margin=math.clamp(maxSize*0.18,8,22)
-
-	return math.abs(localPosition.X)<=half.X+margin
-		and math.abs(localPosition.Y)<=half.Y+margin
-		and math.abs(localPosition.Z)<=half.Z+margin
-end
-
--- ---------- SAFE VISUAL LOW ----------
-
-local function setVisualLow(on)
-	if on==Runtime.visualLow then return end
-	Runtime.visualLow=on
-
-	if on then
-		Runtime.visualSaved={}
-
-		local scanned=0
-		for _,d in ipairs(workspace:GetDescendants()) do
-			scanned=scanned+1
-			if scanned>6500 then break end
-
-			if d:IsA("ParticleEmitter") or d:IsA("Trail") or d:IsA("Beam") or d:IsA("Smoke") or d:IsA("Fire") or d:IsA("Sparkles") then
-				Runtime.visualSaved[d]={Enabled=d.Enabled}
-				d.Enabled=false
-			elseif d:IsA("BasePart") then
-				Runtime.visualSaved[d]={CastShadow=d.CastShadow}
-				d.CastShadow=false
-			end
-
-			if scanned%500==0 then task.wait() end
-		end
-
-		setStatus("МЕНЬШЕ ЭФФЕКТОВ: включено")
-	else
-		for obj,saved in pairs(Runtime.visualSaved) do
-			if obj and obj.Parent then
-				if saved.Enabled~=nil then safe(function() obj.Enabled=saved.Enabled end) end
-				if saved.CastShadow~=nil then safe(function() obj.CastShadow=saved.CastShadow end) end
-			end
-		end
-
-		Runtime.visualSaved={}
-		setStatus("МЕНЬШЕ ЭФФЕКТОВ: выключено")
-	end
-end
-
--- ---------- MODE CONTROL ----------
-
-local function unequip()
-	local h=hum()
-	if h then safe(function() h:UnequipTools() end) end
-end
-
-local function setAllModeLeversOff()
-	if Runtime.leverRefs.bug then Runtime.leverRefs.bug.Set(false,true) end
-	if Runtime.leverRefs.lockRock then Runtime.leverRefs.lockRock.Set(false,true) end
-
-	for _,lever in pairs(Runtime.leverRefs.train or {}) do
-		if lever then lever.Set(false,true) end
-	end
-end
-
-local function clearModeState(reason,updateLevers)
-	Runtime.modeToken=Runtime.modeToken+1
-	Runtime.mode=nil
-	Runtime.selectedTrain=nil
-	Runtime.activeTool=nil
-	Runtime.nextAction=0
-	Runtime.nextEquip=0
-	Runtime.nextCooldownSweep=0
-	Runtime.punchCycle=0
-	Runtime.lockRock=false
-	Runtime.lockCF=nil
-	Runtime.transientFailures={}
-
-	restoreCharacterLock()
-	unequip()
-
-	if updateLevers then
-		setAllModeLeversOff()
-	end
-
-	if reason then setStatus(reason) end
-end
-
-local function stopMode(reason)
-	clearModeState(reason or "STOP",true)
-end
-
-local function panicStop()
-	clearModeState("ВСЁ ОСТАНОВЛЕНО",true)
-	stopExtraAutomation(nil)
-	Runtime.lockPosition=false
-	Runtime.positionCF=nil
-	stopRebirthAutomation(nil,false)
-	Runtime.autoSize=false
-	disableKingLock()
-
-	if Runtime.leverRefs.lockPosition then Runtime.leverRefs.lockPosition.Set(false,true) end
-	if Runtime.leverRefs.autoSize then Runtime.leverRefs.autoSize.Set(false,true) end
-	if Runtime.leverRefs.kingLock then Runtime.leverRefs.kingLock.Set(false,true) end
-
-	setVisualLow(false)
-	if Runtime.leverRefs.visualLow then Runtime.leverRefs.visualLow.Set(false,true) end
-end
-
-local function startBug()
-	stopKillAutomation(nil)
-	-- Reset the previous mode and all of its UI levers before enabling BUG.
-	clearModeState(nil,true)
-
-	-- Position lock belongs to TRAIN and would fight the rock CFrame lock.
-	Runtime.lockPosition=false
-	Runtime.positionCF=nil
-	disableKingLock()
-	if Runtime.leverRefs.lockPosition then
-		Runtime.leverRefs.lockPosition.Set(false,true)
-	end
-	if Runtime.leverRefs.kingLock then
-		Runtime.leverRefs.kingLock.Set(false,true)
-	end
-
-	if not Runtime.selectedRock then
-		setStatus("камень не выбран")
-		return false
-	end
-
-	local ok,err=teleportInsideSelected()
-	if not ok then
-		setStatus("BUG: "..tostring(err))
-		return false
-	end
-
-	local tool,msg=ensurePunchTool()
-	if not tool then
-		restoreCharacterLock()
-		setStatus(tostring(msg))
-		return false
-	end
-
-	Runtime.activeTool=tool
-	Runtime.modeToken=Runtime.modeToken+1
-	Runtime.mode="bug"
-	Runtime.lockRock=true
-	Runtime.nextAction=0
-	Runtime.nextEquip=0
-	Runtime.nextCooldownSweep=0
-	Runtime.nextNearCheck=0
-	local _,remoteLimit=effectiveRates()
-	Runtime.remoteTokens=remoteLimit
-
-	if Runtime.leverRefs.bug then Runtime.leverRefs.bug.Set(true,true) end
-	if Runtime.leverRefs.lockRock then Runtime.leverRefs.lockRock.Set(true,true) end
-
-	clearCooldownsOnce(tool)
-	safe(function() tool:Activate() end)
-	oneTouch()
-
-	setStatus("АВТОУДАР: включён • "..tostring(Runtime.selectedRock.label))
-	return true
-end
-
-local function startTrain(t)
-	stopKillAutomation(nil)
-	-- Clear BUG/TP LOCK and stale TRAIN levers before enabling this one.
-	clearModeState(nil,true)
-
-	local tool,msg=ensureTrainTool(t)
-	if not tool then
-		setStatus(tostring(msg))
-		return false
-	end
-
-	Runtime.activeTool=tool
-	Runtime.selectedTrain=t
-	Runtime.modeToken=Runtime.modeToken+1
-	Runtime.mode="train"
-	Runtime.nextAction=0
-	Runtime.nextEquip=0
-	Runtime.nextCooldownSweep=0
-	local _,remoteLimit=effectiveRates()
-	Runtime.remoteTokens=remoteLimit
-
-	local lever=Runtime.leverRefs.train and Runtime.leverRefs.train[t.id]
-	if lever then lever.Set(true,true) end
-
-	clearCooldownsOnce(tool)
-	safe(function() tool:Activate() end)
-	tryTrainRemote()
-
-	setStatus("КАЧ: "..tostring(t.label).." включён")
-	return true
-end
-
--- ---------- SINGLE SCHEDULER ----------
-
-local function scheduler()
-	while Runtime.alive do
-		local now=os.clock()
-		Runtime.lastSchedulerTick=now
-
-		if now>=Runtime.nextNetUpdate then
-			Runtime.nextNetUpdate=now+0.5
-			updateNetworkGuard(now)
-			updateRemotePps()
-			setNetText()
-		end
-
-		if Runtime.networkPaused and now>=Runtime.nextNetworkHoldTick then
-			Runtime.nextNetworkHoldTick=now+0.05
-			keepNetworkCharacterHold()
-		end
-
-		if not Runtime.networkPaused and Runtime.autoRebirth and not Runtime.rebirthInFlight and now>=Runtime.nextRebirth then
-			Runtime.nextRebirth=now+0.05
-			Runtime.rebirthInFlight=true
-			local runToken=Runtime.rebirthToken
-			task.spawn(function()
-				local ok,err=xpcall(function()
-					runRebirthAttempt(runToken)
-				end,function(e)
-					local trace=""
-					if debug and type(debug.traceback)=="function" then trace="\n"..tostring(debug.traceback()) end
-					return tostring(e)..trace
-				end)
-				Runtime.rebirthInFlight=false
-				if not ok and Runtime.alive and Runtime.rebirthToken==runToken then
-					Runtime.nextRebirth=os.clock()+1
-					setStatus("AUTO REB ERROR: "..tostring(err):sub(1,90))
-				end
-			end)
-		end
-
-		if not Runtime.networkPaused and Runtime.autoSize and not Runtime.sizeInFlight and now>=Runtime.nextSize then
-			Runtime.nextSize=now+0.25
-			Runtime.sizeInFlight=true
-			local requestedSize=Runtime.sizeTarget
-			task.spawn(function()
-				local ok,err=trySetSize(requestedSize)
-				Runtime.sizeInFlight=false
-				if not ok and Runtime.alive and Runtime.autoSize then
-					setStatus("AUTO SIZE: "..tostring(err))
-				end
-			end)
-		end
-
-		if not Runtime.networkPaused and Runtime.kingLock and Runtime.kingCF and now>=Runtime.nextKingTick then
-			Runtime.nextKingTick=now+0.25
-			local r=root()
-
-			if r then
-				if Runtime.kingRoot~=r then
-					-- Cancel every object/contact owned by the previous character
-					-- before accepting the respawned root. Otherwise the cancelled
-					-- coroutine can leave kingPresenceInFlight stuck forever.
-					destroyKingPhysicalHold()
-					releaseKingTouch(false)
-					Runtime.kingPresenceToken=Runtime.kingPresenceToken+1
-					Runtime.kingPresenceInFlight=false
-					Runtime.kingRoot=r
-					Runtime.kingSavedAnchored=r.Anchored
-					if not Runtime.kingPresenceInFlight then
-						task.spawn(function() triggerKingPresence(r) end)
-					end
-				else
-					local position=Runtime.kingHoldPosition
-					local gyro=Runtime.kingHoldGyro
-					local holdAlive=position and position.Parent==r and gyro and gyro.Parent==r
-					local drift=(r.Position-Runtime.kingCF.Position).Magnitude
-
-					if r.Anchored or not holdAlive or drift>3 then
-						if not Runtime.kingPresenceInFlight then
-							task.spawn(function() triggerKingPresence(r) end)
-						end
-					else
-						-- BodyMovers freeze the character without removing it from
-						-- the server's unanchored physics simulation.
-						r.Anchored=false
-						position.Position=Runtime.kingCF.Position
-						gyro.CFrame=Runtime.kingCF
-						if now>=Runtime.nextKingTouchPulse then
-							pulseKingTouch(findKingTriggerPart())
-						end
-					end
-				end
-			end
-		end
-
-		if not Runtime.networkPaused and Runtime.lockPosition and Runtime.positionCF and now>=Runtime.nextPosTick then
-			Runtime.nextPosTick=now+0.05
-			local r=root()
-
-			if r then
-				-- Keep normal position lock inside the replicated physics world.
-				-- Anchoring only looks frozen locally and can suppress zone presence.
-				r.Anchored=false
-				r.CFrame=Runtime.positionCF
-				r.AssemblyLinearVelocity=Vector3.new(0,0,0)
-				r.AssemblyAngularVelocity=Vector3.new(0,0,0)
-			end
-		end
-
-		if Runtime.mode=="bug" then
-			-- Keep physical punching enabled; correct only after actual drift.
-			if Runtime.lockRock and Runtime.lockCF then
-				local r=root()
-				if not r then
-					if not Runtime.networkPaused then
-						local expired=transientFailureExpired("bugRoot",now,2.5)
-						if expired then stopMode("AUTO STOP: нет root после grace") end
-					end
-				elseif (r.Position-Runtime.lockCF.Position).Magnitude>1.25 then
-					clearTransientFailure("bugRoot")
-					local drift=(r.Position-Runtime.lockCF.Position).Magnitude
-					if insideSelectedRockLockZone(r) then
-						-- Physics may push the character from the center toward a valid edge.
-						-- Follow that stable contact point instead of teleporting to center.
-						Runtime.lockCF=r.CFrame
-					elseif drift>8 then
-						r.CFrame=Runtime.lockCF
-						r.AssemblyLinearVelocity=Vector3.new(0,0,0)
-						r.AssemblyAngularVelocity=Vector3.new(0,0,0)
-					end
-				else
-					clearTransientFailure("bugRoot")
-				end
-			end
-
-			if not Runtime.networkPaused and now>=Runtime.nextNearCheck then
-				Runtime.nextNearCheck=now+0.35
-				local near,why=nearSelectedRock()
-
-				if not near then
-					local expired=transientFailureExpired("rockNear",now,2.5)
-					if expired then stopMode("AUTO STOP: "..tostring(why).." после grace") end
-				else
-					clearTransientFailure("rockNear")
-				end
-			end
-
-			if not Runtime.networkPaused and Runtime.mode=="bug" and now>=Runtime.nextAction then
-				local actionRate=effectiveRates()
-				Runtime.nextAction=now+(1/actionRate)
-				Runtime.punchCycle=Runtime.punchCycle+1
-
-				if not Runtime.activeTool or Runtime.activeTool.Parent~=char() then
-					local tool,msg=ensurePunchTool()
-					Runtime.activeTool=tool
-					if not tool then setStatus(msg) end
-				end
-
-				if Runtime.activeTool then
-					safe(function() Runtime.activeTool:Activate() end)
-				end
-
-				-- One bounded direct remote attempt, never loops.
-				tryPunchRemote()
-
-				-- Touch on every bounded action so Delta can register either hand.
-				oneTouch()
-			end
-
-			if not Runtime.networkPaused and now>=Runtime.nextCooldownSweep then
-				Runtime.nextCooldownSweep=now+2
-				clearCooldownsOnce(Runtime.activeTool)
-			end
-
-			if not Runtime.networkPaused and now>=Runtime.nextEquip then
-				Runtime.nextEquip=now+1.5
-
-				if not Runtime.activeTool or Runtime.activeTool.Parent~=char() then
-					Runtime.activeTool=ensurePunchTool()
-				end
-			end
-		elseif Runtime.mode=="train" then
-			if not Runtime.networkPaused and now>=Runtime.nextAction then
-				-- Match the validated punch cadence and its adaptive network throttle.
-				local rate=effectiveRates()
-				Runtime.nextAction=now+(1/rate)
-
-				if Runtime.selectedTrain then
-					if not Runtime.activeTool or Runtime.activeTool.Parent~=char() then
-						Runtime.activeTool=ensureTrainTool(Runtime.selectedTrain)
-					end
-
-					if Runtime.activeTool then
-						safe(function() Runtime.activeTool:Activate() end)
-						tryTrainRemote()
-					end
-				end
-			end
-
-			if not Runtime.networkPaused and now>=Runtime.nextCooldownSweep then
-				Runtime.nextCooldownSweep=now+2
-				clearCooldownsOnce(Runtime.activeTool)
-			end
-
-			if not Runtime.networkPaused and now>=Runtime.nextEquip then
-				Runtime.nextEquip=now+1.5
-
-				if Runtime.selectedTrain then
-					Runtime.activeTool=ensureTrainTool(Runtime.selectedTrain)
-				end
-			end
-		end
-
-		task.wait(0.015)
-	end
-end
-
--- ---------- ANTI AFK ----------
-
-local antiAfkConn=addConn(lp.Idled:Connect(function()
-	if not Runtime.antiAfkEnabled then return end
-
-	safe(function()
-		VirtualUser:CaptureController()
-		VirtualUser:ClickButton2(Vector2.new())
-	end)
-end))
-
-local function buildUI()
--- ---------- UI ----------
-
-local gui=Instance.new("ScreenGui")
-gui.Name=HUB_VERSION
-gui.ResetOnSpawn=false
-gui.IgnoreGuiInset=true
-gui.DisplayOrder=999999
-gui.Parent=playerGui
-Runtime.uiRoot=gui
-Runtime.layoutUI={}
-
-local THEME={
-	Bg=Color3.fromRGB(17,18,22),
-	Panel=Color3.fromRGB(23,24,29),
-	Surface=Color3.fromRGB(29,30,36),
-	SurfaceAlt=Color3.fromRGB(38,39,47),
-	Accent=Color3.fromRGB(142,118,255),
-	Accent2=Color3.fromRGB(191,174,255),
-	Neon=Color3.fromRGB(113,161,250),
-	Success=Color3.fromRGB(96,199,147),
-	Danger=Color3.fromRGB(240,108,119),
-	Text=Color3.fromRGB(238,239,244),
-	Muted=Color3.fromRGB(159,161,174),
-	Border=Color3.fromRGB(65,66,76),
-	Warm=Color3.fromRGB(237,179,101),
-}
-
-local function corner(o,r)
-	local c=Instance.new("UICorner")
-	c.CornerRadius=UDim.new(0,r)
-	c.Parent=o
-end
-
-local function stroke(o,color,thickness,transparency)
-	local s=Instance.new("UIStroke")
-	s.Color=color
-	s.Thickness=thickness
-	s.Transparency=transparency
-	s.ApplyStrokeMode=Enum.ApplyStrokeMode.Border
-	s.LineJoinMode=Enum.LineJoinMode.Round
-	s.Parent=o
-	return s
-end
-
-local function gradient(o,fromColor,toColor,rotation)
-	local g=Instance.new("UIGradient")
-	g.Color=ColorSequence.new(fromColor,toColor)
-	g.Rotation=rotation or 0
-	g.Parent=o
-	return g
-end
-
-local function neonStroke(o,thickness,transparency)
-	return stroke(o,THEME.Accent,thickness or 1.2,transparency or 0.42)
-end
-
-local function label(parent,text,size,font,color)
-	local l=Instance.new("TextLabel")
-	l.Parent=parent
-	l.BackgroundTransparency=1
-	l.Text=text
-	l.TextColor3=color or THEME.Text
-	l.Font=font or Enum.Font.GothamBold
-	l.TextSize=size or 12
-	l.TextXAlignment=Enum.TextXAlignment.Left
-	l.TextYAlignment=Enum.TextYAlignment.Center
-	l.TextWrapped=true
-	return l
-end
-
-local function button(parent,text,color)
-	local b=Instance.new("TextButton")
-	b.Parent=parent
-	b.Text=text
-	b.TextColor3=THEME.Text
-	b.BackgroundColor3=color
-	b.BackgroundTransparency=0.10
-	b.BorderSizePixel=0
-	b.AutoButtonColor=true
-	b.Font=Enum.Font.GothamBlack
-	b.TextSize=13
-	corner(b,8)
-	local edge=neonStroke(b,1,0.68)
-	edge.Name="NeonEdge"
-	return b
-end
-
-local function viewportSize()
-	local camera=workspace.CurrentCamera
-	return camera and camera.ViewportSize or Vector2.new(800,600)
-end
-
-local function windowMetrics(viewport)
-	local availableWidth=math.max(220,math.floor(viewport.X)-8)
-	local availableHeight=math.max(240,math.floor(viewport.Y)-8)
-	local mobile=viewport.X<=700 or viewport.Y<=500
-	local minWidth=math.min(320,availableWidth)
-	local minHeight=math.min(350,availableHeight)
-	local widthRatio=mobile and 0.92 or 0.50
-	local heightRatio=mobile and 0.78 or 0.76
-	local defaultWidth=math.min(500,math.max(minWidth,math.floor(viewport.X*widthRatio)))
-	local defaultHeight=math.min(540,math.max(minHeight,math.floor(viewport.Y*heightRatio)))
-	return minWidth,minHeight,availableWidth,availableHeight,defaultWidth,defaultHeight
-end
-
-local initialViewport=viewportSize()
-local minWindowWidth,minWindowHeight,maxWindowWidth,maxWindowHeight,defaultWidth,defaultHeight=windowMetrics(initialViewport)
-
-local main=Instance.new("Frame")
-main.Parent=gui
-main.Size=UDim2.fromOffset(defaultWidth,defaultHeight)
-main.Position=UDim2.fromOffset(
-	math.max(6,math.floor((initialViewport.X-defaultWidth)/2)),
-	math.max(18,math.floor((initialViewport.Y-defaultHeight)/2))
-)
-main.BackgroundColor3=THEME.Bg
-main.BackgroundTransparency=0.02
-main.BorderSizePixel=0
-main.Active=true
-main.ClipsDescendants=true
-corner(main,13)
-local mainStroke=neonStroke(main,1.1,0.56)
-gradient(main,THEME.Panel,THEME.Bg,125)
-
-local topBar=Instance.new("Frame")
-topBar.Parent=main
-topBar.Size=UDim2.new(1,0,0,48)
-topBar.BackgroundColor3=THEME.Panel
-topBar.BackgroundTransparency=0.05
-topBar.BorderSizePixel=0
-topBar.Active=true
-gradient(topBar,THEME.Panel,THEME.Surface,0)
-
-local headerLine=Instance.new("Frame")
-headerLine.Parent=topBar
-headerLine.Size=UDim2.new(1,0,0,1)
-headerLine.Position=UDim2.new(0,0,1,-1)
-headerLine.BackgroundColor3=THEME.Border
-headerLine.BackgroundTransparency=0.58
-headerLine.BorderSizePixel=0
-
-local brand=button(topBar,"RB",THEME.SurfaceAlt)
-brand.Size=UDim2.fromOffset(30,30)
-brand.Position=UDim2.fromOffset(9,9)
-brand.TextColor3=THEME.Accent
-brand.TextSize=12
-
-local title=label(topBar,"ROCK BUG HUB",14,Enum.Font.GothamBold,THEME.Text)
-title.Size=UDim2.new(1,-188,0,20)
-title.Position=UDim2.fromOffset(49,5)
-
-local versionLabel=label(topBar,"v"..tostring(DISPLAY_VERSION or "1.0"),8,Enum.Font.GothamBold,THEME.Muted)
-versionLabel.Name="VersionLabel"
-versionLabel.Size=UDim2.fromOffset(32,16)
-versionLabel.Position=UDim2.new(1,-130,0,7)
-versionLabel.TextXAlignment=Enum.TextXAlignment.Right
-versionLabel.TextWrapped=false
-
-local author=label(topBar,"MUSCLE LEGENDS",8,Enum.Font.GothamBold,THEME.Muted)
-author.Size=UDim2.new(1,-155,0,14)
-author.Position=UDim2.fromOffset(50,26)
-
-local closeBtn=button(topBar,"×",THEME.SurfaceAlt)
-closeBtn.Size=UDim2.fromOffset(26,26)
-closeBtn.Position=UDim2.new(1,-34,0,11)
-closeBtn.TextColor3=THEME.Danger
-closeBtn.TextSize=19
-
-local minimizeBtn=button(topBar,"−",THEME.SurfaceAlt)
-minimizeBtn.Size=UDim2.fromOffset(26,26)
-minimizeBtn.Position=UDim2.new(1,-64,0,11)
-minimizeBtn.TextColor3=THEME.Muted
-minimizeBtn.TextSize=18
-
-local rail=Instance.new("Frame")
-rail.Parent=main
-rail.Size=UDim2.new(1,-16,0,38)
-rail.Position=UDim2.fromOffset(8,52)
-rail.BackgroundColor3=THEME.Panel
-rail.BackgroundTransparency=0.08
-rail.BorderSizePixel=0
-rail.ClipsDescendants=true
-corner(rail,9)
-
-local railScroll=Instance.new("ScrollingFrame")
-railScroll.Parent=rail
-railScroll.Size=UDim2.new(1,-8,1,-6)
-railScroll.Position=UDim2.fromOffset(4,3)
-railScroll.BackgroundTransparency=1
-railScroll.BorderSizePixel=0
-railScroll.Active=true
-railScroll.ScrollingEnabled=false
-railScroll.ScrollingDirection=Enum.ScrollingDirection.X
-railScroll.CanvasSize=UDim2.fromOffset(0,0)
-railScroll.ScrollBarThickness=0
-railScroll.ScrollBarImageColor3=THEME.Accent
-railScroll.ScrollBarImageTransparency=0.18
-railScroll.ElasticBehavior=Enum.ElasticBehavior.WhenScrollable
-
-Runtime.layoutUI.navigationGrid=Instance.new("UIGridLayout")
-Runtime.layoutUI.navigationGrid.Parent=railScroll
-Runtime.layoutUI.navigationGrid.SortOrder=Enum.SortOrder.LayoutOrder
-Runtime.layoutUI.navigationGrid.CellPadding=UDim2.fromOffset(4,0)
-Runtime.layoutUI.navigationGrid.CellSize=UDim2.new(1/6,-4,1,0)
-
-local railLine=Instance.new("Frame")
-railLine.Parent=rail
-railLine.Size=UDim2.new(1,-10,0,1)
-railLine.Position=UDim2.new(0,5,1,-1)
-railLine.BackgroundColor3=THEME.Border
-railLine.BackgroundTransparency=0.78
-railLine.BorderSizePixel=0
-
-local function styleTab(tab,y)
-	tab.Size=UDim2.new(1/6,-4,1,0)
-	tab.LayoutOrder=math.floor((y-6)/56)+1
-	tab.TextSize=9
-	tab.TextWrapped=false
-	tab.TextTruncate=Enum.TextTruncate.AtEnd
-	tab.BackgroundTransparency=1
-	local tabStroke=tab:FindFirstChild("NeonEdge")
-	tabStroke.Name="TabStroke"
-	tabStroke.Transparency=1
-
-	local mark=Instance.new("Frame")
-	mark.Name="ActiveMark"
-	mark.Parent=tab
-	mark.Size=UDim2.new(1,-12,0,2)
-	mark.Position=UDim2.new(0,6,1,-3)
-	mark.BackgroundColor3=THEME.Accent
-	mark.BorderSizePixel=0
-	mark.Visible=false
-	corner(mark,2)
-end
-
-local bugTab=button(railScroll,"БАГ",THEME.Accent)
-styleTab(bugTab,6)
-
-local trainTab=button(railScroll,"КАЧ",THEME.Surface)
-styleTab(trainTab,62)
-
-local rebTab=button(railScroll,"РЕБ",THEME.Surface)
-styleTab(rebTab,118)
-
-local crystalTab=button(railScroll,"ШОП",THEME.Surface)
-styleTab(crystalTab,174)
-
-local killTab=button(railScroll,"PVP",THEME.Surface)
-styleTab(killTab,230)
-
-Runtime.layoutUI.systemTab=button(railScroll,"ЕЩЁ",THEME.Surface)
-styleTab(Runtime.layoutUI.systemTab,286)
-
-local rescanBtn=button(railScroll,"↻ ОБНОВИТЬ",THEME.SurfaceAlt)
-rescanBtn.Size=UDim2.new(1,-12,0,28)
-rescanBtn.Position=UDim2.fromOffset(6,342)
-rescanBtn.TextSize=9
-
-local panicBtn=button(topBar,"■",THEME.SurfaceAlt)
-panicBtn.Size=UDim2.fromOffset(26,26)
-panicBtn.Position=UDim2.new(1,-94,0,11)
-panicBtn.TextColor3=THEME.Danger
-panicBtn.TextSize=13
-
-local content=Instance.new("Frame")
-content.Parent=main
-content.Size=UDim2.new(1,-12,1,-96)
-content.Position=UDim2.fromOffset(6,94)
-content.BackgroundColor3=THEME.Bg
-content.BackgroundTransparency=0.38
-content.BorderSizePixel=0
-content.ClipsDescendants=true
-content.Visible=true
-
-local quickBar=Instance.new("Frame")
-quickBar.Parent=content
-quickBar.Size=UDim2.new(1,-12,0,76)
-quickBar.Position=UDim2.fromOffset(6,5)
-quickBar.BackgroundColor3=THEME.Surface
-quickBar.BackgroundTransparency=0.22
-quickBar.BorderSizePixel=0
-corner(quickBar,10)
-neonStroke(quickBar,1,0.76)
-gradient(quickBar,THEME.Surface,THEME.Panel,0)
-
-rescanBtn.Parent=quickBar
-rescanBtn.Size=UDim2.fromOffset(76,21)
-rescanBtn.Position=UDim2.new(1,-82,0,5)
-rescanBtn.TextSize=8
-
-local quickTitle=label(quickBar,"ФАРМ КАМНЕЙ",12,Enum.Font.GothamBold,THEME.Text)
-quickTitle.Size=UDim2.new(1,-92,0,17)
-quickTitle.Position=UDim2.fromOffset(8,5)
-quickTitle.TextWrapped=false
-quickTitle.TextTruncate=Enum.TextTruncate.AtEnd
-
-Runtime.layoutUI.quickHint=label(quickBar,"Выбери камень, затем включи автоудар.",9,Enum.Font.Gotham,THEME.Muted)
-Runtime.layoutUI.quickHint.Size=UDim2.new(1,-16,0,15)
-Runtime.layoutUI.quickHint.Position=UDim2.fromOffset(8,23)
-Runtime.layoutUI.quickHint.TextWrapped=false
-Runtime.layoutUI.quickHint.TextTruncate=Enum.TextTruncate.AtEnd
-
-local quickBody=Instance.new("Frame")
-quickBody.Parent=quickBar
-quickBody.Size=UDim2.new(1,-12,0,26)
-quickBody.Position=UDim2.fromOffset(6,43)
-quickBody.BackgroundTransparency=1
-
-local statusPanel=Instance.new("Frame")
-statusPanel.Parent=content
-statusPanel.Size=UDim2.new(1,-12,0,40)
-statusPanel.Position=UDim2.new(0,6,1,-46)
-statusPanel.BackgroundColor3=THEME.Surface
-statusPanel.BackgroundTransparency=0.30
-statusPanel.BorderSizePixel=0
-corner(statusPanel,10)
-neonStroke(statusPanel,1.1,0.58)
-
-local statusTitle=label(statusPanel,"⌁  СТАТУС",8,Enum.Font.GothamBold,THEME.Accent)
-statusTitle.Size=UDim2.new(0.34,-6,0,12)
-statusTitle.Position=UDim2.fromOffset(6,1)
-
-local serverUptime=label(statusPanel,"VIP-СЕРВЕР ~ 00:00:00",8,Enum.Font.GothamBold,THEME.Accent2)
-serverUptime.Size=UDim2.new(0.66,-10,0,12)
-serverUptime.Position=UDim2.new(0.34,4,0,1)
-serverUptime.TextXAlignment=Enum.TextXAlignment.Right
-serverUptime.TextWrapped=false
-serverUptime.TextTruncate=Enum.TextTruncate.AtEnd
-
-local status=label(statusPanel,"ГОТОВО",9,Enum.Font.GothamBold,THEME.Text)
-status.Size=UDim2.new(0.62,-7,0,21)
-status.Position=UDim2.fromOffset(4,14)
-status.BackgroundColor3=THEME.SurfaceAlt
-status.BackgroundTransparency=0.34
-status.BorderSizePixel=0
-status.TextXAlignment=Enum.TextXAlignment.Center
-status.TextWrapped=false
-status.TextTruncate=Enum.TextTruncate.AtEnd
-corner(status,7)
-neonStroke(status,1,0.66)
-
-local net=label(statusPanel,"PING ? | УДАР 0/s",8,Enum.Font.GothamBold,THEME.Accent)
-net.Size=UDim2.new(0.38,-5,0,21)
-net.Position=UDim2.new(0.62,1,0,14)
-net.BackgroundColor3=THEME.SurfaceAlt
-net.BackgroundTransparency=0.34
-net.BorderSizePixel=0
-net.TextXAlignment=Enum.TextXAlignment.Center
-net.TextWrapped=false
-net.TextTruncate=Enum.TextTruncate.AtEnd
-corner(net,7)
-neonStroke(net,1,0.66)
-
-Runtime.ui={status=status,net=net,uptime=serverUptime}
-
-local function makePage(color)
-	local page=Instance.new("ScrollingFrame")
-	page.Parent=content
-	page.Size=UDim2.new(1,-12,1,-138)
-	page.Position=UDim2.fromOffset(6,87)
-	page.BackgroundTransparency=1
-	page.BorderSizePixel=0
-	page.ScrollBarThickness=3
-	page.ScrollBarImageColor3=color
-	page.ScrollBarImageTransparency=0.12
-	page.CanvasSize=UDim2.new(0,0,0,0)
-	page.ScrollingDirection=Enum.ScrollingDirection.Y
-	page.ScrollingEnabled=true
-	page.Active=true
-	page.ElasticBehavior=Enum.ElasticBehavior.WhenScrollable
-	page.VerticalScrollBarInset=Enum.ScrollBarInset.ScrollBar
-	return page
-end
-
-local bugPage=makePage(THEME.Accent)
-local trainPage=makePage(THEME.Success)
-trainPage.Visible=false
-local rebPage=makePage(THEME.Accent2)
-rebPage.Visible=false
-local killPage=makePage(THEME.Danger)
-killPage.Visible=false
-local crystalPage=makePage(THEME.Neon)
-crystalPage.Visible=false
-Runtime.layoutUI.systemPage=makePage(THEME.Warm)
-Runtime.layoutUI.systemPage.Visible=false
-
-local resizeHandle=button(main,"◢",THEME.SurfaceAlt)
-resizeHandle.Size=UDim2.fromOffset(18,18)
-resizeHandle.Position=UDim2.new(1,-18,1,-18)
-resizeHandle.TextColor3=THEME.Accent
-resizeHandle.TextSize=13
-resizeHandle.BackgroundTransparency=0.42
-
-local miniButton=button(gui,"RH\n+",THEME.Panel)
-miniButton.Size=UDim2.fromOffset(42,42)
-miniButton.Position=main.Position
-miniButton.TextColor3=THEME.Accent
-miniButton.TextSize=12
-miniButton.Visible=false
-miniButton.Active=true
-miniButton.ZIndex=30
-neonStroke(miniButton,1.5,0.18)
-gradient(miniButton,THEME.Surface,THEME.Bg,135)
-
-local function listLayout(frame)
-	local pad=Instance.new("UIPadding")
-	pad.Parent=frame
-	pad.PaddingTop=UDim.new(0,2)
-	pad.PaddingBottom=UDim.new(0,2)
-	pad.PaddingLeft=UDim.new(0,1)
-	pad.PaddingRight=UDim.new(0,1)
-
-	local list=Instance.new("UIListLayout")
-	list.Parent=frame
-	list.SortOrder=Enum.SortOrder.LayoutOrder
-	list.Padding=UDim.new(0,5)
-	return list
-end
-
-local bugList=listLayout(bugPage)
-local trainList=listLayout(trainPage)
-local rebList=listLayout(rebPage)
-local killList=listLayout(killPage)
-local crystalList=listLayout(crystalPage)
-Runtime.layoutUI.systemList=listLayout(Runtime.layoutUI.systemPage)
-
-local function updateCanvas()
-	task.defer(function()
-		bugPage.CanvasSize=UDim2.new(0,0,0,bugList.AbsoluteContentSize.Y+20)
-		trainPage.CanvasSize=UDim2.new(0,0,0,trainList.AbsoluteContentSize.Y+20)
-		rebPage.CanvasSize=UDim2.new(0,0,0,rebList.AbsoluteContentSize.Y+20)
-		killPage.CanvasSize=UDim2.new(0,0,0,killList.AbsoluteContentSize.Y+20)
-		crystalPage.CanvasSize=UDim2.new(0,0,0,crystalList.AbsoluteContentSize.Y+20)
-		Runtime.layoutUI.systemPage.CanvasSize=UDim2.new(0,0,0,Runtime.layoutUI.systemList.AbsoluteContentSize.Y+20)
-	end)
-end
-
-addConn(bugList:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(updateCanvas))
-addConn(trainList:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(updateCanvas))
-addConn(rebList:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(updateCanvas))
-addConn(killList:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(updateCanvas))
-addConn(crystalList:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(updateCanvas))
-addConn(Runtime.layoutUI.systemList:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(updateCanvas))
-
-local function card(parent,height)
-	local f=Instance.new("Frame")
-	f.Parent=parent
-	f.Size=UDim2.new(1,0,0,height)
-	f.BackgroundColor3=THEME.Surface
-	f.BackgroundTransparency=0.10
-	f.BorderSizePixel=0
-	corner(f,9)
-	neonStroke(f,1,0.77)
-	gradient(f,THEME.Surface,THEME.Bg,115)
-	return f
-end
-
-function Runtime.layoutUI.makeGuideCard(parent,stepText,description,order)
-	local panel=card(parent,56)
-	panel.LayoutOrder=order or 0
-	panel.BackgroundTransparency=0.25
-
-	local step=label(panel,stepText,10,Enum.Font.GothamBold,THEME.Accent2)
-	step.Size=UDim2.new(1,-20,0,17)
-	step.Position=UDim2.fromOffset(10,6)
-	step.TextWrapped=false
-	step.TextTruncate=Enum.TextTruncate.AtEnd
-
-	local hint=label(panel,description,9,Enum.Font.Gotham,THEME.Muted)
-	hint.Size=UDim2.new(1,-20,0,23)
-	hint.Position=UDim2.fromOffset(10,25)
-	hint.TextXAlignment=Enum.TextXAlignment.Left
-	return panel
-end
-
-local function makeFeaturePanel(parent,titleText,height,columns)
-	local panel=card(parent,height)
-	panel.LayoutOrder=1
-
-	local icon=label(panel,"•",17,Enum.Font.GothamBold,THEME.Accent)
-	icon.Size=UDim2.fromOffset(20,20)
-	icon.Position=UDim2.fromOffset(8,6)
-	icon.TextXAlignment=Enum.TextXAlignment.Center
-
-	local heading=label(panel,titleText,12,Enum.Font.GothamBold,THEME.Text)
-	heading.Size=UDim2.new(1,-40,0,21)
-	heading.Position=UDim2.fromOffset(32,6)
-	heading.TextWrapped=false
-	heading.TextTruncate=Enum.TextTruncate.AtEnd
-
-	local body=Instance.new("Frame")
-	body.Parent=panel
-	body.Size=UDim2.new(1,-16,1,-42)
-	body.Position=UDim2.fromOffset(8,34)
-	body.BackgroundTransparency=1
-
-	local grid=Instance.new("UIGridLayout")
-	grid.Parent=body
-	grid.SortOrder=Enum.SortOrder.LayoutOrder
-	grid.CellPadding=UDim2.fromOffset(0,5)
-	grid.CellSize=UDim2.new(1,0,0,46)
-
-	local function refreshFeatureGrid()
-		if not panel.Parent then return end
-		local count=0
-		for _,child in ipairs(body:GetChildren()) do
-			if child:IsA("GuiObject") then count=count+1 end
-		end
-		if count==0 then return end
-
-		local gap=5
-		grid.CellSize=UDim2.new(1,0,0,46)
-		panel.Size=UDim2.new(1,0,0,42+count*46+(count-1)*gap)
-		updateCanvas()
-	end
-
-	addConn(body:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
-		task.defer(refreshFeatureGrid)
-	end))
-	addConn(body.ChildAdded:Connect(function(child)
-		if child:IsA("GuiObject") then task.defer(refreshFeatureGrid) end
-	end))
-	addConn(body.ChildRemoved:Connect(function(child)
-		if child:IsA("GuiObject") then task.defer(refreshFeatureGrid) end
-	end))
-	task.defer(refreshFeatureGrid)
-	return panel,body,grid
-end
-
-local function makeSettingsPanel(parent,titleText,height)
-	local panel=card(parent,height)
-
-	local icon=label(panel,"•",17,Enum.Font.GothamBold,THEME.Accent)
-	icon.Size=UDim2.fromOffset(20,20)
-	icon.Position=UDim2.fromOffset(8,4)
-	icon.TextXAlignment=Enum.TextXAlignment.Center
-
-	local heading=label(panel,titleText,12,Enum.Font.GothamBold,THEME.Text)
-	heading.Size=UDim2.new(1,-40,0,20)
-	heading.Position=UDim2.fromOffset(32,4)
-
-	local body=Instance.new("Frame")
-	body.Parent=panel
-	body.Size=UDim2.new(1,-14,1,-34)
-	body.Position=UDim2.fromOffset(7,28)
-	body.BackgroundTransparency=1
-
-	local list=Instance.new("UIListLayout")
-	list.Parent=body
-	list.SortOrder=Enum.SortOrder.LayoutOrder
-	list.Padding=UDim.new(0,3)
-	return panel,body,list
-end
-
-local function makeSlider(parent,name,desc,initial,callback)
-	local row=Instance.new("TextButton")
-	row.Parent=parent
-	row.Size=UDim2.new(1,0,0,44)
-	row.Text=""
-	row.AutoButtonColor=false
-	row.BackgroundColor3=THEME.Surface
-	row.BackgroundTransparency=0.22
-	row.BorderSizePixel=0
-	corner(row,6)
-	neonStroke(row,1,0.72)
-
-	local n=label(row,name,11,Enum.Font.GothamBold,THEME.Text)
-	n.Size=UDim2.new(1,-62,0,16)
-	n.Position=UDim2.new(0,8,0,3)
-
-	local d=label(row,desc,8,Enum.Font.Gotham,THEME.Muted)
-	d.Size=UDim2.new(1,-62,0,15)
-	d.Position=UDim2.new(0,8,0,21)
-
-	local track=Instance.new("Frame")
-	track.Parent=row
-	track.Size=UDim2.new(0,44,0,22)
-	track.Position=UDim2.new(1,-50,0,11)
-	track.BorderSizePixel=0
-	track.BackgroundTransparency=0.04
-	corner(track,13)
-
-	local knob=Instance.new("Frame")
-	knob.Parent=track
-	knob.Size=UDim2.new(0,16,0,16)
-	knob.Position=UDim2.new(0,3,0,3)
-	knob.BackgroundColor3=THEME.Text
-	knob.BorderSizePixel=0
-	corner(knob,10)
-
-	local state=initial and true or false
-	local api={}
-
-	local function paint()
-		if state then
-			track.BackgroundColor3=THEME.Success
-			knob.Position=UDim2.new(1,-19,0,3)
-		else
-			track.BackgroundColor3=THEME.SurfaceAlt
-			knob.Position=UDim2.new(0,3,0,3)
-		end
-	end
-
-	function api.Set(v,silent)
-		state=v and true or false
-		paint()
-		if callback and not silent then callback(state,api) end
-	end
-
-	function api.Get()
-		return state
-	end
-
-	addConn(row.Activated:Connect(function()
-		api.Set(not state,false)
-	end))
-
-	paint()
-	return api,row
-end
-
-local function makePinnedToggle(parent,name,initial,callback)
-	local row=Instance.new("TextButton")
-	row.Parent=parent
-	row.Text=""
-	row.AutoButtonColor=false
-	row.BackgroundColor3=THEME.SurfaceAlt
-	row.BackgroundTransparency=0.18
-	row.BorderSizePixel=0
-	corner(row,7)
-	local rowStroke=neonStroke(row,1,0.74)
-
-	local glyph=label(row,name=="АНТИ-AFK" and "♢" or "◌",15,Enum.Font.GothamBold,THEME.Accent)
-	glyph.Size=UDim2.fromOffset(16,20)
-	glyph.Position=UDim2.fromOffset(4,3)
-	glyph.TextXAlignment=Enum.TextXAlignment.Center
-
-	local n=label(row,name,9,Enum.Font.GothamBold,THEME.Text)
-	n.Size=UDim2.new(1,-24,1,0)
-	n.Position=UDim2.fromOffset(21,0)
-	n.TextWrapped=false
-	n.TextTruncate=Enum.TextTruncate.AtEnd
-
-	local state=initial and true or false
-	local api={}
-	local function paint()
-		row.BackgroundColor3=state and THEME.SurfaceAlt or THEME.Surface
-		row.BackgroundTransparency=state and 0.08 or 0.30
-		n.TextColor3=state and THEME.Text or THEME.Muted
-		rowStroke.Color=state and THEME.Accent or THEME.Border
-		rowStroke.Thickness=state and 1.2 or 1
-		rowStroke.Transparency=state and 0.42 or 0.78
-		glyph.TextColor3=state and THEME.Accent2 or THEME.Muted
-	end
-
-	function api.Set(v,silent)
-		state=v and true or false
-		paint()
-		if callback and not silent then callback(state,api) end
-	end
-
-	function api.Get()
-		return state
-	end
-
-	addConn(row.Activated:Connect(function()
-		api.Set(not state,false)
-	end))
-
-	paint()
-	return api,row
-end
-
-local function makeFeatureToggle(parent,iconText,name,desc,initial,callback)
-	local tile=Instance.new("TextButton")
-	tile.Parent=parent
-	tile.Text=""
-	tile.AutoButtonColor=false
-	tile.BackgroundColor3=THEME.SurfaceAlt
-	tile.BackgroundTransparency=0.16
-	tile.BorderSizePixel=0
-	corner(tile,8)
-	local tileStroke=neonStroke(tile,1,0.78)
-
-	local glyph=label(tile,iconText,15,Enum.Font.GothamBold,THEME.Muted)
-	glyph.Size=UDim2.fromOffset(26,30)
-	glyph.Position=UDim2.fromOffset(6,8)
-	glyph.TextXAlignment=Enum.TextXAlignment.Center
-
-	local stateLabel=label(tile,"",9,Enum.Font.GothamBold,THEME.Muted)
-	stateLabel.Size=UDim2.fromOffset(39,21)
-	stateLabel.Position=UDim2.new(1,-47,0,12)
-	stateLabel.BackgroundColor3=THEME.SurfaceAlt
-	stateLabel.BackgroundTransparency=0
-	stateLabel.BorderSizePixel=0
-	stateLabel.TextXAlignment=Enum.TextXAlignment.Center
-	stateLabel.TextWrapped=false
-	corner(stateLabel,12)
-	local stateKnob=Instance.new("Frame")
-	stateKnob.Parent=stateLabel
-	stateKnob.Size=UDim2.fromOffset(15,15)
-	stateKnob.Position=UDim2.fromOffset(3,3)
-	stateKnob.BackgroundColor3=THEME.Text
-	stateKnob.BorderSizePixel=0
-	corner(stateKnob,8)
-
-	local n=label(tile,name,11,Enum.Font.GothamBold,THEME.Text)
-	n.Size=UDim2.new(1,-98,0,18)
-	n.Position=UDim2.fromOffset(37,5)
-	n.TextXAlignment=Enum.TextXAlignment.Left
-	n.TextWrapped=false
-	n.TextTruncate=Enum.TextTruncate.AtEnd
-
-	local d=label(tile,desc,9,Enum.Font.Gotham,THEME.Muted)
-	d.Size=UDim2.new(1,-98,0,16)
-	d.Position=UDim2.fromOffset(37,23)
-	d.TextXAlignment=Enum.TextXAlignment.Left
-	d.TextWrapped=false
-	d.TextTruncate=Enum.TextTruncate.AtEnd
-
-	local state=initial and true or false
-	local api={}
-	local function paint()
-		tile.BackgroundColor3=state and THEME.SurfaceAlt or THEME.Surface
-		tile.BackgroundTransparency=state and 0.06 or 0.22
-		tileStroke.Color=state and THEME.Success or THEME.Border
-		tileStroke.Thickness=state and 1.2 or 1
-		tileStroke.Transparency=state and 0.42 or 0.78
-		glyph.TextColor3=state and THEME.Success or THEME.Text
-		n.TextColor3=state and THEME.Text or THEME.Muted
-		stateLabel.BackgroundColor3=state and THEME.Success or THEME.SurfaceAlt
-		stateKnob.Position=state and UDim2.new(1,-18,0,3) or UDim2.fromOffset(3,3)
-	end
-
-	function api.Set(v,silent)
-		state=v and true or false
-		paint()
-		if callback and not silent then callback(state,api) end
-	end
-
-	function api.Get()
-		return state
-	end
-
-	addConn(tile.Activated:Connect(function()
-		api.Set(not state,false)
-	end))
-
-	paint()
-	return api,tile
-end
-
-local function makeNumberInput(parent,name,desc,initial,callback)
-	local row=Instance.new("Frame")
-	row.Parent=parent
-	row.Size=UDim2.new(1,0,0,44)
-	row.BackgroundColor3=THEME.Surface
-	row.BackgroundTransparency=0.22
-	row.BorderSizePixel=0
-	corner(row,6)
-	neonStroke(row,1,0.72)
-
-	local n=label(row,name,11,Enum.Font.GothamBold,THEME.Text)
-	n.Size=UDim2.new(1,-70,0,16)
-	n.Position=UDim2.new(0,8,0,3)
-
-	local d=label(row,desc,8,Enum.Font.Gotham,THEME.Muted)
-	d.Size=UDim2.new(1,-70,0,15)
-	d.Position=UDim2.new(0,8,0,21)
-
-	local box=Instance.new("TextBox")
-	box.Parent=row
-	box.Size=UDim2.new(0,58,0,26)
-	box.Position=UDim2.new(1,-64,0,9)
-	box.BackgroundColor3=THEME.SurfaceAlt
-	box.BackgroundTransparency=0.05
-	box.BorderSizePixel=0
-	box.TextColor3=THEME.Text
-	box.PlaceholderColor3=THEME.Muted
-	box.PlaceholderText="1"
-	box.ClearTextOnFocus=false
-	box.Font=Enum.Font.GothamBlack
-	box.TextSize=12
-	box.Text=tostring(initial or 1)
-	corner(box,10)
-	neonStroke(box,1.2,0.34)
-
-	local value=tonumber(initial) or 1
-	local api={}
-
-	local function commit()
-		local parsed=tonumber((tostring(box.Text):gsub(",",".")))
-		if not parsed then
-			box.Text=tostring(value)
-			setStatus(name..": введи число")
-			return
-		end
-
-		value=math.clamp(parsed,0.1,1000)
-		box.Text=tostring(value)
-		if callback then callback(value,api) end
-	end
-
-	function api.Get()
-		return value
-	end
-
-	function api.Set(v,silent)
-		local parsed=tonumber(v)
-		if not parsed then return end
-		value=math.clamp(parsed,0.1,1000)
-		box.Text=tostring(value)
-		if callback and not silent then callback(value,api) end
-	end
-
-	addConn(box.FocusLost:Connect(commit))
-	return api,row
-end
-
-local function makeSelectionRow(parent,titleText,initialText,callback)
-	local row=Instance.new("TextButton")
-	row.Parent=parent
-	row.Size=UDim2.new(1,0,0,32)
-	row.Text=""
-	row.AutoButtonColor=true
-	row.BackgroundColor3=THEME.Surface
-	row.BackgroundTransparency=0.20
-	row.BorderSizePixel=0
-	corner(row,7)
-	local edge=neonStroke(row,1,0.66)
-
-	local titleLabel=label(row,titleText,8,Enum.Font.GothamBlack,THEME.Accent2)
-	titleLabel.Size=UDim2.new(0.30,-7,1,0)
-	titleLabel.Position=UDim2.fromOffset(7,0)
-
-	local valueLabel=label(row,initialText or "ВЫБРАТЬ",9,Enum.Font.GothamBold,THEME.Text)
-	valueLabel.Size=UDim2.new(0.70,-28,1,0)
-	valueLabel.Position=UDim2.new(0.30,0,0,0)
-	valueLabel.TextXAlignment=Enum.TextXAlignment.Right
-	valueLabel.TextWrapped=false
-	valueLabel.TextTruncate=Enum.TextTruncate.AtEnd
-
-	local arrow=label(row,"›",16,Enum.Font.GothamBlack,THEME.Accent)
-	arrow.Size=UDim2.fromOffset(20,32)
-	arrow.Position=UDim2.new(1,-22,0,0)
-	arrow.TextXAlignment=Enum.TextXAlignment.Center
-
-	addConn(row.Activated:Connect(function()
-		edge.Transparency=0.08
-		task.defer(function() if edge.Parent then edge.Transparency=0.66 end end)
-		if callback then callback() end
-	end))
-
-	return {
-		Row=row,
-		Set=function(value) valueLabel.Text=tostring(value or "ВЫБРАТЬ") end,
-		Get=function() return valueLabel.Text end,
-	}
-end
-
--- One modal picker for players, crystals, pets and auras. The list has search,
--- touch scrolling and a persistent neon selection frame.
-local pickerShade=Instance.new("TextButton")
-pickerShade.Parent=main
-pickerShade.Size=UDim2.new(1,0,1,0)
-pickerShade.BackgroundColor3=Color3.fromRGB(3,5,12)
-pickerShade.BackgroundTransparency=0.16
-pickerShade.BorderSizePixel=0
-pickerShade.Text=""
-pickerShade.AutoButtonColor=false
-pickerShade.Visible=false
-pickerShade.ZIndex=80
-
-local pickerPanel=Instance.new("Frame")
-pickerPanel.Parent=pickerShade
-pickerPanel.Size=UDim2.new(1,-34,1,-46)
-pickerPanel.Position=UDim2.fromOffset(17,23)
-pickerPanel.BackgroundColor3=THEME.Bg
-pickerPanel.BackgroundTransparency=0.02
-pickerPanel.BorderSizePixel=0
-pickerPanel.ZIndex=81
-corner(pickerPanel,14)
-neonStroke(pickerPanel,2,0.04)
-gradient(pickerPanel,THEME.Panel,THEME.Bg,125)
-
-local pickerTitle=label(pickerPanel,"ВЫБОР",13,Enum.Font.GothamBlack,THEME.Text)
-pickerTitle.Size=UDim2.new(1,-54,0,36)
-pickerTitle.Position=UDim2.fromOffset(12,3)
-pickerTitle.ZIndex=82
-
-local pickerClose=button(pickerPanel,"×",THEME.SurfaceAlt)
-pickerClose.Size=UDim2.fromOffset(30,30)
-pickerClose.Position=UDim2.new(1,-38,0,7)
-pickerClose.TextColor3=THEME.Danger
-pickerClose.TextSize=18
-pickerClose.ZIndex=83
-
-local pickerSearch=Instance.new("TextBox")
-pickerSearch.Parent=pickerPanel
-pickerSearch.Size=UDim2.new(1,-20,0,32)
-pickerSearch.Position=UDim2.fromOffset(10,43)
-pickerSearch.BackgroundColor3=THEME.SurfaceAlt
-pickerSearch.BackgroundTransparency=0.08
-pickerSearch.BorderSizePixel=0
-pickerSearch.ClearTextOnFocus=false
-pickerSearch.PlaceholderText="Поиск..."
-pickerSearch.PlaceholderColor3=THEME.Muted
-pickerSearch.Text=""
-pickerSearch.TextColor3=THEME.Text
-pickerSearch.Font=Enum.Font.GothamBold
-pickerSearch.TextSize=11
-pickerSearch.TextXAlignment=Enum.TextXAlignment.Left
-pickerSearch.ZIndex=82
-corner(pickerSearch,8)
-neonStroke(pickerSearch,1.2,0.48)
-local pickerSearchPad=Instance.new("UIPadding")
-pickerSearchPad.Parent=pickerSearch
-pickerSearchPad.PaddingLeft=UDim.new(0,10)
-pickerSearchPad.PaddingRight=UDim.new(0,10)
-
-local pickerList=Instance.new("ScrollingFrame")
-pickerList.Parent=pickerPanel
-pickerList.Size=UDim2.new(1,-20,1,-132)
-pickerList.Position=UDim2.fromOffset(10,82)
-pickerList.BackgroundColor3=THEME.Bg
-pickerList.BackgroundTransparency=0.10
-pickerList.BorderSizePixel=0
-pickerList.ScrollBarThickness=4
-pickerList.ScrollBarImageColor3=THEME.Accent
-pickerList.CanvasSize=UDim2.new(0,0,0,0)
-pickerList.ScrollingDirection=Enum.ScrollingDirection.Y
-pickerList.ZIndex=82
-pickerList.Active=true
-corner(pickerList,10)
-neonStroke(pickerList,1,0.68)
-
-local pickerPadding=Instance.new("UIPadding")
-pickerPadding.Parent=pickerList
-pickerPadding.PaddingTop=UDim.new(0,6)
-pickerPadding.PaddingBottom=UDim.new(0,6)
-pickerPadding.PaddingLeft=UDim.new(0,6)
-pickerPadding.PaddingRight=UDim.new(0,6)
-
-local pickerLayout=Instance.new("UIListLayout")
-pickerLayout.Parent=pickerList
-pickerLayout.SortOrder=Enum.SortOrder.LayoutOrder
-pickerLayout.Padding=UDim.new(0,5)
-
-local pickerDone=button(pickerPanel,"ГОТОВО",THEME.SurfaceAlt)
-pickerDone.Size=UDim2.new(1,-20,0,34)
-pickerDone.Position=UDim2.new(0,10,1,-42)
-pickerDone.ZIndex=83
-
-local showDeleteConfirmation
-do
-	local confirmationShade=Instance.new("TextButton")
-	confirmationShade.Name="DeleteConfirmation"
-	confirmationShade.Parent=main
-	confirmationShade.Size=UDim2.new(1,0,1,0)
-	confirmationShade.BackgroundColor3=Color3.fromRGB(3,5,12)
-	confirmationShade.BackgroundTransparency=0.10
-	confirmationShade.BorderSizePixel=0
-	confirmationShade.Text=""
-	confirmationShade.AutoButtonColor=false
-	confirmationShade.Visible=false
-	confirmationShade.ZIndex=95
-
-	local confirmationPanel=Instance.new("Frame")
-	confirmationPanel.Parent=confirmationShade
-	confirmationPanel.Size=UDim2.new(1,-40,0,202)
-	confirmationPanel.Position=UDim2.new(0.5,0,0.5,0)
-	confirmationPanel.AnchorPoint=Vector2.new(0.5,0.5)
-	confirmationPanel.BackgroundColor3=THEME.Bg
-	confirmationPanel.BackgroundTransparency=0.02
-	confirmationPanel.BorderSizePixel=0
-	confirmationPanel.ZIndex=96
-	corner(confirmationPanel,13)
-	neonStroke(confirmationPanel,2,0.06)
-	gradient(confirmationPanel,THEME.Panel,THEME.Bg,120)
-
-	local confirmationTitle=label(confirmationPanel,"ВНИМАНИЕ: УДАЛЕНИЕ",11,
-		Enum.Font.GothamBlack,THEME.Danger)
-	confirmationTitle.Size=UDim2.new(1,-22,0,28)
-	confirmationTitle.Position=UDim2.fromOffset(11,8)
-	confirmationTitle.ZIndex=97
-
-	local confirmationText=label(confirmationPanel,"",9,Enum.Font.Gotham,THEME.Text)
-	confirmationText.Size=UDim2.new(1,-22,0,111)
-	confirmationText.Position=UDim2.fromOffset(11,40)
-	confirmationText.TextWrapped=true
-	confirmationText.TextYAlignment=Enum.TextYAlignment.Top
-	confirmationText.ZIndex=97
-
-	local cancelButton=button(confirmationPanel,"ОТМЕНА",THEME.SurfaceAlt)
-	cancelButton.Size=UDim2.new(0.48,-13,0,33)
-	cancelButton.Position=UDim2.new(0,10,1,-43)
-	cancelButton.TextSize=9
-	cancelButton.ZIndex=98
-
-	local confirmButton=button(confirmationPanel,"ПОДТВЕРДИТЬ",THEME.Danger)
-	confirmButton.Size=UDim2.new(0.52,-13,0,33)
-	confirmButton.Position=UDim2.new(0.48,3,1,-43)
-	confirmButton.TextSize=8
-	confirmButton.ZIndex=98
-
-	local pendingSelection=nil
-	local function closeDeleteConfirmation()
-		pendingSelection=nil
-		confirmationShade.Visible=false
-	end
-
-	showDeleteConfirmation=function(selected,onConfirm)
-		local names={}
-		for name,enabled in pairs(selected or {}) do
-			if enabled then table.insert(names,tostring(name)) end
-		end
-		table.sort(names)
-		local visible={}
-		for index=1,math.min(#names,3) do visible[index]=names[index] end
-		local preview=table.concat(visible,", ")
-		if #names>3 then preview=preview.." и ещё "..tostring(#names-3) end
-		confirmationText.Text="Все выбранные питомцы будут удаляться из инвентаря, "
-			.."включая уже имеющихся:\n\n"..preview
-			.."\n\nApex, защищённые и последний питомец останутся."
-		pendingSelection={selected=selected,onConfirm=onConfirm}
-		confirmationShade.Visible=true
-	end
-
-	Runtime.closeDeleteConfirmation=closeDeleteConfirmation
-	addConn(cancelButton.Activated:Connect(closeDeleteConfirmation))
-	addConn(confirmButton.Activated:Connect(function()
-		local pending=pendingSelection
-		if not pending then return end
-		closeDeleteConfirmation()
-		if pending.onConfirm then pending.onConfirm(pending.selected) end
-	end))
-end
-
-local pickerState=nil
-local pickerItems={}
-local pickerItemConnections={}
-
-local function clearPickerItems()
-	for _,connection in ipairs(pickerItemConnections) do
-		safe(function() connection:Disconnect() end)
-	end
-	pickerItemConnections={}
-	for _,item in ipairs(pickerItems) do
-		if item.Parent then item:Destroy() end
-	end
-	pickerItems={}
-end
-
-local function closePicker()
-	pickerState=nil
-	pickerShade.Visible=false
-	pickerSearch.Text=""
-	clearPickerItems()
-end
-
-local function renderPicker(resetScroll)
-	local oldCanvas=pickerList.CanvasPosition
-	clearPickerItems()
-	if not pickerState then return end
-
-	local query=string.lower(tostring(pickerSearch.Text or ""))
-	local visibleCount=0
-	for _,option in ipairs(pickerState.options) do
-		local id=tostring(option.id or option.label)
-		local hay=string.lower(tostring(option.label or "").." "..tostring(option.sub or ""))
-		if query=="" or hay:find(query,1,true) then
-			visibleCount=visibleCount+1
-			local disabled=option.disabled==true
-			local chosen=not disabled and pickerState.selected[id]==true
-			local item=button(pickerList,"",chosen and THEME.SurfaceAlt or THEME.Surface)
-			item.Size=UDim2.new(1,-2,0,45)
-			item.LayoutOrder=visibleCount
-			item.ZIndex=83
-			item.BackgroundTransparency=disabled and 0.38 or (chosen and 0.02 or 0.20)
-			local itemStroke=item:FindFirstChild("NeonEdge")
-			if itemStroke then
-				itemStroke.Transparency=chosen and 0.02 or 0.66
-				itemStroke.Thickness=chosen and 2 or 1
-			end
-
-			local nameLabel=label(item,option.label,10,Enum.Font.GothamBlack,
-				disabled and THEME.Muted or (chosen and THEME.Accent2 or THEME.Text))
-			nameLabel.Size=UDim2.new(1,-48,0,20)
-			nameLabel.Position=UDim2.fromOffset(9,3)
-			nameLabel.ZIndex=84
-			local subLabel=label(item,option.sub or "",8,Enum.Font.Gotham,THEME.Muted)
-			subLabel.Size=UDim2.new(1,-48,0,16)
-			subLabel.Position=UDim2.fromOffset(9,23)
-			subLabel.ZIndex=84
-			local marker=label(item,disabled and "ЗАЩ" or (chosen and "ON" or "›"),
-				disabled and 7 or 9,Enum.Font.GothamBlack,chosen and THEME.Accent2 or THEME.Muted)
-			marker.Size=UDim2.fromOffset(34,45)
-			marker.Position=UDim2.new(1,-40,0,0)
-			marker.TextXAlignment=Enum.TextXAlignment.Center
-			marker.ZIndex=84
-
-			local itemConnection=item.Activated:Connect(function()
-				if not pickerState then return end
-				if option.disabled then return end
-				if pickerState.multiple then
-					pickerState.selected[id]=not pickerState.selected[id]
-					renderPicker(false)
-				else
-					local done=pickerState.onDone
-					closePicker()
-					if done then done(option) end
-				end
-			end)
-			table.insert(pickerItemConnections,itemConnection)
-			table.insert(pickerItems,item)
-		end
-	end
-
-	if visibleCount==0 then
-		local empty=label(pickerList,"НИЧЕГО НЕ НАЙДЕНО",10,Enum.Font.GothamBold,THEME.Muted)
-		empty.Size=UDim2.new(1,-2,0,42)
-		empty.LayoutOrder=1
-		empty.TextXAlignment=Enum.TextXAlignment.Center
-		empty.ZIndex=83
-		table.insert(pickerItems,empty)
-	end
-
-	pickerList.CanvasSize=UDim2.new(0,0,0,math.max(54,visibleCount*50+12))
-	if resetScroll then
-		pickerList.CanvasPosition=Vector2.new(0,0)
-	else
-		task.defer(function()
-			if pickerList.Parent then pickerList.CanvasPosition=oldCanvas end
-		end)
-	end
-	pickerDone.Text=pickerState.multiple and ("ГОТОВО • "..selectedCount(pickerState.selected)) or "ЗАКРЫТЬ"
-end
-
-local function openPicker(titleText,options,config)
-	config=config or {}
-	local selected={}
-	for id,enabled in pairs(config.selected or {}) do
-		if enabled then selected[tostring(id)]=true end
-	end
-	pickerState={
-		options=options or {},
-		multiple=config.multiple==true,
-		selected=selected,
-		onDone=config.onDone,
-	}
-	pickerTitle.Text=titleText
-	pickerSearch.Text=""
-	pickerShade.Visible=true
-	renderPicker(true)
-end
-
-addConn(pickerClose.Activated:Connect(closePicker))
-addConn(pickerDone.Activated:Connect(function()
-	if not pickerState then return end
-	local state=pickerState
-	if state.multiple and state.onDone then state.onDone(state.selected) end
-	closePicker()
-end))
-addConn(pickerSearch:GetPropertyChangedSignal("Text"):Connect(function()
-	if pickerState then renderPicker(true) end
-end))
-
-Runtime.closePicker=closePicker
-
--- BUG PAGE
-
-local bugFeaturePanel,bugFeatureBody=makeFeaturePanel(bugPage,"АВТОФАРМ",106,3)
-bugFeaturePanel.LayoutOrder=2
-local bugSettingsPanel,bugSettingsBody=makeSettingsPanel(bugPage,"ВЫБОР КАМНЯ",170)
-bugSettingsPanel.LayoutOrder=1
-
-local selectCard=card(bugSettingsBody,70)
-selectCard.LayoutOrder=1
-local selectTitle=label(selectCard,"АВТОПОДБОР ПО РЕБЁРТАМ",8,Enum.Font.GothamBold,THEME.Accent2)
-selectTitle.Size=UDim2.new(1,-76,0,15)
-selectTitle.Position=UDim2.new(0,8,0,3)
-selectTitle.TextWrapped=false
-selectTitle.TextTruncate=Enum.TextTruncate.AtEnd
-
-Runtime.layoutUI.autoRockButton=button(selectCard,"АВТО",THEME.SurfaceAlt)
-Runtime.layoutUI.autoRockButton.Size=UDim2.fromOffset(53,21)
-Runtime.layoutUI.autoRockButton.Position=UDim2.new(1,-60,0,4)
-Runtime.layoutUI.autoRockButton.TextSize=9
-Runtime.layoutUI.autoRockButton.TextColor3=THEME.Success
-
-local selectName=label(selectCard,"-",10,Enum.Font.GothamBold,THEME.Warm)
-selectName.Size=UDim2.new(1,-16,0,17)
-selectName.Position=UDim2.new(0,8,0,19)
-selectName.TextWrapped=false
-selectName.TextTruncate=Enum.TextTruncate.AtEnd
-
-local calcStats=label(selectCard,"Ребёрты: -  •  XP/удар: -  •  цель: -  •  ударов: -",8,Enum.Font.Gotham,THEME.Text)
-calcStats.Size=UDim2.new(1,-16,0,29)
-calcStats.Position=UDim2.new(0,8,0,38)
-calcStats.TextYAlignment=Enum.TextYAlignment.Top
-
-Runtime.ui.autoRockTitle=selectTitle
-Runtime.ui.autoRockName=selectName
-Runtime.ui.autoRockStats=calcStats
-
-local rockCard=card(bugSettingsBody,58)
-rockCard.LayoutOrder=2
-local currentRockLabel=label(rockCard,"камень не выбран",10,Enum.Font.GothamBold,THEME.Text)
-currentRockLabel.Size=UDim2.new(1,-100,0,21)
-currentRockLabel.Position=UDim2.fromOffset(8,5)
-currentRockLabel.TextXAlignment=Enum.TextXAlignment.Left
-currentRockLabel.TextWrapped=false
-currentRockLabel.TextTruncate=Enum.TextTruncate.AtEnd
-
-Runtime.layoutUI.chooseRockButton=button(rockCard,"ВЫБРАТЬ",THEME.SurfaceAlt)
-Runtime.layoutUI.chooseRockButton.Size=UDim2.fromOffset(82,23)
-Runtime.layoutUI.chooseRockButton.Position=UDim2.new(1,-89,0,5)
-Runtime.layoutUI.chooseRockButton.TextSize=9
-
-local rockScale=Instance.new("TextButton")
-rockScale.Parent=rockCard
-rockScale.Size=UDim2.new(1,-16,0,22)
-rockScale.Position=UDim2.fromOffset(8,31)
-rockScale.Text=""
-rockScale.AutoButtonColor=false
-rockScale.BackgroundTransparency=1
-rockScale.BorderSizePixel=0
-rockScale.Active=true
-
-local rockTrack=Instance.new("Frame")
-rockTrack.Parent=rockScale
-rockTrack.Size=UDim2.new(1,0,0,4)
-rockTrack.Position=UDim2.new(0,0,0.5,-2)
-rockTrack.BackgroundColor3=THEME.Border
-rockTrack.BackgroundTransparency=0.34
-rockTrack.BorderSizePixel=0
-corner(rockTrack,3)
-
-local rockFill=Instance.new("Frame")
-rockFill.Parent=rockTrack
-rockFill.Size=UDim2.new(0,0,1,0)
-rockFill.BackgroundColor3=THEME.Accent
-rockFill.BorderSizePixel=0
-corner(rockFill,3)
-gradient(rockFill,THEME.Accent2,THEME.Neon,0)
-
-for i=1,#ROCKS do
-	local tick=Instance.new("Frame")
-	tick.Parent=rockTrack
-	tick.Size=UDim2.fromOffset(1,8)
-	tick.Position=UDim2.new((i-1)/(#ROCKS-1),0,0.5,-4)
-	tick.AnchorPoint=Vector2.new(0.5,0)
-	tick.BackgroundColor3=THEME.Text
-	tick.BackgroundTransparency=0.42
-	tick.BorderSizePixel=0
-end
-
-local rockKnob=Instance.new("Frame")
-rockKnob.Parent=rockTrack
-rockKnob.Size=UDim2.fromOffset(12,12)
-rockKnob.AnchorPoint=Vector2.new(0.5,0.5)
-rockKnob.Position=UDim2.new(0,0,0.5,0)
-rockKnob.BackgroundColor3=THEME.Text
-rockKnob.BorderSizePixel=0
-corner(rockKnob,6)
-neonStroke(rockKnob,2,0.04)
-
-local rockButtonConnections={}
-local rockScaleDragging=false
-
-local function disconnectRockButtonConnections()
-	for _,connection in ipairs(rockButtonConnections) do
-		safe(function() connection:Disconnect() end)
-	end
-
-	rockButtonConnections={}
-end
-
-local function currentRockIndex()
-	for i,row in ipairs(ROCKS) do
-		if Runtime.selectedRock and Runtime.selectedRock.id==row.id then return i end
-	end
-	return #ROCKS
-end
-
-local refreshRockList
-
-local function chooseManualRock(index)
-	index=math.clamp(math.floor(tonumber(index) or #ROCKS),1,#ROCKS)
-	local row=ROCKS[index]
-	Runtime.autoRockSelection=false
-	Runtime.selectedRock=row
-	selectTitle.Text="РУЧНАЯ НАСТРОЙКА"
-	selectName.Text=row.label.."  •  множитель "..tostring(row.mult)
-
-	local rebs=Runtime.autoRockCalc and Runtime.autoRockCalc.rebirths
-	if rebs then
-		local xp40=(rebs+20)*math.floor(row.mult*40+0.5)
-		calcStats.Text=("Ребёрты: %d  •  XP/удар: %s  •  ручной выбор"):format(rebs,compactXp(xp40))
-	else
-		calcStats.Text="Ребёрты не найдены  •  ручной выбор"
-	end
-
-	refreshRockList()
-	setStatus("Камень: "..row.label)
-end
-
-refreshRockList=function()
-	local row=Runtime.selectedRock
-	if not row then
-		currentRockLabel.Text="камень не выбран"
-		rockFill.Size=UDim2.new(0,0,1,0)
-		rockKnob.Position=UDim2.new(0,0,0.5,0)
-		return
-	end
-
-	local info=rockCache[row.req]
-	local index=currentRockIndex()
-	local ratio=(index-1)/(#ROCKS-1)
-	currentRockLabel.Text=row.label..(info and "  —  доступен" or "  —  не найден")
-	rockFill.Size=UDim2.new(ratio,0,1,0)
-	rockKnob.Position=UDim2.new(ratio,0,0.5,0)
-end
-
-local function rockIndexFromX(x)
-	local width=math.max(1,rockTrack.AbsoluteSize.X)
-	local ratio=math.clamp((x-rockTrack.AbsolutePosition.X)/width,0,1)
-	return math.clamp(math.floor(ratio*(#ROCKS-1)+1.5),1,#ROCKS)
-end
-
-local function selectRockFromInput(input)
-	if input and input.Position then chooseManualRock(rockIndexFromX(input.Position.X)) end
-end
-
-table.insert(rockButtonConnections,rockScale.InputBegan:Connect(function(input)
-	if input.UserInputType==Enum.UserInputType.MouseButton1 or input.UserInputType==Enum.UserInputType.Touch then
-		rockScaleDragging=true
-		selectRockFromInput(input)
-	end
-end))
-
-table.insert(rockButtonConnections,UserInputService.InputChanged:Connect(function(input)
-	if rockScaleDragging and (input.UserInputType==Enum.UserInputType.MouseMovement or input.UserInputType==Enum.UserInputType.Touch) then
-		selectRockFromInput(input)
-	end
-end))
-
-table.insert(rockButtonConnections,UserInputService.InputEnded:Connect(function(input)
-	if input.UserInputType==Enum.UserInputType.MouseButton1 or input.UserInputType==Enum.UserInputType.Touch then
-		rockScaleDragging=false
-	end
-end))
-
-Runtime.refreshRockList=refreshRockList
-
-addConn(Runtime.layoutUI.autoRockButton.Activated:Connect(function()
-	Runtime.autoRockSelection=true
-	Runtime.lastAutoRockRebs=nil
-	applyAutoRockSelection(true)
-	refreshRockList()
-	setStatus("АВТОПОДБОР КАМНЯ: включён")
-end))
-
-addConn(Runtime.layoutUI.chooseRockButton.Activated:Connect(function()
-	local options={}
-	for index,row in ipairs(ROCKS) do
-		local info=rockCache[row.req]
-		table.insert(options,{
-			id=tostring(index),
-			label=row.label,
-			sub="Множитель ×"..tostring(row.mult)..(info and "  •  найден" or "  •  не найден"),
-		})
-	end
-	openPicker("ВЫБОР КАМНЯ",options,{
-		selected={[tostring(currentRockIndex())]=true},
-		onDone=function(option)
-			chooseManualRock(tonumber(option.id))
-		end,
-	})
-end))
-
-local lockRockSlider
-local bugSlider
-
-lockRockSlider=makeFeatureToggle(bugFeatureBody,"◇","У КАМНЯ","держит возле камня",false,function(on,api)
-	if on then
-		local ok,err=teleportInsideSelected()
-
-		if not ok then
-			setStatus("LOCK: "..tostring(err))
-			api.Set(false,true)
-			return
-		end
-
-		Runtime.lockRock=true
-		Runtime.nextLockTick=0
-		setStatus("ФИКСАЦИЯ: включена")
-	else
-		if Runtime.mode=="bug" then
-			stopMode("ФИКСАЦИЯ И АВТОУДАР: выключены")
-		else
-			Runtime.lockRock=false
-			Runtime.lockCF=nil
-			restoreCharacterLock()
-			setStatus("ФИКСАЦИЯ: выключена")
-		end
-	end
-end)
-
-bugSlider=makeFeatureToggle(bugFeatureBody,"▷","АВТОУДАР","запускает фарм",false,function(on,api)
-	if on then
-		if not startBug() then
-			api.Set(false,true)
-		end
-	else
-		stopMode("АВТОУДАР: выключен")
-	end
-end)
-
-Runtime.leverRefs.lockRock=lockRockSlider
-Runtime.leverRefs.bug=bugSlider
-
-local remoteSlider=makeFeatureToggle(bugFeatureBody,"◎","БЫСТРЫЙ УДАР","ускоряет фарм",true,function(on)
-	Runtime.directRemoteEnabled=on
-	setStatus("УСКОРЕНИЕ: "..(on and "включено" or "выключено"))
-end)
-
--- TRAIN PAGE
-
-local trainFeaturePanel,trainFeatureBody=makeFeaturePanel(trainPage,"УПРАЖНЕНИЯ",170,3)
-trainFeaturePanel.LayoutOrder=1
-local trainSettingsPanel,trainSettingsBody=makeFeaturePanel(trainPage,"ПОЛОЖЕНИЕ ИГРОКА",106,2)
-trainSettingsPanel.LayoutOrder=2
-
-Runtime.layoutUI.systemVisualPanel,Runtime.layoutUI.systemVisualBody=makeFeaturePanel(Runtime.layoutUI.systemPage,"ПРОИЗВОДИТЕЛЬНОСТЬ",106,2)
-Runtime.layoutUI.systemVisualPanel.LayoutOrder=1
-Runtime.layoutUI.systemNetworkPanel,Runtime.layoutUI.systemNetworkBody=makeFeaturePanel(Runtime.layoutUI.systemPage,"СЕТЬ",106,2)
-Runtime.layoutUI.systemNetworkPanel.LayoutOrder=2
-
-local lockPosSlider=makeFeatureToggle(trainSettingsBody,"◇","ЗАКРЕПИТЬСЯ","не сдвигаться",false,function(on,api)
-	if on then
-		local r=root()
-
-		if not r then
-			setStatus("LOCK POSITION: нет root")
-			api.Set(false,true)
-			return
-		end
-
-		disableKingLock()
-		r.Anchored=false
-		Runtime.positionCF=r.CFrame
-		Runtime.lockPosition=true
-		Runtime.nextPosTick=0
-		if Runtime.leverRefs.kingLock then Runtime.leverRefs.kingLock.Set(false,true) end
-		setStatus("ПОЗИЦИЯ: зафиксирована")
-	else
-		Runtime.lockPosition=false
-		Runtime.positionCF=nil
-		setStatus("ПОЗИЦИЯ: свободна")
-	end
-end)
-
-Runtime.leverRefs.lockPosition=lockPosSlider
-
-local visualSlider=makeFeatureToggle(Runtime.layoutUI.systemVisualBody,"◫","ЛЁГКАЯ ГРАФИКА","меньше нагрузки",false,function(on)
-	setVisualLow(on)
-end)
-
-Runtime.leverRefs.visualLow=visualSlider
-
-local afkSlider,afkQuickRow=makePinnedToggle(quickBody,"АНТИ-AFK",true,function(on)
-	Runtime.antiAfkEnabled=on
-	setStatus("АНТИ-AFK: "..(on and "включён" or "выключен"))
-end)
-afkQuickRow.Size=UDim2.new(0.5,-3,1,0)
-afkQuickRow.Position=UDim2.fromOffset(0,0)
-
-local netGuardSlider,netQuickRow=makePinnedToggle(quickBody,"ЗАЩИТА СЕТИ",true,function(on)
-	Runtime.netGuardEnabled=on
-	if not on then
-		Runtime.manualNetworkHold=false
-		if Runtime.leverRefs.wifiHold then Runtime.leverRefs.wifiHold.Set(false,true) end
-		leaveNetworkHold(os.clock(),"OFF")
-		setStatus("ЗАЩИТА СЕТИ: выключена")
-	else
-		Runtime.networkBadSamples=0
-		Runtime.networkGoodSamples=0
-		setStatus("ЗАЩИТА СЕТИ: включена")
-	end
-end)
-netQuickRow.Size=UDim2.new(0.5,-3,1,0)
-netQuickRow.Position=UDim2.new(0.5,3,0,0)
-
-Runtime.leverRefs.netGuard=netGuardSlider
-
-local wifiHoldSlider=makeFeatureToggle(Runtime.layoutUI.systemNetworkBody,"◌","ПАУЗА СЕТИ","удерживает клиент",false,function(on)
-	Runtime.manualNetworkHold=on
-	if on then
-		Runtime.netGuardEnabled=true
-		if Runtime.leverRefs.netGuard then Runtime.leverRefs.netGuard.Set(true,true) end
-		enterNetworkHold("manual WiFi hold",os.clock())
-		Runtime.networkState="MANUAL HOLD"
-		setStatus("ПАУЗА СЕТИ: включена")
-	else
-		leaveNetworkHold(os.clock(),"MANUAL RELEASE")
-		setStatus("ПАУЗА СЕТИ: выключена")
-	end
-end)
-
-Runtime.leverRefs.wifiHold=wifiHoldSlider
-
-Runtime.leverRefs.train={}
-
-local trainIcons={
-	Punch="▷",
-	Weight="▣",
-	Push="▽",
-	Sit="⌁",
-	Hand="♢",
-	Tread="↗",
-}
-
-local trainNames={
-	Punch="УДАРЫ",
-	Weight="ГАНТЕЛИ",
-	Push="ОТЖИМАНИЯ",
-	Sit="ПРЕСС",
-	Hand="СТОЙКА",
-	Tread="БЕГ",
-}
-
-local trainDescs={
-	Punch="сила",
-	Weight="гантели и штанга",
-	Push="обычные отжимания",
-	Sit="упражнение на пресс",
-	Hand="стойка на руках",
-	Tread="скорость и ловкость",
-}
-
-local function turnOffOtherTrain(id)
-	for otherId,lever in pairs(Runtime.leverRefs.train) do
-		if otherId~=id and lever.Get() then
-			lever.Set(false,true)
-		end
-	end
-end
-
-for _,t in ipairs(TRAIN_TYPES) do
-	local slider
-	slider=makeFeatureToggle(trainFeatureBody,trainIcons[t.id] or "◈",trainNames[t.id] or t.label,trainDescs[t.id] or t.desc,false,function(on,api)
-		if on then
-			turnOffOtherTrain(t.id)
-			if not startTrain(t) then
-				api.Set(false,true)
-			end
-		else
-			if Runtime.mode=="train" and Runtime.selectedTrain and Runtime.selectedTrain.id==t.id then
-				stopMode(t.label..": OFF")
-			end
-		end
-	end)
-
-	Runtime.leverRefs.train[t.id]=slider
-end
-
--- REBIRTH PAGE
-
-local rebFeaturePanel,rebFeatureBody=makeFeaturePanel(rebPage,"БЕЗ ОГРАНИЧЕНИЯ",106,2)
-rebFeaturePanel.LayoutOrder=2
-local rebSettingsPanel,rebSettingsBody=makeSettingsPanel(rebPage,"РАЗМЕР ПЕРСОНАЖА",80)
-rebSettingsPanel.LayoutOrder=3
-Runtime.layoutUI.rebSupportPanel,Runtime.layoutUI.rebSupportBody=makeFeaturePanel(rebPage,"KING И РАЗМЕР",106,2)
-Runtime.layoutUI.rebSupportPanel.LayoutOrder=4
-
-local rebInfo=card(rebPage,52)
-rebInfo.LayoutOrder=1
-local rebInfoTitle=label(rebInfo,"ЦЕЛЬ РЕБИРТОВ",10,Enum.Font.GothamBlack,THEME.Accent2)
-rebInfoTitle.Size=UDim2.new(1,-126,0,15)
-rebInfoTitle.Position=UDim2.new(0,8,0,4)
-rebInfoTitle.TextTruncate=Enum.TextTruncate.AtEnd
-
-local rebGoalProgress=label(rebInfo,"Лимит выключен • цель: 100",8,Enum.Font.GothamBold,THEME.Muted)
-rebGoalProgress.Size=UDim2.new(1,-126,0,18)
-rebGoalProgress.Position=UDim2.new(0,8,0,24)
-rebGoalProgress.TextTruncate=Enum.TextTruncate.AtEnd
-
-local rebGoalBox=Instance.new("TextBox")
-rebGoalBox.Parent=rebInfo
-rebGoalBox.Size=UDim2.fromOffset(58,28)
-rebGoalBox.Position=UDim2.new(1,-116,0,12)
-rebGoalBox.BackgroundColor3=THEME.SurfaceAlt
-rebGoalBox.BackgroundTransparency=0.05
-rebGoalBox.BorderSizePixel=0
-rebGoalBox.TextColor3=THEME.Text
-rebGoalBox.PlaceholderColor3=THEME.Muted
-rebGoalBox.PlaceholderText="100"
-rebGoalBox.ClearTextOnFocus=false
-rebGoalBox.Font=Enum.Font.GothamBlack
-rebGoalBox.TextSize=11
-rebGoalBox.Text="100"
-corner(rebGoalBox,9)
-neonStroke(rebGoalBox,1.2,0.34)
-
-local rebGoalTrack=Instance.new("TextButton")
-rebGoalTrack.Parent=rebInfo
-rebGoalTrack.Size=UDim2.fromOffset(44,22)
-rebGoalTrack.Position=UDim2.new(1,-50,0,15)
-rebGoalTrack.Text=""
-rebGoalTrack.AutoButtonColor=false
-rebGoalTrack.BorderSizePixel=0
-corner(rebGoalTrack,13)
-local rebGoalStroke=neonStroke(rebGoalTrack,1.2,0.48)
-
-local rebGoalKnob=Instance.new("Frame")
-rebGoalKnob.Parent=rebGoalTrack
-rebGoalKnob.Size=UDim2.fromOffset(16,16)
-rebGoalKnob.BorderSizePixel=0
-rebGoalKnob.BackgroundColor3=THEME.Text
-corner(rebGoalKnob,10)
-
-local rebGoalState=false
-local rebGoalApi={}
-local autoRebSlider
-
-local function paintRebirthGoalLever()
-	rebGoalTrack.BackgroundColor3=rebGoalState and THEME.Accent or THEME.SurfaceAlt
-	rebGoalKnob.Position=rebGoalState and UDim2.new(1,-19,0,3) or UDim2.new(0,3,0,3)
-	rebGoalStroke.Color=rebGoalState and THEME.Accent2 or THEME.Border
-	rebGoalStroke.Thickness=rebGoalState and 2 or 1.2
-end
-
-local function commitRebirthGoalInput()
-	local parsed=parseCompactNumber((tostring(rebGoalBox.Text):gsub("%s+","")))
-	if not parsed or parsed<1 then
-		rebGoalBox.Text=("%.0f"):format(Runtime.rebirthGoal)
-		setStatus("ЦЕЛЬ РЕБИРТОВ: введи целое число от 1")
-		return false
-	end
-
-	local target=math.clamp(math.floor(parsed+0.5),1,1e15)
-	Runtime.rebirthGoal=target
-	Runtime.rebirthGoalCompleted=false
-	rebGoalBox.Text=("%.0f"):format(target)
-	refreshRebirthGoalUI(Runtime.rebirthGoalCurrent)
-
-	if Runtime.rebirthGoalEnabled then
-		Runtime.rebirthToken=Runtime.rebirthToken+1
-		clearRebirthGoalPending()
-		Runtime.nextRebirth=0
-		local current,_,counter=ensureRebirthCounterWatcher()
-		Runtime.rebirthGoalCurrent=current and math.max(0,math.floor(current+0.5)) or nil
-		if not counter then
-			refreshRebirthGoalUI(nil,"Точный счётчик Rebirths не найден • запрос на паузе")
-			setStatus("НОВАЯ ЦЕЛЬ: ЖДУ ТОЧНЫЙ СЧЁТЧИК REBIRTHS")
-		elseif current~=nil and current>=target then
-			stopRebirthAtGoal(current)
-		else
-			refreshRebirthGoalUI(current)
-			setStatus("НОВАЯ ЦЕЛЬ РЕБИРТОВ: "..formatWholeNumber(target))
-		end
-	end
-	return true
-end
-
-local function changeRebirthGoal(on,api)
-	if on then
-		local rebirthRemote=findRebirthRemote()
-		if not rebirthRemote or not rebirthRemote:IsA("RemoteFunction") then
-			api.Set(false,true)
-			setStatus("ЦЕЛЬ РЕБИРТОВ: ТОЧНЫЙ REMOTEFUNCTION НЕ НАЙДЕН")
-			return
-		end
-		if not commitRebirthGoalInput() then
-			api.Set(false,true)
-			return
-		end
-
-		local current,_,counter=ensureRebirthCounterWatcher()
-		if current==nil or not counter then
-			api.Set(false,true)
-			Runtime.rebirthGoalCurrent=nil
-			refreshRebirthGoalUI(nil,"Точный счётчик Rebirths не найден • лимит не запущен")
-			setStatus("ЦЕЛЬ РЕБИРТОВ: ТОЧНЫЙ REBIRTHS.VALUE НЕ НАЙДЕН")
-			return
-		end
-		if current>=Runtime.rebirthGoal then
-			stopRebirthAtGoal(current)
-			return
-		end
-
-		Runtime.rebirthToken=Runtime.rebirthToken+1
-		Runtime.rebirthGoalEnabled=true
-		Runtime.rebirthGoalCompleted=false
-		Runtime.rebirthGoalCurrent=math.max(0,math.floor(current+0.5))
-		clearRebirthGoalPending()
-		Runtime.autoRebirth=true
-		Runtime.nextRebirth=0
-		if autoRebSlider then autoRebSlider.Set(true,true) end
-		refreshRebirthGoalUI(Runtime.rebirthGoalCurrent)
-		setStatus(("АВТОРЕБИРТ ДО ЦЕЛИ: %s"):format(formatWholeNumber(Runtime.rebirthGoal)))
-	else
-		stopRebirthAutomation("ЛИМИТ РЕБИРТОВ: выключен",false)
-	end
-end
-
-function rebGoalApi.Set(value,silent)
-	rebGoalState=value and true or false
-	paintRebirthGoalLever()
-	if not silent then changeRebirthGoal(rebGoalState,rebGoalApi) end
-end
-
-function rebGoalApi.Get()
-	return rebGoalState
-end
-
-addConn(rebGoalTrack.Activated:Connect(function()
-	rebGoalApi.Set(not rebGoalState,false)
-end))
-addConn(rebGoalBox.FocusLost:Connect(commitRebirthGoalInput))
-paintRebirthGoalLever()
-
-Runtime.ui.rebirthGoalProgress=rebGoalProgress
-Runtime.ui.rebirthGoalInput=rebGoalBox
-Runtime.leverRefs.rebirthGoal=rebGoalApi
-refreshRebirthGoalUI(nil)
-
-autoRebSlider=makeFeatureToggle(rebFeatureBody,"↻","АВТОРЕБИРТ","работает без лимита",false,function(on,api)
-	if on and not findRebirthRemote() then
-		api.Set(false,true)
-		setStatus("РЕБИРТ: функция игры не найдена")
-		return
-	end
-
-	if on then
-		Runtime.rebirthToken=Runtime.rebirthToken+1
-		Runtime.rebirthGoalEnabled=false
-		Runtime.rebirthGoalCompleted=false
-		clearRebirthGoalPending()
-		Runtime.autoRebirth=true
-		Runtime.nextRebirth=0
-		if Runtime.leverRefs.rebirthGoal then Runtime.leverRefs.rebirthGoal.Set(false,true) end
-		refreshRebirthGoalUI(Runtime.rebirthGoalCurrent)
-		setStatus("АВТО РЕБИРТ: включён без лимита")
-	else
-		stopRebirthAutomation("АВТО РЕБИРТ: выключен",false)
-	end
-end)
-
-Runtime.leverRefs.autoRebirth=autoRebSlider
-
-local sizeInput=makeNumberInput(rebSettingsBody,"РАЗМЕР ПЕРСОНАЖА","значение от 0.1 до 1000",1,function(value)
-	Runtime.sizeTarget=value
-	if Runtime.autoSize then Runtime.nextSize=0 end
-	setStatus("РАЗМЕР: "..tostring(value))
-end)
-
-local autoSizeSlider=makeFeatureToggle(Runtime.layoutUI.rebSupportBody,"◫","ФИКС. РАЗМЕР","держит нужный размер",false,function(on,api)
-	if on and not findSizeRemote() then
-		api.Set(false,true)
-		setStatus("РАЗМЕР: функция игры не найдена")
-		return
-	end
-
-	Runtime.sizeTarget=sizeInput.Get()
-	Runtime.autoSize=on
-	Runtime.nextSize=0
-	setStatus(("АВТО РАЗМЕР: %s | %s"):format(on and "включён" or "выключен",tostring(Runtime.sizeTarget)))
-end)
-
-Runtime.leverRefs.autoSize=autoSizeSlider
-
-local kingLockSlider=makeFeatureToggle(Runtime.layoutUI.rebSupportBody,"♛","KING GYM","остаётся в King",false,function(on,api)
-	if on then
-		if Runtime.mode=="bug" then stopMode("BUG STOP / KING LOCK") end
-
-		Runtime.lockPosition=false
-		Runtime.positionCF=nil
-		if Runtime.leverRefs.lockPosition then Runtime.leverRefs.lockPosition.Set(false,true) end
-
-		local ok,err=enableKingLock()
-		if not ok then
-			api.Set(false,true)
-			setStatus("KING ЗОНА: "..tostring(err))
-			return
-		end
-
-		setStatus("KING ЗОНА: включена")
-	else
-		disableKingLock()
-		setStatus("KING ЗОНА: выключена")
-	end
-end)
-
-Runtime.leverRefs.kingLock=kingLockSlider
-
--- AUTO KILL PAGE
-
-local killFeaturePanel,killFeatureBody=makeFeaturePanel(killPage,"АВТОАТАКА",106,3)
-killFeaturePanel.LayoutOrder=2
-local killSettingsPanel,killSettingsBody=makeSettingsPanel(killPage,"КОГО АТАКОВАТЬ",141)
-killSettingsPanel.LayoutOrder=1
-
-Runtime.leverRefs.kill={}
-
-local function turnOffOtherKillLevers(activeMode)
-	if Runtime.mode then stopMode("ОСНОВНОЙ РЕЖИМ ОСТАНОВЛЕН / АВТОКИЛ") end
-	for mode,lever in pairs(Runtime.leverRefs.kill) do
-		if mode~=activeMode and lever then lever.Set(false,true) end
-	end
-end
-
-local killAllLever
-killAllLever=makeFeatureToggle(killFeatureBody,"✦","ВСЕ ИГРОКИ","без исключений",false,function(on,api)
-	if on then
-		turnOffOtherKillLevers("all")
-		startKillAutomation("all")
-	else
-		if Runtime.killMode=="all" then stopKillAutomation("АВТОКИЛ: выключен") end
-	end
-end)
-Runtime.leverRefs.kill.all=killAllLever
-
-local killWhiteLever
-killWhiteLever=makeFeatureToggle(killFeatureBody,"♢","КРОМЕ ДРУЗЕЙ","пропускает список",false,function(on,api)
-	if on then
-		turnOffOtherKillLevers("whitelist")
-		startKillAutomation("whitelist")
-	else
-		if Runtime.killMode=="whitelist" then stopKillAutomation("АВТОКИЛ: выключен") end
-	end
-end)
-Runtime.leverRefs.kill.whitelist=killWhiteLever
-
-local killBlackLever
-killBlackLever=makeFeatureToggle(killFeatureBody,"◎","ТОЛЬКО ЦЕЛИ","чёрный список",false,function(on,api)
-	if on then
-		turnOffOtherKillLevers("blacklist")
-		startKillAutomation("blacklist")
-	else
-		if Runtime.killMode=="blacklist" then stopKillAutomation("АВТОКИЛ: выключен") end
-	end
-end)
-Runtime.leverRefs.kill.blacklist=killBlackLever
-
-local function currentPlayerOptions()
-	local options={}
-	for _,player in ipairs(Players:GetPlayers()) do
-		if player~=lp then
-			table.insert(options,{
-				id=tostring(player.UserId),
-				label=player.DisplayName,
-				sub="@"..player.Name.."  •  ID "..tostring(player.UserId),
-				player=player,
-			})
-		end
-	end
-	table.sort(options,function(a,b) return string.lower(a.label)<string.lower(b.label) end)
-	return options
-end
-
-local whiteSelection
-whiteSelection=makeSelectionRow(killSettingsBody,"ЗАЩИЩЕНЫ","0 игроков",function()
-	openPicker("ЗАЩИЩЁННЫЕ ИГРОКИ",currentPlayerOptions(),{
-		multiple=true,
-		selected=Runtime.killWhitelist,
-		onDone=function(selected)
-			Runtime.killWhitelist={}
-			for id,enabled in pairs(selected) do
-				if enabled then Runtime.killWhitelist[tonumber(id) or id]=true end
-			end
-			refreshExtraUI()
-			setStatus("БЕЛЫЙ СПИСОК: "..selectedCount(Runtime.killWhitelist))
-		end,
-	})
-end)
-
-local blackSelection
-blackSelection=makeSelectionRow(killSettingsBody,"ЦЕЛИ","0 игроков",function()
-	openPicker("ЦЕЛИ АВТОКИЛА",currentPlayerOptions(),{
-		multiple=true,
-		selected=Runtime.killBlacklist,
-		onDone=function(selected)
-			Runtime.killBlacklist={}
-			for id,enabled in pairs(selected) do
-				if enabled then Runtime.killBlacklist[tonumber(id) or id]=true end
-			end
-			refreshExtraUI()
-			setStatus("ЦЕЛЕЙ АВТОКИЛА: "..selectedCount(Runtime.killBlacklist))
-		end,
-	})
-end)
-
-local killHint=label(killSettingsBody,"Защищённых скрипт пропускает. Цели — отдельный режим атаки.",8,Enum.Font.Gotham,THEME.Muted)
-killHint.Size=UDim2.new(1,0,0,32)
-killHint.TextXAlignment=Enum.TextXAlignment.Center
-
--- CRYSTALS AND DIRECT GEM SHOP PAGE
-
-normalizeShopSelection("pet")
-normalizeShopSelection("aura")
-do
-	local currentCrystalNames=availableCrystalNames(true)
-	local selectedIsAvailable=false
-	for _,name in ipairs(currentCrystalNames) do
-		if string.lower(name)==string.lower(tostring(Runtime.selectedCrystal or "")) then
-			selectedIsAvailable=true
-			break
-		end
-	end
-	if not selectedIsAvailable and #currentCrystalNames>0 then
-		Runtime.selectedCrystal=currentCrystalNames[1]
-	end
-end
-
-local crystalFeaturePanel,crystalFeatureBody=makeFeaturePanel(crystalPage,"ОТКРЫТИЕ / ПОКУПКА",106,3)
-crystalFeaturePanel.LayoutOrder=2
-local crystalSettingsPanel,crystalSettingsBody=makeSettingsPanel(crystalPage,"ВЫБОР ТОВАРА",211)
-crystalSettingsPanel.LayoutOrder=1
-
-Runtime.leverRefs.crystal={}
-
-local function turnOffOtherCrystalLevers(activeMode)
-	for mode,lever in pairs(Runtime.leverRefs.crystal) do
-		if mode~=activeMode and lever then lever.Set(false,true) end
-	end
-end
-
-local crystalLever
-crystalLever=makeFeatureToggle(crystalFeatureBody,"C","АВТОКРИСТАЛЛ","режимы ×1 / ×3 / ×10",false,function(on,api)
-	if on then
-		turnOffOtherCrystalLevers("crystal")
-		if not startCrystalAutomation("crystal") then api.Set(false,true) end
-	else
-		if Runtime.crystalMode=="crystal" then stopCrystalAutomation("КРИСТАЛЛЫ: выключено") end
-	end
-end)
-Runtime.leverRefs.crystal.crystal=crystalLever
-
-local petCleanupLever
-petCleanupLever=makeFeatureToggle(crystalFeatureBody,"D","АВТОУДАЛЕНИЕ","только отмеченные питомцы",false,function(on,api)
-	if on then
-		local started,errorMessage=startPetCleanupAutomation()
-		if not started then
-			api.Set(false,true)
-			setStatus("АВТОУДАЛЕНИЕ: "..tostring(errorMessage))
-			return
-		end
-		setStatus("АВТОУДАЛЕНИЕ: только отмеченные питомцы")
-	else
-		Runtime.petCleanupEnabled=false
-		Runtime.petCleanupToken=(Runtime.petCleanupToken or 0)+1
-		setStatus("АВТОУДАЛЕНИЕ: выключено")
-	end
-end)
-Runtime.leverRefs.petCleanup=petCleanupLever
-
-local petLever
-petLever=makeFeatureToggle(crystalFeatureBody,"P","КУПИТЬ ПЕТА","покупка за гемы",false,function(on,api)
-	if on then
-		turnOffOtherCrystalLevers("pet")
-		if not startCrystalAutomation("pet") then api.Set(false,true) end
-	else
-		if Runtime.crystalMode=="pet" then stopCrystalAutomation("АВТОПИТОМЕЦ: выключен") end
-	end
-end)
-Runtime.leverRefs.crystal.pet=petLever
-
-local auraLever
-auraLever=makeFeatureToggle(crystalFeatureBody,"A","КУПИТЬ АУРУ","покупка за гемы",false,function(on,api)
-	if on then
-		turnOffOtherCrystalLevers("aura")
-		if not startCrystalAutomation("aura") then api.Set(false,true) end
-	else
-		if Runtime.crystalMode=="aura" then stopCrystalAutomation("АВТОАУРА: выключена") end
-	end
-end)
-Runtime.leverRefs.crystal.aura=auraLever
-
-local cleanupSelection
-local cleanupSelectionLabel
-local normalizeCleanupSelectionForCrystal
-local crystalSelection
-crystalSelection=makeSelectionRow(crystalSettingsBody,"КРИСТАЛЛ",Runtime.selectedCrystal,function()
-	local options={}
-	for _,name in ipairs(availableCrystalNames(true)) do
-		table.insert(options,{id=name,label=name,sub="кристалл из игры • открытие каждые 0.5 сек"})
-	end
-	openPicker("КРИСТАЛЛЫ ИЗ ИГРЫ",options,{
-		selected={[Runtime.selectedCrystal]=true},
-		onDone=function(option)
-			stopCrystalAutomation(nil)
-			Runtime.selectedCrystal=option.label
-			normalizeCleanupSelectionForCrystal()
-			refreshExtraUI()
-			setStatus("КРИСТАЛЛ: "..Runtime.selectedCrystal)
-		end,
-	})
-end)
-
-local crystalAmountRow=Instance.new("Frame")
-crystalAmountRow.Parent=crystalSettingsBody
-crystalAmountRow.Size=UDim2.new(1,0,0,32)
-crystalAmountRow.BackgroundColor3=THEME.Surface
-crystalAmountRow.BackgroundTransparency=0.20
-crystalAmountRow.BorderSizePixel=0
-corner(crystalAmountRow,7)
-neonStroke(crystalAmountRow,1,0.66)
-
-local crystalAmountTitle=label(crystalAmountRow,"ОТКРЫТЬ",8,Enum.Font.GothamBlack,THEME.Accent2)
-crystalAmountTitle.Size=UDim2.new(0.38,-7,1,0)
-crystalAmountTitle.Position=UDim2.fromOffset(7,0)
-
-local crystalAmountButtons={}
-local function paintCrystalAmount()
-	local selected=tonumber(Runtime.crystalAmount) or 1
-	for amount,choice in pairs(crystalAmountButtons) do
-		local active=amount==selected
-		choice.BackgroundColor3=active and THEME.Success or THEME.SurfaceAlt
-		choice.BackgroundTransparency=active and 0.04 or 0.12
-		choice.TextColor3=active and THEME.Bg or THEME.Text
-		local edge=choice:FindFirstChild("NeonEdge")
-		if edge then
-			edge.Color=active and THEME.Success or THEME.Border
-			edge.Transparency=active and 0.15 or 0.72
-		end
-	end
-end
-
-for index,amount in ipairs({1,3,10}) do
-	local choice=button(crystalAmountRow,"×"..tostring(amount),THEME.SurfaceAlt)
-	choice.Size=UDim2.new(0.19,-3,0,26)
-	choice.Position=UDim2.new(0.39+(index-1)*0.20,0,0,3)
-	choice.TextSize=11
-	crystalAmountButtons[amount]=choice
-	addConn(choice.Activated:Connect(function()
-		Runtime.crystalAmount=amount
-		paintCrystalAmount()
-		setStatus("КРИСТАЛЛЫ: открытие ×"..tostring(amount))
-	end))
-end
-paintCrystalAmount()
-
-cleanupSelectionLabel=function()
-	local count=selectedCount(Runtime.petCleanupTargets)
-	if count==0 then return "ВЫБРАТЬ" end
-	if count==1 then
-		for name,enabled in pairs(Runtime.petCleanupTargets or {}) do
-			if enabled then return name end
-		end
-	end
-	return tostring(count).." выбрано"
-end
-
-normalizeCleanupSelectionForCrystal=function()
-	local allowed={}
-	for _,name in ipairs(crystalPetNames(Runtime.selectedCrystal)) do
-		allowed[shopNameKey(name)]=name
-	end
-	local chosen={}
-	for name,enabled in pairs(Runtime.petCleanupTargets or {}) do
-		local exact=allowed[shopNameKey(name)]
-		if enabled and exact and not protectedCleanupName(exact) then chosen[exact]=true end
-	end
-	Runtime.petCleanupTargets=chosen
-	if selectedCount(chosen)==0 and Runtime.petCleanupEnabled then
-		Runtime.petCleanupEnabled=false
-		Runtime.petCleanupToken=(Runtime.petCleanupToken or 0)+1
-		if Runtime.leverRefs.petCleanup then Runtime.leverRefs.petCleanup.Set(false,true) end
-	end
-end
-normalizeCleanupSelectionForCrystal()
-
-cleanupSelection=makeSelectionRow(crystalSettingsBody,"УДАЛЯТЬ",cleanupSelectionLabel(),function()
-	local options={}
-	local names=crystalPetNames(Runtime.selectedCrystal)
-	if #names==0 then
-		setStatus("ПИТОМЦЫ КРИСТАЛЛА НЕ НАЙДЕНЫ: "..tostring(Runtime.selectedCrystal))
-		return
-	end
-	for _,name in ipairs(names) do
-		local protected=protectedCleanupName(name)
-		table.insert(options,{
-			id=name,
-			label=name,
-			sub=protected and "Apex защищён от удаления"
-				or ("из "..tostring(Runtime.selectedCrystal).." • будет удаляться"),
-			disabled=protected,
-		})
-	end
-	openPicker("ПИТОМЦЫ • "..tostring(Runtime.selectedCrystal),options,{
-		multiple=true,
-		selected=Runtime.petCleanupTargets,
-		onDone=function(selected)
-			local allowed={}
-			for _,name in ipairs(crystalPetNames(Runtime.selectedCrystal)) do
-				allowed[shopNameKey(name)]=name
-			end
-			local chosen={}
-			for name,enabled in pairs(selected or {}) do
-				local exact=allowed[shopNameKey(name)]
-				if enabled and exact and not protectedCleanupName(exact) then chosen[exact]=true end
-			end
-			local function applyCleanupSelection(confirmed)
-				Runtime.petCleanupTargets=confirmed
-				if selectedCount(confirmed)==0 and Runtime.petCleanupEnabled then
-					Runtime.petCleanupEnabled=false
-					Runtime.petCleanupToken=(Runtime.petCleanupToken or 0)+1
-					if Runtime.leverRefs.petCleanup then
-						Runtime.leverRefs.petCleanup.Set(false,true)
-					end
-				end
-				refreshExtraUI()
-				setStatus("АВТОУДАЛЕНИЕ: "..cleanupSelectionLabel())
-			end
-			if selectedCount(chosen)==0 then
-				applyCleanupSelection(chosen)
-				return
-			end
-			showDeleteConfirmation(chosen,applyCleanupSelection)
-		end,
-	})
-end)
-
-local petSelection
-petSelection=makeSelectionRow(crystalSettingsBody,"ПИТОМЕЦ",Runtime.selectedPet or "ВЫБРАТЬ",function()
-	local options={}
-	for _,entry in ipairs(shopCatalog("pet")) do
-		table.insert(options,{
-			id=entry.name,
-			label=entry.name,
-			sub=(entry.isNew and "НОВЫЙ • " or "").."Прямая покупка • "..formatShopPrice(entry.price),
-		})
-	end
-	openPicker("ПЕТ ЗА ГЕМЫ • БЕЗ РУЛЕТКИ",options,{
-		selected={[tostring(Runtime.selectedPet or "")]=true},
-		onDone=function(option)
-			stopCrystalAutomation(nil)
-			Runtime.selectedPet=option.label
-			refreshExtraUI()
-			setStatus("ПЕТ ИЗ МАГАЗИНА: "..Runtime.selectedPet)
-		end,
-	})
-end)
-
-local auraSelection
-auraSelection=makeSelectionRow(crystalSettingsBody,"АУРА",Runtime.selectedAura or "ВЫБРАТЬ",function()
-	local options={}
-	for _,entry in ipairs(shopCatalog("aura")) do
-		table.insert(options,{
-			id=entry.name,
-			label=entry.name,
-			sub="Прямая покупка • "..formatShopPrice(entry.price),
-		})
-	end
-	openPicker("АУРА ЗА ГЕМЫ • БЕЗ РУЛЕТКИ",options,{
-		selected={[tostring(Runtime.selectedAura or "")]=true},
-		onDone=function(option)
-			stopCrystalAutomation(nil)
-			Runtime.selectedAura=option.label
-			refreshExtraUI()
-			setStatus("АУРА ИЗ МАГАЗИНА: "..Runtime.selectedAura)
-		end,
-	})
-end)
-
-Runtime.refreshExtraUI=function()
-	whiteSelection.Set(selectedCount(Runtime.killWhitelist).." игроков")
-	blackSelection.Set(selectedCount(Runtime.killBlacklist).." игроков")
-	crystalSelection.Set(Runtime.selectedCrystal)
-	paintCrystalAmount()
-	cleanupSelection.Set(cleanupSelectionLabel())
-	petSelection.Set(Runtime.selectedPet or "ВЫБРАТЬ")
-	auraSelection.Set(Runtime.selectedAura or "ВЫБРАТЬ")
-end
-refreshExtraUI()
-
-local activeTab="bug"
-local minimized=false
-local expandedSize=main.Size
-
-Runtime.layoutUI.sectionInfo={
-	bug={title="БАГ ПИТОМЦЕВ",hint="Выбери камень и включи автоудар."},
-	train={title="ТРЕНИРОВКА",hint="Выбери упражнение для автокачалки."},
-	reb={title="РЕБИРТЫ",hint="Установи цель или запусти ребирты."},
-	crystal={title="МАГАЗИН",hint="Выбери товар и включи покупку."},
-	kill={title="АВТОКИЛ",hint="Выбери игроков и режим атаки."},
-	system={title="НАСТРОЙКИ",hint="Графика, сеть и защита клиента."},
-}
-
-local function applyResponsiveLayout()
-	local compact=main.AbsoluteSize.X<420
-	local short=main.AbsoluteSize.Y<440
-	rail.Size=UDim2.new(1,-16,0,short and 34 or 38)
-	rail.Position=UDim2.fromOffset(8,52)
-	content.Size=UDim2.new(1,-12,1,short and -92 or -96)
-	content.Position=UDim2.fromOffset(6,short and 90 or 94)
-	Runtime.layoutUI.navigationGrid.CellSize=UDim2.new(1/6,compact and -4 or -5,1,0)
-	Runtime.layoutUI.navigationGrid.CellPadding=UDim2.fromOffset(compact and 4 or 5,0)
-	railScroll.CanvasSize=UDim2.fromOffset(0,0)
-	railScroll.ScrollBarThickness=0
-	title.TextSize=compact and 12 or 14
-	author.TextSize=compact and 7 or 8
-	quickTitle.TextSize=compact and 11 or 12
-	Runtime.layoutUI.quickHint.TextSize=compact and 8 or 9
-	for _,tab in ipairs({bugTab,trainTab,rebTab,crystalTab,killTab,Runtime.layoutUI.systemTab}) do
-		tab.TextSize=compact and 9 or 10
-	end
-	if short then
-		quickBar.Size=UDim2.new(1,-12,0,67)
-		Runtime.layoutUI.quickHint.Position=UDim2.fromOffset(8,21)
-		Runtime.layoutUI.quickHint.Size=UDim2.new(1,-16,0,13)
-		quickBody.Position=UDim2.fromOffset(6,36)
-		quickBody.Size=UDim2.new(1,-12,0,25)
-	else
-		quickBar.Size=UDim2.new(1,-12,0,76)
-		Runtime.layoutUI.quickHint.Position=UDim2.fromOffset(8,23)
-		Runtime.layoutUI.quickHint.Size=UDim2.new(1,-16,0,15)
-		quickBody.Position=UDim2.fromOffset(6,43)
-		quickBody.Size=UDim2.new(1,-12,0,26)
-	end
-	for _,page in ipairs({bugPage,trainPage,rebPage,killPage,crystalPage,Runtime.layoutUI.systemPage}) do
-		page.Position=UDim2.fromOffset(6,short and 78 or 87)
-		page.Size=UDim2.new(1,-12,1,short and -129 or -138)
-	end
-	updateCanvas()
-end
-
-local function paintTab(tab,active)
-	tab.BackgroundColor3=active and THEME.SurfaceAlt or THEME.Surface
-	tab.BackgroundTransparency=active and 0.34 or 1
-	tab.TextColor3=active and THEME.Text or THEME.Muted
-	local mark=tab:FindFirstChild("ActiveMark")
-	if mark then mark.Visible=active end
-	local tabStroke=tab:FindFirstChild("TabStroke")
-	if tabStroke then
-		tabStroke.Color=active and THEME.Accent or THEME.Border
-		tabStroke.Transparency=active and 0.68 or 1
-	end
-end
-
-local function showTab(name)
-	activeTab=name
-	local bug=name=="bug"
-	local train=name=="train"
-	local reb=name=="reb"
-	local kill=name=="kill"
-	local crystal=name=="crystal"
-	local system=name=="system"
-	rail.Visible=not minimized
-	content.Visible=not minimized
-	brand.Text="RB"
-	brand.TextSize=12
-	bugPage.Visible=(not minimized) and bug
-	trainPage.Visible=(not minimized) and train
-	rebPage.Visible=(not minimized) and reb
-	killPage.Visible=(not minimized) and kill
-	crystalPage.Visible=(not minimized) and crystal
-	Runtime.layoutUI.systemPage.Visible=(not minimized) and system
-	paintTab(bugTab,bug)
-	paintTab(trainTab,train)
-	paintTab(rebTab,reb)
-	paintTab(killTab,kill)
-	paintTab(crystalTab,crystal)
-	paintTab(Runtime.layoutUI.systemTab,system)
-	local info=Runtime.layoutUI.sectionInfo[name]
-	if info then
-		title.Text="ROCK BUG HUB"
-		author.Text=info.title
-		quickTitle.Text=info.title
-		Runtime.layoutUI.quickHint.Text=info.hint
-	end
-	rescanBtn.Visible=bug
-	rescanBtn.Text="↻ КАМНИ"
-end
-
-function Runtime.layoutUI.showHome()
-	showTab("bug")
-end
-
-local function clampOffsetPosition(position,size)
-	local viewport=viewportSize()
-	local width=size.X.Offset
-	local height=size.Y.Offset
-	local maxX=math.max(4,viewport.X-width-4)
-	local maxY=math.max(4,viewport.Y-height-4)
-	return UDim2.fromOffset(
-		math.clamp(position.X.Offset,4,maxX),
-		math.clamp(position.Y.Offset,4,maxY)
-	)
-end
-
-local function setMinimized(on)
-	minimized=on and true or false
-	if minimized then
-		expandedSize=main.Size
-		miniButton.Position=clampOffsetPosition(main.Position,miniButton.Size)
-		main.Visible=false
-		miniButton.Visible=true
-		bugPage.Visible=false
-		trainPage.Visible=false
-		rebPage.Visible=false
-		killPage.Visible=false
-		crystalPage.Visible=false
-		Runtime.layoutUI.systemPage.Visible=false
-	else
-		main.Size=expandedSize
-		main.Position=clampOffsetPosition(miniButton.Position,expandedSize)
-		miniButton.Visible=false
-		main.Visible=true
-		showTab(activeTab)
-	end
-end
-
-local viewportConnection=nil
-
-local function fitWindowToViewport(useDefaultSize)
-	local viewport=viewportSize()
-	local minWidth,minHeight,maxWidth,maxHeight,wantedWidth,wantedHeight=windowMetrics(viewport)
-	local sourceSize=minimized and expandedSize or main.Size
-	local width=useDefaultSize and wantedWidth or math.clamp(sourceSize.X.Offset,minWidth,maxWidth)
-	local height=useDefaultSize and wantedHeight or math.clamp(sourceSize.Y.Offset,minHeight,maxHeight)
-	local fittedSize=UDim2.fromOffset(width,height)
-	expandedSize=fittedSize
-
-	if minimized then
-		miniButton.Position=clampOffsetPosition(miniButton.Position,miniButton.Size)
-	else
-		main.Size=fittedSize
-		main.Position=clampOffsetPosition(main.Position,fittedSize)
-	end
-	applyResponsiveLayout()
-end
-
-local function bindViewportCamera()
-	if viewportConnection then
-		safe(function() viewportConnection:Disconnect() end)
-		viewportConnection=nil
-	end
-	local camera=workspace.CurrentCamera
-	if camera then
-		viewportConnection=camera:GetPropertyChangedSignal("ViewportSize"):Connect(function()
-			task.defer(function()
-				if Runtime.alive then fitWindowToViewport(false) end
-			end)
-		end)
-		table.insert(Runtime.connections,viewportConnection)
-	end
-end
-
-addConn(main:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
-	task.defer(applyResponsiveLayout)
-end))
-addConn(workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(function()
-	bindViewportCamera()
-	fitWindowToViewport(false)
-end))
-bindViewportCamera()
-applyResponsiveLayout()
-
-addConn(bugTab.Activated:Connect(function() showTab("bug") end))
-addConn(trainTab.Activated:Connect(function() showTab("train") end))
-addConn(rebTab.Activated:Connect(function() showTab("reb") end))
-addConn(killTab.Activated:Connect(function() showTab("kill") end))
-addConn(crystalTab.Activated:Connect(function() showTab("crystal") end))
-addConn(Runtime.layoutUI.systemTab.Activated:Connect(function() showTab("system") end))
-addConn(brand.Activated:Connect(function()
-	if Runtime.closePicker then Runtime.closePicker() end
-	Runtime.layoutUI.showHome()
-end))
-addConn(minimizeBtn.Activated:Connect(function()
-	if Runtime.closePicker then Runtime.closePicker() end
-	setMinimized(true)
-end))
-
-addConn(rescanBtn.Activated:Connect(function()
-	setStatus("ОБНОВЛЯЮ КАМНИ...")
-	scanRocks()
-	Runtime.autoRockSelection=true
-	Runtime.lastAutoRockRebs=nil
-	applyAutoRockSelection(true)
-	setStatus("КАМЕНЬ: "..tostring(Runtime.selectedRock and Runtime.selectedRock.label or "не найден"))
-end))
-
-addConn(panicBtn.Activated:Connect(function()
-	panicStop()
-end))
-
-local draggingMain=false
-local draggingMini=false
-local resizing=false
-local miniMoved=false
-local dragStart=nil
-local startPos=nil
-local resizeStartSize=nil
-
-local function pointerInput(input)
-	return input.UserInputType==Enum.UserInputType.MouseButton1 or input.UserInputType==Enum.UserInputType.Touch
-end
-
-addConn(topBar.InputBegan:Connect(function(input)
-	if pointerInput(input) then
-		local localX=input.Position.X-main.AbsolutePosition.X
-		if localX<main.AbsoluteSize.X-112 then
-			draggingMain=true
-			dragStart=input.Position
-			startPos=main.Position
-		end
-	end
-end))
-
-addConn(miniButton.InputBegan:Connect(function(input)
-	if pointerInput(input) then
-		draggingMini=true
-		miniMoved=false
-		dragStart=input.Position
-		startPos=miniButton.Position
-	end
-end))
-
-addConn(resizeHandle.InputBegan:Connect(function(input)
-	if pointerInput(input) then
-		resizing=true
-		dragStart=input.Position
-		resizeStartSize=main.Size
-	end
-end))
-
-addConn(UserInputService.InputEnded:Connect(function(input)
-	if pointerInput(input) then
-		draggingMain=false
-		draggingMini=false
-		resizing=false
-	end
-end))
-
-addConn(UserInputService.InputChanged:Connect(function(input)
-	if dragStart and (input.UserInputType==Enum.UserInputType.MouseMovement or input.UserInputType==Enum.UserInputType.Touch) then
-		local delta=input.Position-dragStart
-		if draggingMain and startPos then
-			local wanted=UDim2.fromOffset(startPos.X.Offset+delta.X,startPos.Y.Offset+delta.Y)
-			main.Position=clampOffsetPosition(wanted,main.Size)
-		elseif draggingMini and startPos then
-			if delta.Magnitude>5 then miniMoved=true end
-			local wanted=UDim2.fromOffset(startPos.X.Offset+delta.X,startPos.Y.Offset+delta.Y)
-			miniButton.Position=clampOffsetPosition(wanted,miniButton.Size)
-		elseif resizing and resizeStartSize then
-			local viewport=viewportSize()
-			local dynamicMinWidth,dynamicMinHeight,viewportMaxWidth,viewportMaxHeight=windowMetrics(viewport)
-			local maxWidth=math.min(viewportMaxWidth,math.max(dynamicMinWidth,viewport.X-main.Position.X.Offset-4))
-			local maxHeight=math.min(viewportMaxHeight,math.max(dynamicMinHeight,viewport.Y-main.Position.Y.Offset-4))
-			local width=math.clamp(resizeStartSize.X.Offset+delta.X,dynamicMinWidth,maxWidth)
-			local height=math.clamp(resizeStartSize.Y.Offset+delta.Y,dynamicMinHeight,maxHeight)
-			main.Size=UDim2.fromOffset(width,height)
-			expandedSize=main.Size
-		end
-	end
-end))
-
-addConn(miniButton.Activated:Connect(function()
-	if miniMoved then
-		miniMoved=false
-		return
-	end
-	setMinimized(false)
-end))
-
-function Runtime:Stop(reason)
-	if not self.alive then return end
-
-	self.alive=false
-	self.manualNetworkHold=false
-	leaveNetworkHold(os.clock(),"STOP")
-	panicStop()
-	disconnectRockButtonConnections()
-	disconnectAll()
-
-	if gui and gui.Parent then
-		gui:Destroy()
-	end
-
-	if ENV.RockBugRuntime==self then
-		ENV.RockBugRuntime=nil
-	end
-end
-
-addConn(closeBtn.Activated:Connect(function()
-	Runtime:Stop("closed")
-end))
-
-addConn(lp.CharacterAdded:Connect(function(newCharacter)
-	local resumeMode=Runtime.mode
-	local resumeTrain=Runtime.selectedTrain
-	local resumePositionLock=Runtime.lockPosition
-	local resumePositionCF=Runtime.positionCF
-
-	Runtime.respawnGeneration=Runtime.respawnGeneration+1
-	local generation=Runtime.respawnGeneration
-	Runtime.activeTool=nil
-	Runtime.lockCF=nil
-	Runtime.positionCF=nil
-	Runtime.lockRock=false
-	Runtime.lockPosition=false
-	stopMode(resumeMode and "RESPAWN: жду персонажа для восстановления" or "RESPAWN: режимы остановлены")
-	local resumeToken=Runtime.modeToken
-
-	if Runtime.leverRefs.lockPosition then Runtime.leverRefs.lockPosition.Set(false,true) end
-	if not Runtime.autoResumeAfterRespawn or (not resumeMode and not resumePositionLock) then return end
-
-	task.spawn(function()
-		local deadline=os.clock()+15
-		local readyRoot=nil
-		local readyHum=nil
-
-		repeat
-			if not Runtime.alive or Runtime.respawnGeneration~=generation or Runtime.modeToken~=resumeToken then return end
-			readyRoot=newCharacter and newCharacter:FindFirstChild("HumanoidRootPart")
-			readyHum=newCharacter and newCharacter:FindFirstChildWhichIsA("Humanoid")
-			if readyRoot and readyHum then break end
-			task.wait(0.2)
-		until os.clock()>=deadline
-
-		if not readyRoot or not readyHum then
-			setStatus("RESPAWN RECOVERY: персонаж не загрузился за 15с")
-			return
-		end
-
-		-- Allow Backpack/tools to replicate before one bounded restart attempt.
-		task.wait(0.8)
-		if not Runtime.alive or Runtime.respawnGeneration~=generation or Runtime.modeToken~=resumeToken then return end
-
-		local resumed=resumeMode==nil
-		if resumeMode=="bug" then
-			resumed=startBug()
-		elseif resumeMode=="train" and resumeTrain then
-			resumed=startTrain(resumeTrain)
-		end
-
-		local positionResumed=false
-		if resumePositionLock and resumePositionCF and not Runtime.kingLock and not Runtime.lockPosition then
-			-- Do not revive an old position lock over a King lock (or a new
-			-- position chosen by the user) during the respawn settle window.
-			if not Runtime.networkPaused then readyRoot.Anchored=false end
-			Runtime.lockPosition=true
-			Runtime.positionCF=resumePositionCF
-			Runtime.nextPosTick=0
-			positionResumed=true
-			if Runtime.leverRefs.lockPosition then Runtime.leverRefs.lockPosition.Set(true,true) end
-		end
-
-		if resumed or positionResumed then
-			setStatus("RESPAWN RECOVERY: режим восстановлен")
-		else
-			setStatus("RESPAWN RECOVERY: не удалось восстановить предмет")
-		end
-	end)
-end))
-
--- Initial scan / exact rebirth calculator.
-scanRocks()
-applyAutoRockSelection(true)
-Runtime.layoutUI.showHome()
-updateCanvas()
-setStatus("ГОТОВО • "..tostring(Runtime.selectedRock and Runtime.selectedRock.label or "камень не найден"))
-
-end
-
-local uiOk,uiErr=xpcall(buildUI,function(err)
-	local trace=""
-	if debug and type(debug.traceback)=="function" then trace="\n"..tostring(debug.traceback()) end
-	return tostring(err)..trace
-end)
-
-if not uiOk then
-	Runtime.alive=false
-	disconnectAll()
-	if ENV.RockBugRuntime==Runtime then ENV.RockBugRuntime=nil end
-	if Runtime.uiRoot and Runtime.uiRoot.Parent then safe(function() Runtime.uiRoot:Destroy() end) end
-	warn("[RockBugHub] UI startup failed: "..tostring(uiErr))
-	pcall(function()
-		StarterGui:SetCore("SendNotification",{
-			Title="RockBugHub",
-			Text="UI error: "..tostring(uiErr):sub(1,120),
-			Duration=10,
-		})
-	end)
-	return
-end
-
-task.spawn(function()
-	local recentFailures={}
-	while Runtime.alive do
-		local ok,err=xpcall(scheduler,function(e)
-			local trace=""
-			if debug and type(debug.traceback)=="function" then
-				trace="\n"..tostring(debug.traceback())
-			end
-			return tostring(e)..trace
-		end)
-
-		if ok or not Runtime.alive then return end
-
-		Runtime.lastError=err
-		Runtime.schedulerRestarts=Runtime.schedulerRestarts+1
-		local now=os.clock()
-		local kept={}
-		for _,stamp in ipairs(recentFailures) do
-			if now-stamp<=30 then table.insert(kept,stamp) end
-		end
-		table.insert(kept,now)
-		recentFailures=kept
-
-		-- Preserve every mode/lever on isolated failures. A hard stop remains for
-		-- a genuine crash loop so the client cannot spin forever at full CPU.
-		if #recentFailures>=4 then
-			warn("RockBugHub scheduler stopped: "..tostring(err))
-			Runtime:Stop("scheduler repeatedly failed")
-			return
-		end
-
-		enterNetworkHold("scheduler recovery",now)
-		setStatus(("SCHEDULER RECOVERY %d/3 | state preserved | %s"):format(#recentFailures,tostring(err):sub(1,70)))
-		task.wait(math.min(0.5*#recentFailures,1.5))
-	end
-end)
+-- RockBugHub protected release v1.5
+return(function()
+local a="cPja0drIZeT1LYVSAQv+hqOWBR7nJfGupUlb6kiDxmwX2E5g9MztCy/K834soFHN"
+local m={}
+for n=1,#a do m[string.byte(a,n)]=n-1 end
+local k={2,190,79,99,190,168,209,37,168,173,118,91,27,209,213,83,214,36,214,84,25,239,187,172,127,33,238,103,150,190,248,134}
+for n=1,#k do k[n]=(k[n]-n*29-17)%256 end
+local p=table.concat({
+"G4zaFI2q2jkiZ6JthsrKw6GZALnJ8bENfch3J3EPAj5tAjIcS4qgmRO8yos46vOlTC7eH7xFa7TiHEN8jFiX9I0RLZrkovYu",
+"kXkPv6kjgnMajxLXnbkVrxsPvyVxZ6VTdSBNTkbiTynMV3pYUVyouepE1Tns8OjkODhqBtNYSANhZs+zZoNzJQdkUFtK/SJC",
+"BrP6qxfoHsrYXJqeNxL80wXJRPtIDwbU6T4PjJDFEC7RBANq6Wo+t+NBRqib5+OcDwiibRNfZU+Yyuw0aRLv6lMf2Wni695N",
+"fiubeeRxPKqn3pvtHeTmdgtI+3afXvHEpeVclOVzOCoZebXv73tUG5l8mS/m6qn7BIWcocTk/yUlMwBZCdcHVvrjYVdnPpzh",
+"rIN9HeKDqeYexoDPoow3XLrc0v4gKIGQmbRxJ37HDRVXpcV7bY4eFSDCUU2BYK2L/3yJi+5m0Zc/8G0WC3l3gdrZM1A+4JF8",
+"ToI6BDRaMh5WB6vZP+pyTHrzlnODtTd1FnnkqGjtx3erv615+yV35dqt/X4shcu2OjRXh83lMsVUXVmCY+jseLfbQtHpvU9g",
+"IbEB52HFhxljbQjQrGuexV1b5ElHP8iX4Hgggvbczz9brCy78oI/hpNyn6THR4rKZ/CstXfkJ35gPxbClhEp9zTnzJtbcrWC",
+"6rKqbA2Iw2IgfUk7/76nYiy/QqP3KJkmj5NpfwpJYQ+2Lbs/mQ1YENb2e8jpui54tt1qNi1Ueo6XNWgmXVBZlObHOahQdqkr",
+"CnfwDy4Yuo6nS+CFw7NHHXMWtbUensU43u6QFZPYB6zpNsGf2ooSdiD/7KSUo1StdTGxe83NCh+wCK7a65pBjpSWCYoXwAYk",
+"C2lYKjcj3d4ilXDZORIGeK6IQevKT8LYiBy5B6P2JhDLAlJ6WP6xlG0oUZyGyCX5FT+/Tu7AVNV3dHw6y+avOaVUxmg0jLXF",
+"6C5k8K9VMhVdY2WLbmJROcpbgXs3ikk9q48aXuX6gHFNZAgCZVkNCxgNQ1cWouTzE5rj8U8Bq834hw1lu5W4X2LGdOqv9P0g",
+"1cMwg1Q13TyCGv/dtyBYaUEufacuR7VtXEqzNNEKRWYUFvvE3BXLJ48KGWVa2gAwfF7NyHcLw458kieP9hHSqDaxV1avqMlb",
+"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",
+})
+local s={}
+for n=0,255 do s[n]=n end
+local j=0
+for n=0,255 do
+ j=(j+s[n]+k[(n%#k)+1])%256
+ s[n],s[j]=s[j],s[n]
+end
+local x,y=0,0
+local c1,c2=1,0
+local out,part={},{}
+local used=0
+local function emit(value)
+ x=(x+1)%256
+ y=(y+s[x])%256
+ s[x],s[y]=s[y],s[x]
+ value=(value-s[(s[x]+s[y])%256])%256
+ c1=(c1+value)%65521
+ c2=(c2+c1)%65521
+ used=used+1
+ part[used]=string.char(value)
+ if used==2048 then
+  out[#out+1]=table.concat(part)
+  part={}
+  used=0
+ end
+end
+for n=1,#p,4 do
+ local b1,b2=string.byte(p,n),string.byte(p,n+1)
+ local b3,b4=string.byte(p,n+2),string.byte(p,n+3)
+ local v1,v2=m[b1],m[b2]
+ if v1==nil or v2==nil then error("Protected script is damaged",0) end
+ local v3,v4=m[b3] or 0,m[b4] or 0
+ emit(math.floor(v1*4+v2/16))
+ if b3~=61 then emit(math.floor((v2%16)*16+v3/4)) end
+ if b4~=61 then emit((v3%4)*64+v4) end
+end
+if used>0 then out[#out+1]=table.concat(part) end
+if c1~=38792 or c2~=27559 then error("Protected script integrity check failed",0) end
+local fn,err=loadstring(table.concat(out),"@RockBugHub")
+if not fn then error(err or "Protected script failed to load",0) end
+return fn()
+end)()
