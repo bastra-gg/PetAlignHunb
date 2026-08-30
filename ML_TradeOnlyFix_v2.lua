@@ -1,17 +1,65 @@
-local VERSION = "4.18"
-local CORE_URL = "https://raw.githubusercontent.com/bastra-gg/PetAlignHunb/main/ML_TradeOnlyFix_v2_core.lua?v=" .. VERSION
+local VERSION = "4.19"
+local CORE_URL = "https://raw.githubusercontent.com/bastra-gg/PetAlignHunb/main/ML_TradeOnlyFix_v2_core.lua?v=" .. VERSION .. "&cb=" .. tostring(os.time())
 
+local Players = game:GetService("Players")
 local StarterGui = game:GetService("StarterGui")
+local statusGui
+local statusLabel
 
-local function notify(message, duration)
+local function showStatus(message, isError)
     warn("[RockBugHub Loader] " .. tostring(message))
+
+    if not statusGui then
+        pcall(function()
+            local player = Players.LocalPlayer
+            local parent = player and player:FindFirstChildOfClass("PlayerGui")
+            if not parent and player then
+                parent = player:WaitForChild("PlayerGui", 10)
+            end
+            if not parent then
+                return
+            end
+
+            statusGui = Instance.new("ScreenGui")
+            statusGui.Name = "RBHLaunchStatus"
+            statusGui.ResetOnSpawn = false
+            statusGui.DisplayOrder = 1000000
+            statusGui.IgnoreGuiInset = true
+            statusGui.Parent = parent
+
+            statusLabel = Instance.new("TextLabel")
+            statusLabel.Name = "Status"
+            statusLabel.AnchorPoint = Vector2.new(0.5, 0)
+            statusLabel.Position = UDim2.new(0.5, 0, 0, 18)
+            statusLabel.Size = UDim2.new(0, 360, 0, 48)
+            statusLabel.BackgroundColor3 = Color3.fromRGB(16, 19, 25)
+            statusLabel.BackgroundTransparency = 0.08
+            statusLabel.BorderSizePixel = 0
+            statusLabel.Font = Enum.Font.GothamBold
+            statusLabel.TextColor3 = Color3.fromRGB(235, 240, 245)
+            statusLabel.TextSize = 14
+            statusLabel.TextWrapped = true
+            statusLabel.ZIndex = 1000000
+            statusLabel.Parent = statusGui
+
+            local corner = Instance.new("UICorner")
+            corner.CornerRadius = UDim.new(0, 10)
+            corner.Parent = statusLabel
+        end)
+    end
+
+    if statusLabel then
+        statusLabel.Text = "RockBugHub " .. VERSION .. "\n" .. tostring(message)
+        statusLabel.TextColor3 = isError and Color3.fromRGB(255, 120, 130) or Color3.fromRGB(105, 255, 180)
+    end
+
     task.spawn(function()
         for _ = 1, 4 do
             local ok = pcall(function()
                 StarterGui:SetCore("SendNotification", {
                     Title = "RockBugHub " .. VERSION,
                     Text = tostring(message),
-                    Duration = duration or 7,
+                    Duration = isError and 12 or 4,
                 })
             end)
             if ok then
@@ -26,28 +74,30 @@ if not game:IsLoaded() then
     game.Loaded:Wait()
 end
 
-notify("Загрузка ядра...", 3)
+showStatus("1/3: загрузка ядра...", false)
 
 if type(loadstring) ~= "function" then
-    notify("Исполнитель не поддерживает loadstring", 10)
+    showStatus("Ошибка: исполнитель не поддерживает loadstring", true)
     return
 end
 
 local downloaded, source = pcall(function()
-    return game:HttpGet(CORE_URL, false)
+    return game:HttpGet(CORE_URL, true)
 end)
 
 if not downloaded or type(source) ~= "string" or #source < 100000 then
-    notify("Не удалось скачать ядро: " .. tostring(source):sub(1, 90), 10)
+    showStatus("Ошибка загрузки: " .. tostring(source):sub(1, 120), true)
     return
 end
 
+showStatus("2/3: компиляция ядра...", false)
 local chunk, compileError = loadstring(source)
 if type(chunk) ~= "function" then
-    notify("Ошибка компиляции: " .. tostring(compileError):sub(1, 100), 12)
+    showStatus("Ошибка компиляции: " .. tostring(compileError):sub(1, 140), true)
     return
 end
 
+showStatus("3/3: создание интерфейса...", false)
 local ran, runtimeError = xpcall(chunk, function(err)
     local trace = ""
     if debug and type(debug.traceback) == "function" then
@@ -57,5 +107,10 @@ local ran, runtimeError = xpcall(chunk, function(err)
 end)
 
 if not ran then
-    notify("Ошибка запуска: " .. tostring(runtimeError):sub(1, 100), 12)
+    showStatus("Ошибка запуска: " .. tostring(runtimeError):sub(1, 160), true)
+    return
+end
+
+if statusGui then
+    statusGui:Destroy()
 end
