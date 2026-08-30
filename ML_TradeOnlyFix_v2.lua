@@ -1,4 +1,4 @@
-local VERSION = "4.19"
+local VERSION = "4.20"
 local CORE_URL = "https://raw.githubusercontent.com/bastra-gg/PetAlignHunb/main/ML_TradeOnlyFix_v2_core.lua?v=" .. VERSION .. "&cb=" .. tostring(os.time())
 
 local Players = game:GetService("Players")
