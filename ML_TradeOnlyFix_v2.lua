@@ -1,8 +1,7 @@
-local VERSION = "4.21"
+local VERSION = "4.19"
 local CORE_URL = "https://raw.githubusercontent.com/bastra-gg/PetAlignHunb/main/ML_TradeOnlyFix_v2_core.lua?v=" .. VERSION .. "&cb=" .. tostring(os.time())
 
 local Players = game:GetService("Players")
-local StarterGui = game:GetService("StarterGui")
 local statusGui
 local statusLabel
 
@@ -53,21 +52,6 @@ local function showStatus(message, isError)
         statusLabel.TextColor3 = isError and Color3.fromRGB(255, 120, 130) or Color3.fromRGB(105, 255, 180)
     end
 
-    task.spawn(function()
-        for _ = 1, 4 do
-            local ok = pcall(function()
-                StarterGui:SetCore("SendNotification", {
-                    Title = "RockBugHub " .. VERSION,
-                    Text = tostring(message),
-                    Duration = isError and 12 or 4,
-                })
-            end)
-            if ok then
-                return
-            end
-            task.wait(0.5)
-        end
-    end)
 end
 
 if not game:IsLoaded() then
