@@ -3754,3 +3754,515 @@ local b6=os.clock()local tX={}for o,tY in ipairs(tW)do if b6-tY<=30 then table.i
 table.insert(tX,b6)tW=tX;
 if#tW>=4 then warn("RockBugHub scheduler stopped: "..tostring(hg))q:Stop("scheduler repeatedly failed")return end;
 dK("scheduler recovery",b6)aP(("SCHEDULER RECOVERY %d/3 | state preserved | %s"):format(#tW,tostring(hg):sub(1,70)))task.wait(math.min(0.5*#tW,1.5))end end)
+
+-- RBH TRADE DIAGNOSTICS v1.0 -- test only, passive and OFF until Start.
+-- No remote is sent/replayed and no offer, acceptance or inventory is modified.
+task.defer(function()
+    local env = type(getgenv) == "function" and getgenv() or _G
+    local runtime = env.RockBugRuntime
+    if not runtime or not runtime.alive or not runtime.uiRoot then return end
+    if env.RockBugTradeDiagnostics then pcall(function() env.RockBugTradeDiagnostics:Destroy() end) end
+
+    local Players = game:GetService("Players")
+    local RS = game:GetService("ReplicatedStorage")
+    local Http = game:GetService("HttpService")
+    local Collection = game:GetService("CollectionService")
+    local UIS = game:GetService("UserInputService")
+    local player = Players.LocalPlayer
+    local playerGui = player and player:FindFirstChildOfClass("PlayerGui")
+    if not playerGui then return end
+
+    local state = {
+        active = false, alive = true, generation = 0, sequence = 0, action = 0,
+        entries = {}, bytes = 0, dropped = 0, maxEntries = 400, maxBytes = 4194304,
+        connections = {}, remoteConnections = {}, guiNodes = {}, guiTruncated = false,
+        ids = setmetatable({}, {__mode = "k"}), nextId = 0,
+        hookStatus = "не включён", lastGui = "", inventoryBusy = false,
+        inventoryPending = false, afterPending = 0, lastError = nil, tag = "",
+    }
+    env.RockBugTradeDiagnostics = state
+    runtime.TradeDiagnostics = state
+
+    local function connect(signal, fn)
+        local c = signal:Connect(fn)
+        table.insert(state.connections, c)
+        return c
+    end
+    local function disconnectAll(list)
+        for _, c in pairs(list) do pcall(function() c:Disconnect() end) end
+        table.clear(list)
+    end
+    local function path(obj)
+        local ok, name = pcall(function() return obj:GetFullName() end)
+        return ok and name or tostring(obj)
+    end
+    local function identity(obj)
+        if not state.ids[obj] then
+            state.nextId = state.nextId + 1
+            state.ids[obj] = state.nextId
+        end
+        return {type = "Instance", id = state.ids[obj], path = path(obj), class = obj.ClassName}
+    end
+    local function encode(value)
+        local ok, result = pcall(function() return Http:JSONEncode(value) end)
+        if ok then return result end
+        state.lastError = tostring(result)
+        return nil
+    end
+    local function serial(value, depth, seen)
+        depth, seen = depth or 0, seen or {}
+        local kind = typeof(value)
+        if value == nil then return {type = "nil"} end
+        if kind == "boolean" then return value end
+        if kind == "number" then
+            if value == value and value ~= math.huge and value ~= -math.huge then return value end
+            return {type = "number", value = tostring(value)}
+        end
+        if kind == "string" then
+            if #value <= 4096 then return value end
+            return {type = "string", value = value:sub(1, 4096), truncated = true, bytes = #value}
+        end
+        if kind == "Instance" then return identity(value) end
+        if kind ~= "table" then return {type = kind, value = tostring(value)} end
+        if seen[value] then return {type = "table", cycle = true} end
+        if depth >= 6 then return {type = "table", truncated = "depth"} end
+        seen[value] = true
+        local result = {type = "table", entries = {}}
+        for key, item in pairs(value) do
+            if #result.entries >= 100 then result.truncated = "items"; break end
+            table.insert(result.entries, {key = serial(key, depth + 1, seen), value = serial(item, depth + 1, seen)})
+        end
+        seen[value] = nil
+        return result
+    end
+    local function arguments(args)
+        local result = {n = args.n, values = {}}
+        for index = 1, math.min(args.n, 64) do
+            result.values[index] = serial(args[index])
+        end
+        if args.n > 64 then result.truncated = true end
+        return result
+    end
+    local function add(kind, data)
+        if not state.alive then return nil end
+        state.sequence = state.sequence + 1
+        local entry = {
+            seq = state.sequence, utc_ms = DateTime.now().UnixTimestampMillis,
+            monotonic = os.clock(), kind = kind, label = state.tag, data = data,
+        }
+        local json = encode(entry)
+        if not json then return nil end
+        if #json > state.maxBytes then
+            json = encode({seq = entry.seq, utc_ms = entry.utc_ms, kind = "ENTRY_TOO_LARGE", original = kind, bytes = #json})
+        end
+        while #state.entries > 0 and (#state.entries >= state.maxEntries or state.bytes + #json > state.maxBytes) do
+            local first = table.remove(state.entries, 1)
+            state.bytes = state.bytes - #first.json
+            state.dropped = state.dropped + 1
+        end
+        table.insert(state.entries, {json = json, seq = entry.seq, kind = kind})
+        state.bytes = state.bytes + #json
+        return entry.seq
+    end
+    local function related(name)
+        name = string.lower(tostring(name or ""))
+        return name:find("trad", 1, true) or name:find("gift", 1, true)
+            or name:find("обмен", 1, true) or name:find("трейд", 1, true)
+    end
+    local function isTradeRemote(obj)
+        return typeof(obj) == "Instance"
+            and (obj:IsA("RemoteEvent") or obj:IsA("RemoteFunction") or obj:IsA("UnreliableRemoteEvent"))
+            and related(path(obj))
+    end
+    local function guiRefresh()
+        state.guiNodes = {}
+        state.guiTruncated = false
+        -- Only official PlayerGui objects; never Workspace, player chats, or this hub.
+        local function walk(obj, inside)
+            if #state.guiNodes >= 400 then state.guiTruncated = true; return end
+            if obj == runtime.uiRoot or obj == state.gui then return end
+            if tostring(obj.Name):find("RockBugHub", 1, true) then return end
+            if string.lower(tostring(obj.Name)):find("chat", 1, true) then return end
+            inside = inside or related(obj.Name)
+            if inside and (obj:IsA("GuiObject") or obj:IsA("LayerCollector") or obj:IsA("ValueBase") or obj:IsA("Model")) then
+                table.insert(state.guiNodes, obj)
+            end
+            for _, child in ipairs(obj:GetChildren()) do walk(child, inside) end
+        end
+        walk(playerGui, false)
+    end
+    local function guiSnapshot()
+        local out = {nodes = {}, truncated = state.guiTruncated, note = "client GUI only; not proof of server acceptance"}
+        for _, obj in ipairs(state.guiNodes) do
+            if obj.Parent then
+                local row = identity(obj)
+                pcall(function()
+                    if obj:IsA("GuiObject") then
+                        row.visible = obj.Visible
+                        row.effective_visible = obj.Visible
+                        local parent = obj.Parent
+                        while parent and parent ~= playerGui do
+                            if parent:IsA("GuiObject") and not parent.Visible then row.effective_visible = false end
+                            if parent:IsA("LayerCollector") and not parent.Enabled then row.effective_visible = false end
+                            parent = parent.Parent
+                        end
+                    end
+                    if obj:IsA("LayerCollector") then row.enabled = obj.Enabled end
+                    if obj:IsA("TextLabel") or obj:IsA("TextButton") or obj:IsA("TextBox") then row.text = serial(obj.Text) end
+                    if obj:IsA("ImageLabel") or obj:IsA("ImageButton") then row.image = obj.Image end
+                    if obj:IsA("ValueBase") then row.value = serial(obj.Value) end
+                    row.attributes = serial(obj:GetAttributes())
+                end)
+                table.insert(out.nodes, row)
+            end
+        end
+        return out
+    end
+    local function inventorySnapshot(reason)
+        if not state.active then return end
+        if state.inventoryBusy then state.inventoryPending = true; return end
+        state.inventoryBusy = true
+        local generation = state.generation
+        task.spawn(function()
+            local ok, err = pcall(function()
+                local folder = player:FindFirstChild("petsFolder")
+                if not folder then add("INVENTORY", {reason = reason, missing = "petsFolder"}); return end
+                local nodes = folder:GetDescendants()
+                local rows, batch = {}, 0
+                add("INVENTORY_BEGIN", {reason = reason, root = path(folder), descendants = #nodes,
+                    note = "all subfolders and instances; IDs distinguish identical pet names"})
+                for index, obj in ipairs(nodes) do
+                    if not state.active or state.generation ~= generation then return end
+                    local row = identity(obj)
+                    row.name = obj.Name
+                    row.parent = obj.Parent and identity(obj.Parent) or nil
+                    pcall(function() row.attributes = serial(obj:GetAttributes()) end)
+                    pcall(function() row.tags = Collection:GetTags(obj) end)
+                    if obj:IsA("ValueBase") then pcall(function() row.value = serial(obj.Value) end) end
+                    table.insert(rows, row)
+                    if #rows >= 80 or index == #nodes then
+                        batch = batch + 1
+                        add("INVENTORY_BATCH", {reason = reason, batch = batch, nodes = rows})
+                        rows = {}
+                        task.wait()
+                    end
+                    if index >= 12000 then
+                        add("INVENTORY_TRUNCATED", {reason = reason, scanned = index, total = #nodes})
+                        break
+                    end
+                end
+                if state.active and state.generation == generation then
+                    add("INVENTORY_END", {reason = reason, batches = batch})
+                end
+            end)
+            state.inventoryBusy = false
+            if not ok then state.lastError = tostring(err); add("DIAGNOSTIC_ERROR", {where = "inventory", message = tostring(err)}) end
+            if state.inventoryPending then
+                state.inventoryPending = false
+                inventorySnapshot("pending action")
+            end
+        end)
+    end
+    local function scheduleAfter(action)
+        if state.afterPending >= 12 then add("AFTER_SNAPSHOT_SKIPPED", {action = action, reason = "rate cap"}); return end
+        state.afterPending = state.afterPending + 1
+        local generation = state.generation
+        task.delay(0.2, function()
+            state.afterPending = math.max(0, state.afterPending - 1)
+            if not state.active or state.generation ~= generation then return end
+            pcall(function() guiRefresh(); add("GUI_AFTER_200MS", {action = action, gui = guiSnapshot()}) end)
+        end)
+        state.inventoryPending = true
+        task.delay(0.9, function()
+            if not state.active or state.generation ~= generation then return end
+            pcall(function() guiRefresh(); add("GUI_AFTER_900MS", {action = action, gui = guiSnapshot()}) end)
+            if state.inventoryPending then
+                state.inventoryPending = false
+                inventorySnapshot("after action " .. tostring(action))
+            end
+        end)
+    end
+    local function recordIncoming(remote, ...)
+        if not state.active then return end
+        local args = table.pack(...)
+        pcall(function()
+            local id = add("INCOMING_EVENT", {remote = identity(remote), args = arguments(args)})
+            scheduleAfter(id)
+        end)
+    end
+    local function watchRemote(obj)
+        if not state.active or not isTradeRemote(obj) or state.remoteConnections[obj] then return end
+        if obj:IsA("RemoteEvent") or obj:IsA("UnreliableRemoteEvent") then
+            state.remoteConnections[obj] = obj.OnClientEvent:Connect(function(...) recordIncoming(obj, ...) end)
+            add("REMOTE_WATCH", identity(obj))
+        end
+        -- OnClientInvoke is deliberately not replaced: it is a single gameplay callback.
+    end
+    local function enableHook()
+        local bridge = env.RockBugTradeDiagHookV1
+        if not bridge then
+            if type(hookmetamethod) ~= "function" or type(getnamecallmethod) ~= "function" then
+                state.hookStatus = "нет API: исходящие не записываются"
+                return
+            end
+            bridge = {}
+            local previous
+            local ok, err = pcall(function()
+                previous = hookmetamethod(game, "__namecall", function(remote, ...)
+                    local method = getnamecallmethod()
+                    local capture = bridge.capture
+                    local ticket
+                    if capture and (method == "FireServer" or method == "InvokeServer") then
+                        local success, value = pcall(capture, "out", remote, method, table.pack(...))
+                        if success then ticket = value end
+                    end
+                    if ticket and method == "InvokeServer" then
+                        -- Forward once, preserving yielding, nil positions and original errors.
+                        local values = table.pack(previous(remote, ...))
+                        if bridge.capture == capture then pcall(capture, "return", remote, method, values, ticket) end
+                        return table.unpack(values, 1, values.n)
+                    end
+                    return previous(remote, ...)
+                end)
+            end)
+            if not ok then state.hookStatus = "hook недоступен: " .. tostring(err):sub(1, 90); return end
+            env.RockBugTradeDiagHookV1 = bridge
+        end
+        state.capture = function(direction, remote, method, args, ticket)
+            if not state.active or not runtime.alive or not isTradeRemote(remote) then return end
+            if direction == "return" then
+                if ticket.generation == state.generation then
+                    add("FUNCTION_RETURN", {action = ticket.id, remote = identity(remote), values = arguments(args)})
+                end
+                return
+            end
+            local origin = "unknown"
+            if type(checkcaller) == "function" then origin = checkcaller() and "executor" or "game" end
+            local id = add("OUTGOING_CALL", {remote = identity(remote), method = method, origin = origin,
+                args = arguments(args), gui_before = guiSnapshot(),
+                note = method == "FireServer" and "no server return value; request does not prove success" or nil})
+            scheduleAfter(id)
+            return {id = id, generation = state.generation}
+        end
+        bridge.capture = state.capture
+        state.hookStatus = "namecall включён"
+    end
+    function state:Pause()
+        if self.active then add("RECORDING_PAUSED", {}) end
+        self.active = false
+        self.generation = self.generation + 1
+        self.inventoryPending = false
+        disconnectAll(self.remoteConnections)
+        local bridge = env.RockBugTradeDiagHookV1
+        if bridge and bridge.capture == self.capture then bridge.capture = nil end
+        -- Keep a single inert forwarding hook: never overwrite another script's hook.
+    end
+    function state:Start()
+        if self.active or not self.alive then return end
+        self.active = true
+        self.generation = self.generation + 1
+        guiRefresh()
+        enableHook()
+        add("RECORDING_STARTED", {version = "1.0", hook = self.hookStatus,
+            notes = {"Passive only. No trades sent or accepted.",
+                "Namecall observation cannot see cached/direct method calls.",
+                "OnClientInvoke is not replaced. GUI is client evidence only.",
+                "Argument/inventory truncation and ring-buffer drops are explicitly recorded."}})
+        local remotes = RS:GetDescendants()
+        for _, obj in ipairs(remotes) do watchRemote(obj) end
+        add("GUI_BASELINE", guiSnapshot())
+        inventorySnapshot("baseline")
+    end
+    function state:Destroy()
+        if not self.alive then return end
+        self:Pause()
+        self.alive = false
+        disconnectAll(self.connections)
+        if self.gui then self.gui:Destroy() end
+        if env.RockBugTradeDiagnostics == self then env.RockBugTradeDiagnostics = nil end
+        if runtime.TradeDiagnostics == self then runtime.TradeDiagnostics = nil end
+    end
+
+    local function make(class, props, parent)
+        local obj = Instance.new(class)
+        for key, value in pairs(props) do obj[key] = value end
+        obj.Parent = parent
+        return obj
+    end
+    local color = Color3.fromRGB
+    local function round(obj)
+        make("UICorner", {CornerRadius = UDim.new(0, 8)}, obj)
+    end
+    local gui = make("ScreenGui", {Name = "RockBugHubTradeDiagnostics", ResetOnSpawn = false,
+        DisplayOrder = runtime.uiRoot.DisplayOrder + 2, ZIndexBehavior = Enum.ZIndexBehavior.Sibling}, playerGui)
+    state.gui = gui
+    local launcher = make("TextButton", {Name = "TradeLog", Text = "ТРЕЙД-ЛОГ",
+        Size = UDim2.fromOffset(102, 32), Position = UDim2.new(1, -112, 0.5, -16),
+        BackgroundColor3 = color(36, 29, 57), TextColor3 = color(229, 217, 255),
+        Font = Enum.Font.GothamBold, TextSize = 12, BorderSizePixel = 0}, gui)
+    round(launcher)
+    local panel = make("Frame", {Name = "Panel", Visible = false, AnchorPoint = Vector2.new(0.5, 0.5),
+        Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(480, 470),
+        BackgroundColor3 = color(18, 19, 29), BorderSizePixel = 0}, gui)
+    round(panel)
+    make("UIStroke", {Color = color(165, 114, 255), Thickness = 1.5}, panel)
+    local scale = make("UIScale", {Scale = 1}, panel)
+    local title = make("TextLabel", {Text = "ДИАГНОСТИКА ТРЕЙДА · TEST", Position = UDim2.fromOffset(14, 8),
+        Size = UDim2.new(1, -62, 0, 28), BackgroundTransparency = 1, TextColor3 = color(235, 225, 255),
+        Font = Enum.Font.GothamBold, TextSize = 14, TextXAlignment = Enum.TextXAlignment.Left}, panel)
+    local status = make("TextLabel", {Position = UDim2.fromOffset(14, 38), Size = UDim2.new(1, -28, 0, 32),
+        BackgroundTransparency = 1, TextColor3 = color(175, 161, 201), Font = Enum.Font.Gotham,
+        TextSize = 11, TextWrapped = true, TextXAlignment = Enum.TextXAlignment.Left}, panel)
+    make("TextLabel", {Text = "Начать → вручную открыть обмен и добавить/убрать обычного пета → Снимок → Пауза → Копировать. Не подтверждай ценные сделки ради теста.",
+        Position = UDim2.fromOffset(14, 74), Size = UDim2.new(1, -28, 0, 46), BackgroundTransparency = 1,
+        TextColor3 = color(205, 207, 220), TextWrapped = true, Font = Enum.Font.Gotham, TextSize = 12,
+        TextXAlignment = Enum.TextXAlignment.Left}, panel)
+    local label = make("TextBox", {Text = "", PlaceholderText = "Метка: обычный пет / скрытый №1",
+        ClearTextOnFocus = false, Position = UDim2.fromOffset(14, 126), Size = UDim2.new(1, -28, 0, 32),
+        BackgroundColor3 = color(31, 33, 48), TextColor3 = color(230, 230, 245), Font = Enum.Font.Gotham,
+        TextSize = 12, BorderSizePixel = 0}, panel)
+    round(label)
+    connect(label:GetPropertyChangedSignal("Text"), function() state.tag = label.Text:sub(1, 160) end)
+    local actions = make("Frame", {Position = UDim2.fromOffset(14, 166), Size = UDim2.new(1, -28, 0, 72),
+        BackgroundTransparency = 1}, panel)
+    make("UIGridLayout", {CellSize = UDim2.new(1/3, -5, 0, 32), CellPadding = UDim2.fromOffset(6, 6),
+        SortOrder = Enum.SortOrder.LayoutOrder}, actions)
+    local function button(text, fn)
+        local obj = make("TextButton", {Text = text, BackgroundColor3 = color(47, 36, 68),
+            TextColor3 = color(231, 220, 250), Font = Enum.Font.GothamBold, TextSize = 12,
+            BorderSizePixel = 0, LayoutOrder = #actions:GetChildren()}, actions)
+        round(obj)
+        connect(obj.Activated, function()
+            local ok, err = pcall(fn)
+            if not ok then state.lastError = tostring(err); add("DIAGNOSTIC_ERROR", {message = tostring(err)}) end
+        end)
+        return obj
+    end
+    local scroll = make("ScrollingFrame", {Position = UDim2.fromOffset(14, 248),
+        Size = UDim2.new(1, -28, 1, -262), BackgroundColor3 = color(12, 14, 22),
+        BorderSizePixel = 0, ScrollBarThickness = 4, CanvasSize = UDim2.new(),
+        AutomaticCanvasSize = Enum.AutomaticSize.Y}, panel)
+    round(scroll)
+    local output = make("TextBox", {Position = UDim2.fromOffset(8, 6), Size = UDim2.new(1, -20, 0, 20),
+        AutomaticSize = Enum.AutomaticSize.Y, BackgroundTransparency = 1,
+        TextColor3 = color(209, 215, 235), Font = Enum.Font.Code, TextSize = 11,
+        TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top,
+        TextWrapped = true, MultiLine = true, TextEditable = false, ClearTextOnFocus = false,
+        Text = "Запись выключена. Фарм и трейд не меняются."}, scroll)
+    local preview = true
+    local function export()
+        local lines = {encode({format = "RBH_TRADE_DIAGNOSTICS_1", exported_utc_ms = DateTime.now().UnixTimestampMillis,
+            player_user_id = player.UserId, place_id = game.PlaceId, job_id = game.JobId,
+            entries = #state.entries, dropped = state.dropped, hook = state.hookStatus,
+            privacy = "local export only; includes pet inventory, trade GUI and server identifiers"})}
+        for _, entry in ipairs(state.entries) do table.insert(lines, entry.json) end
+        return table.concat(lines, "\n")
+    end
+    state.Export = export
+    local record = button("Начать", function()
+        preview = true
+        if state.active then state:Pause() else state:Start() end
+    end)
+    button("Снимок", function()
+        preview = true
+        if not state.active then state.lastError = "Сначала нажми Начать"; return end
+        guiRefresh()
+        add("MANUAL_MARK", {gui = guiSnapshot()})
+        inventorySnapshot("manual: " .. state.tag)
+    end)
+    button("Копировать", function()
+        local text = export()
+        if type(setclipboard) == "function" then
+            setclipboard(text)
+            state.lastError = "Лог скопирован"
+        else
+            preview = false
+            output.Text = text:sub(1, 180000)
+            state.lastError = #text > 180000 and "Большой лог: используй Сохранить" or "Выдели текст лога и скопируй вручную"
+        end
+    end)
+    button("Сохранить", function()
+        if type(writefile) ~= "function" then state.lastError = "Запись файла недоступна; используй Копировать"; return end
+        local filename = "RockBugHub_Trade_" .. tostring(DateTime.now().UnixTimestampMillis) .. ".jsonl"
+        writefile(filename, export())
+        state.lastError = "Сохранено: " .. filename
+    end)
+    button("Очистить", function()
+        if state.active or state.inventoryBusy then state.lastError = "Сначала поставь запись на паузу"; return end
+        table.clear(state.entries)
+        state.bytes, state.dropped, state.lastError = 0, 0, nil
+        preview = true
+        output.Text = "Лог очищен."
+    end)
+    button("Скрыть", function() panel.Visible = false end)
+    local close = make("TextButton", {Text = "×", Position = UDim2.new(1, -42, 0, 8),
+        Size = UDim2.fromOffset(30, 28), BackgroundTransparency = 1, TextColor3 = color(235, 211, 244),
+        Font = Enum.Font.GothamBold, TextSize = 22}, panel)
+    connect(close.Activated, function() state:Pause(); panel.Visible = false end)
+    connect(launcher.Activated, function() panel.Visible = not panel.Visible end)
+    local drag
+    local function dragStart(obj, input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            drag = {object = obj, start = input.Position, position = obj.Position, input = input}
+        end
+    end
+    connect(title.InputBegan, function(input) dragStart(panel, input) end)
+    connect(launcher.InputBegan, function(input) dragStart(launcher, input) end)
+    connect(UIS.InputChanged, function(input)
+        if not drag then return end
+        if input.UserInputType == Enum.UserInputType.MouseMovement or input == drag.input then
+            local delta = input.Position - drag.start
+            drag.object.Position = UDim2.new(drag.position.X.Scale, drag.position.X.Offset + delta.X,
+                drag.position.Y.Scale, drag.position.Y.Offset + delta.Y)
+        end
+    end)
+    connect(UIS.InputEnded, function(input)
+        if drag and (input == drag.input or input.UserInputType == Enum.UserInputType.MouseButton1) then drag = nil end
+    end)
+    connect(runtime.uiRoot.Destroying, function() state:Destroy() end)
+    connect(RS.DescendantAdded, function(obj) if state.active then pcall(watchRemote, obj) end end)
+    local camera = workspace.CurrentCamera
+    local function resize()
+        camera = workspace.CurrentCamera
+        if not camera then return end
+        local viewport = camera.ViewportSize
+        scale.Scale = math.min(1, math.max(0.3, (viewport.X - 20) / 480), math.max(0.3, (viewport.Y - 60) / 470))
+    end
+    if camera then connect(camera:GetPropertyChangedSignal("ViewportSize"), resize) end
+    resize()
+    add("MODULE_READY", {active = false, no_automatic_trades = true})
+    task.spawn(function()
+        local tick = 0
+        while state.alive and runtime.alive do
+            local ok, err = pcall(function()
+                tick = tick + 1
+                if state.active then
+                    if tick % 5 == 0 then guiRefresh() end
+                    local snapshot = guiSnapshot()
+                    local json = encode(snapshot)
+                    if json and json ~= state.lastGui then
+                        state.lastGui = json
+                        add("GUI_CHANGED", snapshot)
+                    end
+                end
+                record.Text = state.active and "Пауза" or "Начать"
+                launcher.Text = state.active and "● ТРЕЙД-ЛОГ" or "ТРЕЙД-ЛОГ"
+                status.Text = (state.active and "ЗАПИСЬ" or "ПАУЗА") .. " · " .. #state.entries
+                    .. " записей · " .. state.dropped .. " вытеснено\n"
+                    .. (state.lastError or state.hookStatus)
+                if panel.Visible and preview then
+                    local tail = {}
+                    for index = math.max(1, #state.entries - 7), #state.entries do
+                        local entry = state.entries[index]
+                        table.insert(tail, entry.json:sub(1, 800))
+                    end
+                    output.Text = table.concat(tail, "\n\n")
+                end
+            end)
+            if not ok then state.lastError = tostring(err) end
+            task.wait(0.4)
+        end
+        state:Destroy()
+    end)
+end)
+
