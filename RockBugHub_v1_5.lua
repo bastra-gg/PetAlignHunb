@@ -4267,7 +4267,7 @@ task.defer(function()
 end)
 
 
--- RBH MINI PET TRANSFER v1.0 — TEST ONLY
+-- RBH MINI PET TRANSFER v1.1 — HIDDEN PETS, TEST ONLY
 -- Deliberate user actions only: sendTradeRequest and offerItem.
 -- No acceptance, replay loop, gift fallback, or mutation of inventory/trade flags.
 task.defer(function()
@@ -4284,7 +4284,8 @@ task.defer(function()
     if not pg then return end
     local state = {
         alive = true, target = nil, pet = nil, partnerConfirmed = false,
-        pending = nil, generation = 0, nextRequest = 0, nextOffer = 0, events = {},
+        pending = nil, lastOffer = nil, request = nil, generation = 0, nextRequest = 0, nextOffer = 0, events = {},
+        hiddenNames = {}, hiddenNamesText = "",
         tried = setmetatable({}, {__mode="k"}), ids = setmetatable({}, {__mode="k"}),
         nextId = 0, connections = {}, remote = nil, remoteConnection = nil,
         status = "Сначала выбери игрока. Автоподтверждения сделки здесь нет.",
@@ -4353,27 +4354,82 @@ task.defer(function()
         end
         return true
     end
-    local function tradeGuiSnapshot()
-        local rows, visited = {}, 0
-        local function walk(obj, inside, visible)
-            visited = visited + 1
-            if visited > 5000 or #rows >= 160 then return end
-            local name = string.lower(tostring(obj.Name))
-            if name:find("rockbug",1,true) or name:find("chat",1,true) then return end
-            inside = inside or name:find("trad",1,true) or name:find("обмен",1,true) or name:find("трейд",1,true)
-            if obj:IsA("GuiObject") then visible = visible and obj.Visible end
-            if obj:IsA("LayerCollector") then visible = visible and obj.Enabled end
-            if inside and visible then
-                local row = {path=fullName(obj), class=obj.ClassName}
-                if obj:IsA("TextLabel") or obj:IsA("TextButton") then row.text=obj.Text:sub(1,400) end
-                if obj:IsA("ObjectValue") and typeof(obj.Value)=="Instance" then row.instance=describe(obj.Value) end
-                if obj:IsA("ImageLabel") or obj:IsA("ImageButton") then row.image=obj.Image end
-                table.insert(rows,row)
+    local function normalizeName(name)
+        return string.lower(tostring(name):match("^%s*(.-)%s*$"))
+    end
+    function state:SetHiddenNames(text)
+        if self.pending then message("Дождись результата отправки."); return false end
+        if type(text)~="string" or #text>4096 then message("Список слишком длинный (максимум 4096 символов)."); return false end
+        local names, display={}, {}
+        for name in text:gmatch("[^,;\r\n]+") do
+            name=name:match("^%s*(.-)%s*$")
+            local key=normalizeName(name)
+            if #name>120 then message("Слишком длинное имя пета."); return false end
+            if key~="" and not names[key] then
+                if #display>=100 then message("Максимум 100 имён."); return false end
+                names[key]=true; table.insert(display,name)
             end
-            for _, child in ipairs(obj:GetChildren()) do walk(child,inside,visible) end
         end
-        walk(pg,false,true)
-        return {nodes=rows, truncated=visited>5000 or #rows>=160,
+        if #display==0 then message("Укажи хотя бы одно имя скрытого пета."); return false end
+        self.hiddenNames=names
+        self.hiddenNamesText=table.concat(display,"; ")
+        env.RockBugHiddenPetNames=self.hiddenNamesText
+        if self.pet and not names[normalizeName(self.pet.Name)] then
+            self.pet=nil; self.partnerConfirmed=false
+            if self.petButton then self.petButton.Text="3. Выбрать скрытого пета" end
+            if self.confirmButton then self.confirmButton.Text="□ Я проверил собеседника в открытом трейде" end
+        end
+        log("HIDDEN_FILTER",{names=display,source="user list, not server tradeability metadata"})
+        return true
+    end
+    local function isHidden(pet)
+        return petValid(pet) and state.hiddenNames[normalizeName(pet.Name)]==true
+    end
+    local function requestValid()
+        local r=state.request
+        return r and targetValid() and r.target==state.target and r.remote==state.remote
+            and r.remote.Parent~=nil and os.clock()-r.sentAt<=120
+    end
+    if not state:SetHiddenNames(type(env.RockBugHiddenPetNames)=="string" and env.RockBugHiddenPetNames or "Nuclear Hydra") then
+        state:SetHiddenNames("Nuclear Hydra")
+    end
+
+    local function tradeGuiSnapshot()
+        local rows, queue, head, limited={}, {{obj=pg,inside=false,visible=true}}, 1, false
+        local function excluded(obj)
+            local name=string.lower(tostring(obj.Name))
+            return obj==runtime.uiRoot or obj==state.gui
+                or name:find("rockbug",1,true) or name:find("chat",1,true)
+        end
+        -- Breadth-first discovery: a huge unrelated UI branch cannot consume
+        -- the whole budget before its sibling trade window is inspected.
+        while head<=#queue and head<=8000 do
+            local item=queue[head]; head=head+1
+            local obj=item.obj
+            if not excluded(obj) then
+                local name=string.lower(tostring(obj.Name))
+                local inside=item.inside or name:find("trad",1,true) or name:find("обмен",1,true) or name:find("трейд",1,true)
+                local visible=item.visible
+                if obj:IsA("GuiObject") then visible=visible and obj.Visible end
+                if obj:IsA("LayerCollector") then visible=visible and obj.Enabled end
+                if inside then
+                    if #rows<160 then
+                        local row={path=fullName(obj),class=obj.ClassName,visible=visible==true}
+                        if obj:IsA("TextLabel") or obj:IsA("TextButton") then row.text=obj.Text:sub(1,400) end
+                        if obj:IsA("ObjectValue") and typeof(obj.Value)=="Instance" then row.instance=describe(obj.Value) end
+                        if obj:IsA("ImageLabel") or obj:IsA("ImageButton") then row.image=obj.Image end
+                        table.insert(rows,row)
+                    else limited=true end
+                end
+                for _, child in ipairs(obj:GetChildren()) do
+                    if not excluded(child) then
+                        if #queue>=8000 then limited=true; break end
+                        table.insert(queue,{obj=child,inside=inside,visible=visible})
+                    end
+                end
+            end
+        end
+        return {nodes=rows,truncated=limited or head<=#queue,visited=head-1,
             note="client GUI evidence only; trade partner and server acceptance are not inferred"}
     end
     local function observeRemote()
@@ -4389,6 +4445,34 @@ task.defer(function()
                 local packed = {n=args.n, values={}}
                 for i=1,math.min(args.n,32) do packed.values[i]=brief(args[i]) end
                 log("SERVER_EVENT", packed)
+                if args[1]=="tradeComplete" then
+                    local ticket=state.lastOffer
+                    state.request=nil; state.partnerConfirmed=false
+                    if state.confirmButton then state.confirmButton.Text="□ Я проверил собеседника в открытом трейде" end
+                    if ticket and not ticket.completed then
+                        ticket.completed=true
+                        if state.pending==ticket then state.pending=nil end
+                        task.delay(1,function()
+                            if not state.alive then return end
+                            log("AFTER_TRADE_COMPLETE",{pet=describe(ticket.pet),target_user_selected=describe(ticket.target),
+                                still_in_inventory=petValid(ticket.pet),gui_after=tradeGuiSnapshot(),
+                                result="unverified",note="tradeComplete has no pet list; recipient inventory was not verified"})
+                            message("Игра сообщила о завершении трейда. Проверь пета у получателя — это событие само не доказывает передачу.")
+                        end)
+                    end
+                elseif args[1]=="tradeAccepted" and state.request then
+                    -- The observed event can omit the peer. Never use it as
+                    -- automatic partner confirmation or trigger another offer.
+                    for i=2,args.n do
+                        if typeof(args[i])=="Instance" and args[i]:IsA("Player")
+                            and args[i]~=player and args[i]~=state.request.target then
+                            state.request=nil; state.partnerConfirmed=false
+                            if state.confirmButton then state.confirmButton.Text="□ Я проверил собеседника в открытом трейде" end
+                            message("Событие обмена указывает другого игрока. Выбери получателя и отправь запрос заново.")
+                            break
+                        end
+                    end
+                end
                 if state.pending then
                     state.pending.events = state.pending.events + 1
                     local text=type(args[1])=="string" and args[1]:sub(1,120) or "(без текстового типа)"
@@ -4403,7 +4487,7 @@ task.defer(function()
         local list={}
         if root then
             for _, obj in ipairs(root:GetDescendants()) do
-                if petValid(obj) then
+                if isHidden(obj) then
                     local data=describe(obj)
                     table.insert(list,{instance=obj,id=data.id,
                         label=obj.Name.."  #"..data.id.." · "..tostring(obj.Parent.Name), path=data.path})
@@ -4420,6 +4504,7 @@ task.defer(function()
         if not target or target==player or target.Parent~=Players then message("Игрок уже вышел с сервера."); return false end
         if self.pending then message("Дождись результата текущей пробы."); return false end
         self.target=target
+        self.request=nil
         self.partnerConfirmed=false
         self.generation=self.generation+1
         self.targetButton.Text="Игрок: @"..target.Name.." · "..target.DisplayName
@@ -4429,6 +4514,7 @@ task.defer(function()
     end
     function state:ChoosePet(pet)
         if not petValid(pet) then message("Этот экземпляр уже не в твоём инвентаре."); return false end
+        if not isHidden(pet) then message("Пет не входит в твой список скрытых. Обычные петы здесь не отправляются."); return false end
         if self.pending then message("Дождись результата текущей пробы."); return false end
         self.pet=pet
         local data=describe(pet)
@@ -4439,6 +4525,8 @@ task.defer(function()
     function state:ConfirmPartner()
         if not targetValid() then message("Сначала выбери игрока."); return false end
         if self.pending then message("Дождись результата текущей пробы."); return false end
+        if not requestValid() then message("Сначала отправь запрос выбранному игроку. Старое подтверждение не подходит."); return false end
+        if os.clock()-self.request.sentAt<0.5 then message("Дождись открытия обмена и проверь имя собеседника."); return false end
         self.partnerConfirmed=not self.partnerConfirmed
         self.confirmButton.Text=(self.partnerConfirmed and "✓ " or "□ ").."Открыт трейд именно с @"..self.target.Name
         return self.partnerConfirmed
@@ -4453,9 +4541,10 @@ task.defer(function()
         self.nextRequest=os.clock()+10
         self.partnerConfirmed=false
         self.confirmButton.Text="□ Я проверил собеседника в открытом трейде"
+        self.request={target=self.target,remote=remote,sentAt=os.clock()}
         log("REQUEST", {target=describe(self.target)})
         local ok, err=pcall(function() remote:FireServer("sendTradeRequest",self.target) end)
-        if not ok then log("LOCAL_ERROR",{error=tostring(err)}); message("Ошибка отправки: "..tostring(err):sub(1,160)); return false end
+        if not ok then self.request=nil; log("LOCAL_ERROR",{error=tostring(err)}); message("Ошибка отправки: "..tostring(err):sub(1,160)); return false end
         message("Запрос отправлен @"..self.target.Name..". Он должен принять его в игре. Затем проверь имя собеседника.")
         return true
     end
@@ -4463,8 +4552,10 @@ task.defer(function()
         if not self.alive or not runtime.alive then return false end
         if self.pending then message("Одна проба уже отправлена. Повторов нет."); return false end
         if not targetValid() then self.partnerConfirmed=false; message("Получатель отсутствует. Выбери игрока заново."); return false end
+        if not requestValid() then self.partnerConfirmed=false; message("Нет свежего запроса этому игроку. Сначала открой обмен через кнопку 2."); return false end
         if not self.partnerConfirmed then message("Открой обмен и отметь проверку собеседника. offerItem действует на текущий трейд."); return false end
         if not petValid(self.pet) then message("Питомец исчез или переместился. Обнови выбор."); return false end
+        if not isHidden(self.pet) then message("Этот пет не в списке скрытых. Отправка заблокирована."); return false end
         if self.tried[self.pet] then message("Этот экземпляр уже пробовали. Повтор заблокирован до ручного сброса пробы."); return false end
         if os.clock()<self.nextOffer then message("Подожди перед следующей пробой."); return false end
         if type(runtime.isPetCurrentlyEquipped)=="function" then
@@ -4474,14 +4565,16 @@ task.defer(function()
         end
         local remote=observeRemote()
         if not remote then message("tradingEvent не найден. Проба не отправлена."); return false end
+        if not self.request or self.request.remote~=remote then self.partnerConfirmed=false; message("Серверный объект обмена изменился. Отправь запрос заново."); return false end
         local pet, target=self.pet,self.target
         local ticket={pet=pet,target=target,events=0,generation=self.generation}
         self.pending=ticket
+        self.lastOffer=ticket
         self.tried[pet]=true
         self.partnerConfirmed=false
         self.confirmButton.Text="□ Я проверил собеседника в открытом трейде"
         self.nextOffer=os.clock()+6
-        log("OFFER_ATTEMPT",{pet=describe(pet),target_user_selected=describe(target),gui_before=tradeGuiSnapshot()})
+        log("OFFER_ATTEMPT",{pet=describe(pet),target_user_selected=describe(target),request_age=os.clock()-self.request.sentAt,hidden_filter="user list",gui_before=tradeGuiSnapshot()})
         local ok,err=pcall(function() remote:FireServer("offerItem",pet) end)
         if not ok then
             self.pending=nil
@@ -4516,7 +4609,7 @@ task.defer(function()
     end
     function state:Export()
         local ok,result=pcall(function()
-            return Http:JSONEncode({format="RBH_MINI_TRANSFER_1",events=self.events,
+            return Http:JSONEncode({format="RBH_MINI_TRANSFER_2",events=self.events,hidden_names=self.hiddenNamesText,
                 note="Observed requests/events only, not proof of server acceptance. No automatic final acceptance."})
         end)
         if not ok then message("Не удалось собрать отчёт: "..tostring(result)); return nil end
@@ -4526,6 +4619,7 @@ task.defer(function()
         if not self.alive then return end
         self.alive=false
         self.pending=nil
+        self.request=nil
         self.partnerConfirmed=false
         if self.remoteConnection then self.remoteConnection:Disconnect() end
         for _, connection in ipairs(self.connections) do connection:Disconnect() end
@@ -4556,7 +4650,7 @@ task.defer(function()
     local gui=make("ScreenGui",{Name="RockBugHubMiniTransfer",ResetOnSpawn=false,
         DisplayOrder=runtime.uiRoot.DisplayOrder+3,ZIndexBehavior=Enum.ZIndexBehavior.Sibling},pg)
     state.gui=gui
-    local launcher=button(gui,"ПЕРЕДАТЬ ПЕТА",0,function()
+    local launcher=button(gui,"СКРЫТЫЕ ПЕТЫ",0,function()
         state.panel.Visible=not state.panel.Visible
         if not state.panel.Visible then state.partnerConfirmed=false; state.confirmButton.Text="□ Я проверил собеседника в открытом трейде" end
     end)
@@ -4568,18 +4662,18 @@ task.defer(function()
     state.panel=panel
     make("UIStroke",{Color=C(169,120,255),Thickness=1.5},panel)
     local scale=make("UIScale",{Scale=1},panel)
-    local title=make("TextLabel",{Text="ПЕРЕДАЧА ПЕТОВ · TEST",Position=UDim2.fromOffset(12,8),
+    local title=make("TextLabel",{Text="СКРЫТЫЕ ПЕТЫ · СЕРВЕРНЫЙ ТРЕЙД",Position=UDim2.fromOffset(12,8),
         Size=UDim2.new(1,-60,0,28),BackgroundTransparency=1,TextColor3=C(238,225,255),
         Font=Enum.Font.GothamBold,TextSize=15,TextXAlignment=Enum.TextXAlignment.Left},panel)
-    make("TextLabel",{Text="Все экземпляры из petsFolder, без фильтра магазина.\nСервер может запретить передачу. Сделка принимается только в игре.",
+    make("TextLabel",{Text="Выбор по твоему списку скрытых (изначально Nuclear Hydra).\nОтправка в открытый трейд. Сервер может отклонить пета.",
         Position=UDim2.fromOffset(12,39),Size=UDim2.new(1,-24,0,42),BackgroundTransparency=1,
         TextColor3=C(186,181,205),Font=Enum.Font.Gotham,TextSize=12,TextWrapped=true},panel)
     local showPicker
     state.targetButton=button(panel,"1. Выбрать игрока с сервера",90,function() showPicker("players") end)
     button(panel,"2. Отправить запрос обмена",130,function() state:RequestTrade() end)
-    state.petButton=button(panel,"3. Выбрать питомца из полного инвентаря",170,function() showPicker("pets") end)
+    state.petButton=button(panel,"3. Выбрать скрытого пета",170,function() showPicker("pets") end)
     state.confirmButton=button(panel,"□ Я проверил собеседника в открытом трейде",214,function() state:ConfirmPartner() end)
-    button(panel,"4. Добавить выбранного пета — ОДИН РАЗ",254,function() state:OfferPet() end)
+    button(panel,"4. Отправить выбранного пета в обмен",254,function() state:OfferPet() end)
     state.statusLabel=make("TextLabel",{Text=state.status,Position=UDim2.fromOffset(12,297),
         Size=UDim2.new(1,-24,0,64),BackgroundTransparency=1,TextColor3=C(214,200,247),
         Font=Enum.Font.Gotham,TextSize=12,TextWrapped=true,TextYAlignment=Enum.TextYAlignment.Top},panel)
@@ -4607,7 +4701,15 @@ task.defer(function()
         BorderSizePixel=0},picker))
     local pickerTitle=make("TextLabel",{Position=UDim2.fromOffset(12,8),Size=UDim2.new(1,-54,0,28),
         BackgroundTransparency=1,Font=Enum.Font.GothamBold,TextSize=13,TextColor3=C(230,222,249)},picker)
-    local list=make("ScrollingFrame",{Position=UDim2.fromOffset(12,88),Size=UDim2.new(1,-24,1,-180),
+    local hiddenNamesLabel=make("TextLabel",{Text="Скрытые петы — имена через ;",Position=UDim2.fromOffset(12,84),
+        Size=UDim2.new(1,-24,0,16),BackgroundTransparency=1,TextColor3=C(186,181,205),
+        Font=Enum.Font.Gotham,TextSize=11,TextXAlignment=Enum.TextXAlignment.Left},picker)
+    local hiddenNamesBox=rounded(make("TextBox",{Text=state.hiddenNamesText,
+        PlaceholderText="Скрытые петы: имена через ;",Position=UDim2.fromOffset(12,104),
+        Size=UDim2.new(1,-24,0,32),ClearTextOnFocus=false,BackgroundColor3=C(34,33,50),
+        TextColor3=C(230,224,244),TextSize=12,Font=Enum.Font.Gotham,BorderSizePixel=0},picker))
+    state.hiddenNamesBox=hiddenNamesBox
+    local list=make("ScrollingFrame",{Position=UDim2.fromOffset(12,144),Size=UDim2.new(1,-24,1,-236),
         BackgroundTransparency=1,BorderSizePixel=0,CanvasSize=UDim2.new(),ScrollBarThickness=5,
         AutomaticCanvasSize=Enum.AutomaticSize.Y},picker)
     make("UIListLayout",{Padding=UDim.new(0,5),SortOrder=Enum.SortOrder.LayoutOrder},list)
@@ -4622,7 +4724,7 @@ task.defer(function()
         end
         local pages=math.max(1,math.ceil(#matching/60))
         state.page=math.clamp(state.page,1,pages)
-        pickerTitle.Text=(state.pickerKind=="pets" and "ВСЕ ПЕТЫ" or "ИГРОКИ").." · "..#matching.." · "..state.page.."/"..pages
+        pickerTitle.Text=(state.pickerKind=="pets" and "СКРЫТЫЕ ПО СПИСКУ" or "ИГРОКИ").." · "..#matching.." · "..state.page.."/"..pages
         for index=(state.page-1)*60+1,math.min(#matching,state.page*60) do
             local option=matching[index]
             local row=button(list,option.label..(option.path and "\n"..option.path or ""),0,function()
@@ -4638,6 +4740,11 @@ task.defer(function()
     showPicker=function(kind)
         if state.pending then message("Дождись результата пробы."); return end
         state.pickerKind=kind;state.page=1;state.options={}
+        hiddenNamesLabel.Visible=kind=="pets"
+        hiddenNamesBox.Visible=kind=="pets"
+        list.Position=UDim2.fromOffset(12,kind=="pets" and 144 or 88)
+        list.Size=UDim2.new(1,-24,1,kind=="pets" and -236 or -180)
+        hiddenNamesBox.Text=state.hiddenNamesText
         if kind=="pets" then state.options=state:ListPets()
         else
             for _, target in ipairs(Players:GetPlayers()) do
@@ -4649,6 +4756,12 @@ task.defer(function()
         renderPicker()
         picker.Visible=true
     end
+    connect(hiddenNamesBox.FocusLost,function()
+        if state:SetHiddenNames(hiddenNamesBox.Text) then
+            hiddenNamesBox.Text=state.hiddenNamesText
+            if state.pickerKind=="pets" then state.options=state:ListPets();state.page=1;renderPicker() end
+        else hiddenNamesBox.Text=state.hiddenNamesText end
+    end)
     connect(search:GetPropertyChangedSignal("Text"),function() state.page=1;renderPicker() end)
     local prev=button(picker,"←",388,function() state.page=math.max(1,state.page-1);renderPicker() end)
     prev.Size=UDim2.new(0.3,-12,0,32)
@@ -4680,7 +4793,8 @@ task.defer(function()
     if camera then connect(camera:GetPropertyChangedSignal("ViewportSize"),resize) end
     resize()
     connect(Players.PlayerRemoving,function(target)
-        if state.target==target then state.partnerConfirmed=false;message("Выбранный игрок вышел. Передача заблокирована.") end
+        if state.target==target then state.request=nil;state.partnerConfirmed=false;message("Выбранный игрок вышел. Передача заблокирована.") end
     end)
+    observeRemote()
     connect(runtime.uiRoot.Destroying,function()state:Destroy()end)
 end)
