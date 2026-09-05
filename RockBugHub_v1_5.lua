@@ -4,7 +4,7 @@ pcall(function()i=game:GetService("NetworkClient")end)if not game:IsLoaded()then
 local j=a.LocalPlayer;
 while not j do task.wait()j=a.LocalPlayer end;
 local k=j:WaitForChild("PlayerGui",60)if not k then warn("[RockBugHub] PlayerGui was not created")pcall(function()g:SetCore("SendNotification",{Title="RockBugHub",Text="Ошибка запуска: PlayerGui не найден",Duration=8})end)return end;
-local l="RockBugHub_TEST_v4_22_BOSS_T2"local m="4.22BOSS-T2"local n=type(getgenv)=="function"and getgenv()or _G;
+local l="RockBugHub_TEST_v4_22_BOSS_T3"local m="4.22BOSS-T3"local n=type(getgenv)=="function"and getgenv()or _G;
 do
     -- Retire the old experimental windows and their listeners on hot reload.
     for _, key in ipairs({"RockBugTradeDiagnostics", "RockBugMiniTransfer"}) do
@@ -2734,6 +2734,7 @@ table.sort(ll,function(bJ,bK)return bJ.node.LayoutOrder<bK.node.LayoutOrder end)
 return nu end;
 function q.layoutUI.applyTabOrder(nu,mC)local ll=q.layoutUI.navigationTabs or{}local nv={}local nw={}local nx=0;
 for o,av in ipairs(ll)do nv[av.id]=av end;
+if nv.boss then nv.boss.node.LayoutOrder=0;nw.boss=true end;
 for o,e7 in ipairs(type(nu)=="table"and nu or{})do local av=nv[tostring(e7)]if av and not nw[av.id]then nx=nx+1;
 av.node.LayoutOrder=nx;
 nw[av.id]=true end end;
