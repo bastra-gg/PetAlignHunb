@@ -4,7 +4,7 @@ pcall(function()i=game:GetService("NetworkClient")end)if not game:IsLoaded()then
 local j=a.LocalPlayer;
 while not j do task.wait()j=a.LocalPlayer end;
 local k=j:WaitForChild("PlayerGui",60)if not k then warn("[RockBugHub] PlayerGui was not created")pcall(function()g:SetCore("SendNotification",{Title="RockBugHub",Text="Ошибка запуска: PlayerGui не найден",Duration=8})end)return end;
-local l="RockBugHub_TEST_v4_22_BOSS_T1"local m="4.22BOSS-T1"local n=type(getgenv)=="function"and getgenv()or _G;
+local l="RockBugHub_TEST_v4_22_BOSS_T2"local m="4.22BOSS-T2"local n=type(getgenv)=="function"and getgenv()or _G;
 do
     -- Retire the old experimental windows and their listeners on hot reload.
     for _, key in ipairs({"RockBugTradeDiagnostics", "RockBugMiniTransfer"}) do
@@ -1994,7 +1994,7 @@ return function(runtime, api)
     local state = {
         enabled = false, generation = 0, selected = nil, target = nil,
         height = 18, interval = 0.10, status = "Выключено", candidates = {},
-        nextScan = 0, nextAttack = 0, nextUI = 0, noProgress = 0,
+        nextScan = 0, nextAttack = 0, nextUI = 0, retryAt = 0, noProgress = 0,
         lastTargetHealth = nil, lastOwnHealth = nil, lastTick = nil,
         attempts = 0, observations = 0, busy = false,
     }
@@ -2027,15 +2027,7 @@ return function(runtime, api)
     end
     function state:Start()
         if self.enabled or not runtime.alive then return self.enabled end
-        if not api.supported() then
-            show("Нет поддержки касаний: безопасная дальняя атака недоступна")
-            return false
-        end
         local health = api.ownHealth()
-        if not health or health <= 0 then
-            show("Дождись живого персонажа")
-            return false
-        end
         api.prepare()
         if not runtime.alive then return false end
         self.generation += 1
@@ -2043,10 +2035,11 @@ return function(runtime, api)
         self.nextScan = 0
         self.nextAttack = 0
         self.lastTick = nil
-        self.lastOwnHealth = health
+        self.lastOwnHealth = health and health > 0 and health or nil
+        self.retryAt = 0
         self.attempts = 0
         self.observations = 0
-        show("Поиск живого босса…")
+        show(health and health > 0 and "Запущено — ищу босса или жду его спавн…" or "Запущено — жду персонажа и босса…")
         return true
     end
     function state:Damage(health)
@@ -2066,7 +2059,13 @@ return function(runtime, api)
         end
         local ownHealth = api.ownHealth()
         if not ownHealth or ownHealth <= 0 then
-            state:Stop("Персонаж недоступен — автоатака выключена", false)
+            api.release(false)
+            state.target = nil
+            state.lastOwnHealth = nil
+            state.nextAttack = now + state.interval
+            if state.status ~= "Автобосс включён — жду живого персонажа…" then
+                show("Автобосс включён — жду живого персонажа…")
+            end
             return
         end
         state:Damage(ownHealth)
@@ -2074,14 +2073,18 @@ return function(runtime, api)
         local dt = state.lastTick and math.clamp(now - state.lastTick, 0, 0.25) or 0
         state.lastTick = now
         if runtime.networkPaused then
+            api.release(true)
+            state.target = nil
+            state.nextScan = 0
             state.nextAttack = now + state.interval
             if state.status ~= "Пауза сети — атаки не отправляются" then
                 show("Пауза сети — атаки не отправляются")
             end
             return
         end
+        if now < state.retryAt then return end
         local info = state.target and api.info(state.target)
-        if not info or info.health <= 0 then
+        if not info or not info.alive then
             if state.target then
                 api.release(true)
                 state.target = nil
@@ -2092,7 +2095,7 @@ return function(runtime, api)
                 if not state.selected or candidate.model == state.selected
                     or candidate.model:GetFullName() == state.selectedPath then
                     local current = api.info(candidate.model)
-                    if current and current.health > 0 then
+                    if current and current.alive then
                         state.target = candidate.model
                         info = current
                         break
@@ -2113,16 +2116,21 @@ return function(runtime, api)
             api.claim(function(health) state:Damage(health) end)
             if not state.enabled then return end
         end
-        if info.health < state.lastTargetHealth then
+        if info.healthKnown and state.lastTargetHealth and info.health < state.lastTargetHealth then
             state.observations += 1
             state.noProgress = 0
-        else
+        elseif info.healthKnown then
             state.noProgress += dt
         end
         state.lastTargetHealth = info.health
         -- A decrease is only an observation: other players may also attack.
-        if state.noProgress >= 12 and state.attempts > 0 then
-            state:Stop("HP босса не снижается 12 с — отход и стоп; способ атаки не подтверждён", true)
+        if info.healthKnown and state.noProgress >= 12 and state.attempts > 0 then
+            api.release(true)
+            state.target = nil
+            state.retryAt = now + 4
+            state.nextScan = state.retryAt
+            state.lastTick = nil
+            show("HP не снижается — отошёл; новый поиск через 4 секунды")
             return
         end
         api.hold(info, state.height)
@@ -2135,13 +2143,22 @@ return function(runtime, api)
                     and not runtime.networkPaused and state.target == target
             end)
             if state.generation ~= generation or not state.enabled then return end
-            if ok == false then state:Stop(reason or "Ошибка атаки — стоп", true) return end
+            if ok == false then
+                api.release(true)
+                state.target = nil
+                state.retryAt = now + 3
+                state.nextScan = state.retryAt
+                state.lastTick = nil
+                show((reason or "Атака пока недоступна") .. " — повтор через 3 секунды")
+                return
+            end
             state.attempts += 1
         end
         if now >= state.nextUI then
             state.nextUI = now + 0.4
-            show(("%s • HP %s • %s"):format(info.name, tostring(math.ceil(info.health)),
-                state.observations > 0 and "HP снижается (источник урона неизвестен)" or "проверка попаданий…"))
+            local healthText = info.healthKnown and tostring(math.ceil(info.health)) or "скрыто сервером"
+            show(("%s • HP %s • %s"):format(info.name, healthText,
+                state.observations > 0 and "HP снижается (источник урона неизвестен)" or "атака идёт…"))
         end
     end
     function state:Tick(now)
@@ -2184,10 +2201,31 @@ do
         if not marked then return nil end
         local humanoid = model:FindFirstChildOfClass("Humanoid")
         local root = model:FindFirstChild("HumanoidRootPart") or model.PrimaryPart or model:FindFirstChild("Torso")
-        -- No guessed remote names or arbitrary NPC fallback.
-        if not humanoid or not root or not root:IsA("BasePart") then return nil end
-        return { model = model, name = model.Name, root = root, health = humanoid.Health,
-            maxHealth = humanoid.MaxHealth, humanoid = humanoid }
+            or model:FindFirstChildWhichIsA("BasePart", true)
+        -- The new system may keep HP in a replicated value/attribute instead of Humanoid.
+        local health, maxHealth, healthKnown = nil, nil, false
+        if humanoid then health, maxHealth, healthKnown = humanoid.Health, humanoid.MaxHealth, true end
+        if not healthKnown then
+            for _, node in ipairs(model:GetDescendants()) do
+                local key = node.Name:lower():gsub("[^%w]", "")
+                if (key == "health" or key == "hp" or key == "bosshealth")
+                    and (node:IsA("NumberValue") or node:IsA("IntValue")) then
+                    health, maxHealth, healthKnown = node.Value, node.Value, true
+                    break
+                end
+            end
+        end
+        if not healthKnown then
+            for _, key in ipairs({"Health", "HP", "BossHealth"}) do
+                local value = model:GetAttribute(key)
+                if type(value) == "number" then health, maxHealth, healthKnown = value, value, true break end
+            end
+        end
+        if not root or not root:IsA("BasePart") then return nil end
+        health = healthKnown and health or 1
+        return { model = model, name = model.Name, root = root, health = health,
+            maxHealth = maxHealth or health, healthKnown = healthKnown,
+            alive = model.Parent ~= nil and (not healthKnown or health > 0), humanoid = humanoid }
     end
     local function release(retreat)
         local old = saved
@@ -2199,11 +2237,11 @@ do
             if retreat then old.root.CFrame = old.origin end
             old.root.AssemblyLinearVelocity = Vector3.zero
             old.root.AssemblyAngularVelocity = Vector3.zero
+            old.root.Anchored = old.anchored
         end
     end
     q.boss = q.bossFactory(q, {
         now = os.clock,
-        supported = function() return type(firetouchinterest) == "function" end,
         ownHealth = function() local humanoid = aN() return humanoid and humanoid.Health end,
         prepare = function() jT() end,
         conflict = function()
@@ -2213,9 +2251,9 @@ do
         scan = function()
             local list, origin = {}, aO()
             for _, node in ipairs(World:GetDescendants()) do
-                if node:IsA("Humanoid") then
-                    local candidate = info(node.Parent)
-                    if candidate and candidate.health > 0 then
+                if node:IsA("Model") then
+                    local candidate = info(node)
+                    if candidate and candidate.alive then
                         candidate.distance = origin and (origin.Position - candidate.root.Position).Magnitude or 0
                         table.insert(list, candidate)
                     end
@@ -2228,8 +2266,11 @@ do
         claim = function(onHealth)
             release(false)
             local root, humanoid = aO(), aN()
-            assert(root and humanoid and not root.Anchored and not humanoid.Sit, "Персонаж закреплён или сидит")
-            saved = { character = aM(), root = root, humanoid = humanoid, origin = root.CFrame, autoRotate = humanoid.AutoRotate }
+            assert(root and humanoid, "Персонаж ещё не готов")
+            saved = { character = aM(), root = root, humanoid = humanoid, origin = root.CFrame,
+                autoRotate = humanoid.AutoRotate, anchored = root.Anchored }
+            root.Anchored = false
+            humanoid.Sit = false
             humanoid.AutoRotate = false
             saved.healthConnection = humanoid.HealthChanged:Connect(onHealth)
         end,
@@ -2256,21 +2297,22 @@ do
             tool:Activate()
             if not stillActive() then return true end
             ek()
-            local contacts = 0
-            for _, name in ipairs({"RightHand", "LeftHand", "Right Arm", "Left Arm"}) do
-                if not stillActive() then return true end
-                local hand = character:FindFirstChild(name, true)
-                if hand and hand:IsA("BasePart") and target.root.Parent then
-                    firetouchinterest(hand, target.root, 0)
-                    firetouchinterest(hand, target.root, 1)
-                    contacts += 1
+            if type(firetouchinterest) == "function" then
+                for _, name in ipairs({"RightHand", "LeftHand", "Right Arm", "Left Arm"}) do
+                    if not stillActive() then return true end
+                    local hand = character:FindFirstChild(name, true)
+                    if hand and hand:IsA("BasePart") and target.root.Parent then
+                        firetouchinterest(hand, target.root, 0)
+                        firetouchinterest(hand, target.root, 1)
+                    end
                 end
             end
-            if contacts == 0 then return false, "Не найдены руки персонажа для Punch" end
             return true
         end,
     })
     q.bossFactory = nil
+    function q:StartBoss() return self.boss:Start() end
+    function q:StopBoss() self.boss:Stop("Выключено — возврат к точке старта", true) end
     -- One-shot teleports have no persistent flag for the conflict guard.
     local teleport = q.teleportToIsland
     if type(teleport) == "function" then
@@ -2280,7 +2322,14 @@ do
         end
     end
     aJ(c.Heartbeat:Connect(function() q.boss:Tick(os.clock()) end))
-    aJ(j.CharacterRemoving:Connect(function() q.boss:Stop("Респавн — автоатака выключена", false) end))
+    aJ(j.CharacterRemoving:Connect(function()
+        if q.boss.enabled then
+            pcall(function() release(false) end)
+            q.boss.target = nil
+            q.boss.lastOwnHealth = nil
+            q.boss.status = "Автобосс включён — жду респавн…"
+        end
+    end))
 end
 
 local function l6()local l7=Instance.new("ScreenGui")l7.Name=l;
@@ -3142,12 +3191,12 @@ pq()end))aJ(p4:GetPropertyChangedSignal("Text"):Connect(function()if pm then pr(
 do
     local card, body = oq(q.layoutUI.bossPage, "БОСС • ТЕСТ", 230)
     card.LayoutOrder = 1
-    local toggle, toggleNode = oC(body, "◎", "АВТОАТАКА БОССА", "Дистанция + стоп при получении урона", false, function(enabled, control)
+    local toggle, toggleNode = oC(body, "◎", "ЗАПУСТИТЬ И ЖДАТЬ БОССА", "Один запуск: ждёт спавн и атакует автоматически", false, function(enabled, control)
         if enabled then
             local ok, started = pcall(function() return q.boss:Start() end)
             if not ok then q.boss:Stop("Ошибка запуска: " .. tostring(started):sub(1, 90), true) end
             control.Set(ok and started == true, true)
-        else q.boss:Stop("Выключено — возврат к точке старта", true) end
+        else q:StopBoss() end
     end)
     q.leverRefs.boss = toggle
     toggleNode.LayoutOrder = 1
@@ -3157,7 +3206,7 @@ do
         local options = {{id = "auto", label = "Ближайший босс", sub = "Автопоиск при появлении на сервере"}}
         for index, candidate in ipairs(list) do
             table.insert(options, {id = tostring(index), model = candidate.model, label = candidate.name,
-                sub = ("HP %s • %d studs"):format(tostring(math.ceil(candidate.health)), math.floor(candidate.distance))})
+                sub = ("HP %s • %d studs"):format(candidate.healthKnown and tostring(math.ceil(candidate.health)) or "скрыто", math.floor(candidate.distance))})
         end
         pG("БОССЫ НА СЕРВЕРЕ", options, {onDone = function(choice)
             q.boss:Select(choice.model)
@@ -3172,7 +3221,7 @@ do
     status.TextWrapped = true
     status.TextXAlignment = Enum.TextXAlignment.Left
     status.LayoutOrder = 4
-    local hint = mt(body, "Тест новой механики. Старт останавливает другие режимы. При уроне или 12 с без снижения HP — отход и стоп.", 9, Enum.Font.Gotham, lw.Muted)
+    local hint = mt(body, "Официально: Boss Battles используют отдельный Boss Damage. При уроне персонажу — отход и стоп; если HP босса не меняется, повторный поиск.", 9, Enum.Font.Gotham, lw.Muted)
     hint.Size = UDim2.new(1, -4, 0, 40)
     hint.TextWrapped = true
     hint.LayoutOrder = 5
