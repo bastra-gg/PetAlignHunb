@@ -4,7 +4,7 @@ pcall(function()i=game:GetService("NetworkClient")end)if not game:IsLoaded()then
 local j=a.LocalPlayer;
 while not j do task.wait()j=a.LocalPlayer end;
 local k=j:WaitForChild("PlayerGui",60)if not k then warn("[RockBugHub] PlayerGui was not created")pcall(function()g:SetCore("SendNotification",{Title="RockBugHub",Text="Ошибка запуска: PlayerGui не найден",Duration=8})end)return end;
-local l="RockBugHub_TEST_v4_22_BOSS_T3"local m="4.22BOSS-T3"local n=type(getgenv)=="function"and getgenv()or _G;
+local l="RockBugHub_TEST_v4_22_BOSS_T4"local m="4.22BOSS-T4"local n=type(getgenv)=="function"and getgenv()or _G;
 do
     -- Retire the old experimental windows and their listeners on hot reload.
     for _, key in ipairs({"RockBugTradeDiagnostics", "RockBugMiniTransfer"}) do
@@ -3190,17 +3190,26 @@ local jl=pm;
 if jl.multiple and jl.onDone then jl.onDone(jl.selected)end;
 pq()end))aJ(p4:GetPropertyChangedSignal("Text"):Connect(function()if pm then pr(true)end end))q.closePicker=pq;
 do
-    local card, body = oq(q.layoutUI.bossPage, "БОСС • ТЕСТ", 230)
+    local launch = kr(q.layoutUI.bossPage, "▶  ЗАПУСТИТЬ АВТОБОССА", lw.Success)
+    launch.Name = "BossLaunchButton"
+    launch.Size = UDim2.new(1, -4, 0, 42)
+    launch.LayoutOrder = 0
+    launch.TextSize = 12
+    local card, body = oq(q.layoutUI.bossPage, "БОСС • ТЕСТ", 184)
     card.LayoutOrder = 1
-    local toggle, toggleNode = oC(body, "◎", "ЗАПУСТИТЬ И ЖДАТЬ БОССА", "Один запуск: ждёт спавн и атакует автоматически", false, function(enabled, control)
-        if enabled then
-            local ok, started = pcall(function() return q.boss:Start() end)
+    local function paintLaunch()
+        launch.Text = q.boss.enabled and "■  ОСТАНОВИТЬ АВТОБОССА" or "▶  ЗАПУСТИТЬ АВТОБОССА"
+        launch.BackgroundColor3 = q.boss.enabled and lw.Danger or lw.Success
+        launch.TextColor3 = lw.Bg
+    end
+    q.leverRefs.boss = {Set = function() paintLaunch() end, Get = function() return q.boss.enabled end}
+    aJ(launch.Activated:Connect(function()
+        if q.boss.enabled then q:StopBoss() else
+            local ok, started = pcall(function() return q:StartBoss() end)
             if not ok then q.boss:Stop("Ошибка запуска: " .. tostring(started):sub(1, 90), true) end
-            control.Set(ok and started == true, true)
-        else q:StopBoss() end
-    end)
-    q.leverRefs.boss = toggle
-    toggleNode.LayoutOrder = 1
+        end
+        paintLaunch()
+    end))
     local selection = oY(body, "ЦЕЛЬ", "Ближайший босс", function()
         local ok, list = pcall(function() return q.boss:Scan() end)
         if not ok then q.boss:Stop("Ошибка поиска босса", true) return end
@@ -3213,24 +3222,24 @@ do
             q.boss:Select(choice.model)
         end})
     end)
-    selection.Row.LayoutOrder = 2
+    selection.Row.LayoutOrder = 1
     local height, heightNode = oI(body, "ВЫСОТА", "Studs над боссом; не гарантирует защиту", q.boss.height,
         function(value) q.boss.height = value end, 8, 100)
-    heightNode.LayoutOrder = 3
+    heightNode.LayoutOrder = 2
     local status = mt(body, q.boss.status, 10, Enum.Font.Gotham, lw.Text)
     status.Size = UDim2.new(1, -4, 0, 44)
     status.TextWrapped = true
     status.TextXAlignment = Enum.TextXAlignment.Left
-    status.LayoutOrder = 4
+    status.LayoutOrder = 3
     local hint = mt(body, "Официально: Boss Battles используют отдельный Boss Damage. При уроне персонажу — отход и стоп; если HP босса не меняется, повторный поиск.", 9, Enum.Font.Gotham, lw.Muted)
     hint.Size = UDim2.new(1, -4, 0, 40)
     hint.TextWrapped = true
-    hint.LayoutOrder = 5
+    hint.LayoutOrder = 4
     q.refreshBossUI = function()
         if not q.alive or not status.Parent then return end
         status.Text = q.boss.status
         selection.Set(q.boss.selected and q.boss.selected.Name or "Ближайший босс")
-        toggle.Set(q.boss.enabled, true)
+        paintLaunch()
     end
     local function resize()
         if card.Parent then card.Size = UDim2.new(1, 0, 0, body.UIListLayout.AbsoluteContentSize.Y + 36) oc() end
@@ -3951,7 +3960,7 @@ if r4 and not q.machineScanned and not q.machineScanInFlight then q.refreshMachi
 if r4 and type(q.refreshTeleportUI)=="function"then q.refreshTeleportUI()end;
 if hq and type(q.refreshQuestUI)=="function"then q.refreshQuestUI()end;
 if sZ and type(q.refreshAppearanceUI)=="function"then q.refreshAppearanceUI()end;
-if u=="boss"and q.refreshBossUI then q.refreshBossUI()end;if ku and type(q.refreshEggUI)=="function"then q.refreshEggUI()end end;
+if u=="boss"then q.layoutUI.bossPage.CanvasPosition=Vector2.zero;if q.refreshBossUI then q.refreshBossUI()end end;if ku and type(q.refreshEggUI)=="function"then q.refreshEggUI()end end;
 function q.layoutUI.applyLanguage(cJ,mC)cJ=cJ=="en"and"en"or"ru"q.language=cJ;
 n.RockBugLanguage=cJ;
 q.gameTranslators=q.gameTranslators or{}q.translationToken=(q.translationToken or 0)+1;
