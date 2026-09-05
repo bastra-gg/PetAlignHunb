@@ -4,7 +4,14 @@ pcall(function()i=game:GetService("NetworkClient")end)if not game:IsLoaded()then
 local j=a.LocalPlayer;
 while not j do task.wait()j=a.LocalPlayer end;
 local k=j:WaitForChild("PlayerGui",60)if not k then warn("[RockBugHub] PlayerGui was not created")pcall(function()g:SetCore("SendNotification",{Title="RockBugHub",Text="Ошибка запуска: PlayerGui не найден",Duration=8})end)return end;
-local l="RockBugHub_TEST_v4_21_T13"local m="4.21T13"local n=type(getgenv)=="function"and getgenv()or _G;
+local l="RockBugHub_TEST_v4_22_BOSS_T1"local m="4.22BOSS-T1"local n=type(getgenv)=="function"and getgenv()or _G;
+do
+    -- Retire the old experimental windows and their listeners on hot reload.
+    for _, key in ipairs({"RockBugTradeDiagnostics", "RockBugMiniTransfer"}) do
+        local old = n[key]
+        if old and type(old.Destroy) == "function" then pcall(function() old:Destroy() end) end
+    end
+end
 pcall(function()if n.RockBugRuntime and type(n.RockBugRuntime.Stop)=="function"then n.RockBugRuntime:Stop("replaced")end end)pcall(function()for o,p in ipairs(k:GetChildren())do if p:IsA("ScreenGui")and tostring(p.Name):find("RockBugHub",1,true)then p:Destroy()end end end)local q={alive=true,language=n.RockBugLanguage=="en"and"en"or"ru",gameTranslators={},gameLocalizedNames={},gameLocalizationContexts={},gameLocalizationObjects={},gameLocalizationKeys={},gameLocalizationTables={},gameLocalizationLoading=false,gameLocalizationReady=false,translationToken=0,mode=nil,modeToken=0,bugActive=false,trainActive=false,activeTrains={},trainOrder={},trainRetryAt={},trainCursor=0,machineCatalog={},machineZones={},machineZone=nil,selectedMachine=nil,selectedTeleport="Starter Island",teleportDestinations={},machineActive=false,machineAttached=false,machineAttachInFlight=false,machineScanInFlight=false,machineScanned=false,machineToken=0,machineNextAttach=0,machineNextRep=0,machineCharacterBefore=nil,machineAnimationsBefore=nil,fuseSession=nil,fuseNextOpenAt=0,eggEnabled=false,eggAmount=1,eggIntervalMultiplier=1,eggNextUseAt=0,eggInFlight=false,eggToken=0,eggLastUsed=0,eggConfirmationError=nil,hybridRole=nil,hybridSwitchAt=0,nextBackgroundPunch=0,nextPunchEquip=0,nextTrainGuiRetry=0,toolTransition=false,equipInFlight=false,connections={},selectedTrain=nil,selectedRock=nil,autoRockSelection=true,petGradeIndex=5,lastAutoRockRebs=nil,autoRockReason=nil,autoRebirth=false,rebirthInFlight=false,rebirthToken=0,rebirthGoalEnabled=false,rebirthGoal=100,rebirthGoalCurrent=nil,rebirthGoalCompleted=false,rebirthGoalAwaitingFrom=nil,rebirthGoalAwaitingSince=0,rebirthGoalAwaitingUntil=0,rebirthGoalReadFailures=0,rebirthGoalStatusAt=0,rebirthCounter=nil,rebirthCounterSource=nil,rebirthCounterExact=false,rebirthCounterWatched=nil,rebirthCounterConn=nil,autoSize=false,sizeTarget=1,sizeInFlight=false,kingLock=false,kingCF=nil,kingRoot=nil,kingSavedAnchored=nil,kingPresenceInFlight=false,kingPresenceToken=0,kingTriggerPart=nil,kingTouchTrigger=nil,kingTouchContacts={},kingHoldPosition=nil,kingHoldGyro=nil,nextKingTouchPulse=0,lockRock=false,lockPosition=false,lockCF=nil,positionCF=nil,activeTool=nil,nextAction=0,nextEquip=0,nextNearCheck=0,nextPosTick=0,nextRebirth=0,nextSize=0,nextKingTick=0,nextNetUpdate=0,nextCooldownSweep=0,punchCycle=0,pingMs=0,pingAvailable=false,netGuardEnabled=true,networkPaused=false,manualNetworkHold=false,networkState="HEALTHY",networkBadSamples=0,networkGoodSamples=0,networkHoldSince=0,networkLastGoodAt=os.clock(),networkProbeDeadline=os.clock()+5,networkProbeUnsupported=false,networkReason=nil,networkRecoveries=0,networkHoldRoot=nil,networkHoldCF=nil,networkHoldSavedAnchored=nil,nextNetworkHoldTick=0,networkReplicatorSeen=false,networkReplicatorMissingSince=nil,networkTrafficLastSeen=os.clock(),networkRecoveryProofRequired=false,transientFailures={},respawnGeneration=0,autoResumeAfterRespawn=true,schedulerRestarts=0,remoteTokens=0,remoteLastRefill=os.clock(),remoteSentWindow=0,remoteWindowStart=os.clock(),remotePps=0,sessionStatsStartedAt=os.clock(),sessionStatsPage=0,sessionStatsNextPageAt=os.clock()+3,sessionStatsNextRebirthSample=0,sessionStrengthCounter=nil,sessionStrengthCurrent=nil,sessionStrengthLast=nil,sessionStrengthGained=0,sessionRebirthCurrent=nil,sessionRebirthStart=nil,sessionRebirthLast=nil,sessionRebirthGained=0,directRemoteEnabled=true,antiAfkEnabled=true,visualLow=false,visualSaved={},killMode="off",killToken=0,killWhitelist={},killBlacklist={},crystalMode="off",crystalToken=0,crystalCatalog={},crystalNames={},crystalCatalogAt=nil,crystalPetCache={},shopCatalogCache={},crystalAmount=1,purchaseDelay=0.5,autoEvolvePurchasedPets=true,petEvolvePending={},petEvolveSent=0,petEvolveLastError=nil,petPurchaseCounts={},petCleanupEnabled=false,petCleanupTargets={["Core Pup"]=true,["Volt Talon"]=true},petCleanupPending={},petCleanupSold=0,petCleanupToken=0,autoEquipBestPets=false,petEquipToken=0,petEquipLastMessage=nil,petStableOrder=setmetatable({},{__mode="k"}),petStableNext=0,autoQuest=false,questToken=0,selectedQuestNpc=nil,questAcceptCooldown={},questLastMessage=nil,purchaseAttempts=0,selectedCrystal="Blue Crystal",selectedPet=nil,selectedAura=nil,characterCollisionSaved={},characterLockSaved=nil,lastSchedulerTick=0,lastError=nil,status="ready",ui=nil,leverRefs={}}n.RockBugRuntime=q;
 q.petNames={"Orange Hedgehog","Blue Birdie","Red Kitty","Blue Bunny","Dark Vampy","Silver Dog","Dark Golem","Green Butterfly","Crimson Falcon","Yellow Butterfly","Purple Dragon","Orange Pegasus","Blue Pheonix","Red Dragon","Purple Falcon","Blue Firecaster","Golden Pheonix","Red Firecaster","White Pegasus","Infernal Dragon","Green Firecaster","White Pheonix","Magic Butterfly","Ultra Birdie","Frostwave Legends Penguin","Phantom Genesis Dragon","Dark Legends Manticore","Ultimate Supernova Pegasus","Aether Spirit Bunny","Cybernetic Showdown Dragon","Eternal Strike Leviathan","Lighting Strike Phantom","Darkstar Hunter","Golden Viking","Muscle Sensei","Neon Guardian","Core Pup","Volt Talon","Reactor Beast","Plasma Ravager","Titan Reactor","Apex Overlord"}q.shopPetNames={"Core Pup","Volt Talon","Reactor Beast","Plasma Ravager","Titan Reactor","Apex Overlord"}q.shopPetSet={}for o,u in ipairs(q.shopPetNames)do q.shopPetSet[string.lower(u)]=true end;
 q.auraNames={"Astral Electro","Azure Tundra","Blue Aura","Dark Electro","Dark Lightning","Dark Storm","Electro","Enchanted Mirage","Entropic Blast","Eternal Megastrike","Grand Supernova","Green Aura","Inferno","Lightning","Muscle King","Power Lightning","Purple Aura","Purple Nova","Red Aura","Supernova","Ultra Inferno","Ultra Mirage","Unstable Mirage","Yellow Aura"}q.auraNameSet={}for o,u in ipairs(q.auraNames)do q.auraNameSet[string.lower(u)]=true end;
@@ -1517,7 +1524,7 @@ q.trainCursor=0;
 if q.leverRefs.train and q.leverRefs.train[e7]then q.leverRefs.train[e7].Set(false,true)end;
 jK()if not q.bugActive and not q.trainActive and not q.machineActive then jI()end;
 if cF then aP(cF)end end;
-local function jT()jM("ВСЁ ОСТАНОВЛЕНО",true)if type(q.stopMachineFarm)=="function"then q.stopMachineFarm(nil)end;
+local function jT()if q.boss then q.boss:Stop("Остановлено",true)end;jM("ВСЁ ОСТАНОВЛЕНО",true)if type(q.stopMachineFarm)=="function"then q.stopMachineFarm(nil)end;
 if type(q.stopProteinEggAutomation)=="function"then q.stopProteinEggAutomation(nil)end;
 id(nil)q.lockPosition=false;
 q.positionCF=nil;
@@ -1980,7 +1987,303 @@ d4(q.activeTool)end;
 local l4=q.bugActive or q.trainActive or q.machineActive or q.networkPaused or q.lockRock or q.lockPosition or q.kingLock;
 task.wait(l4 and 0.005 or 0.08)end end;
 aJ(j.Idled:Connect(function()if not q.antiAfkEnabled then return end;
-B(function()e:CaptureController()e:ClickButton2(Vector2.new())end)end))local function l6()local l7=Instance.new("ScreenGui")l7.Name=l;
+B(function()e:CaptureController()e:ClickButton2(Vector2.new())end)end))q.bossFactory=(function()
+-- TEST ONLY: ordinary Punch/touch adapter, not a verified new-boss protocol.
+-- This module never changes the boss, another player, or server health values.
+return function(runtime, api)
+    local state = {
+        enabled = false, generation = 0, selected = nil, target = nil,
+        height = 18, interval = 0.10, status = "Выключено", candidates = {},
+        nextScan = 0, nextAttack = 0, nextUI = 0, noProgress = 0,
+        lastTargetHealth = nil, lastOwnHealth = nil, lastTick = nil,
+        attempts = 0, observations = 0, busy = false,
+    }
+    local function show(message)
+        state.status = message
+        if runtime.refreshBossUI then runtime.refreshBossUI() end
+    end
+    function state:Stop(message, retreat)
+        local wasEnabled = self.enabled
+        self.enabled = false
+        self.generation += 1
+        if wasEnabled then pcall(api.release, retreat == true) end
+        self.target = nil
+        self.lastTick = nil
+        if runtime.leverRefs and runtime.leverRefs.boss then
+            runtime.leverRefs.boss.Set(false, true)
+        end
+        if message then show(message) end
+    end
+    function state:Scan()
+        local list = api.scan()
+        self.candidates = list
+        self.nextScan = api.now() + 3
+        return list
+    end
+    function state:Select(model)
+        self:Stop("Цель выбрана — включи автоатаку", true)
+        self.selected = model
+        self.selectedPath = model and model:GetFullName() or nil
+    end
+    function state:Start()
+        if self.enabled or not runtime.alive then return self.enabled end
+        if not api.supported() then
+            show("Нет поддержки касаний: безопасная дальняя атака недоступна")
+            return false
+        end
+        local health = api.ownHealth()
+        if not health or health <= 0 then
+            show("Дождись живого персонажа")
+            return false
+        end
+        api.prepare()
+        if not runtime.alive then return false end
+        self.generation += 1
+        self.enabled = true
+        self.nextScan = 0
+        self.nextAttack = 0
+        self.lastTick = nil
+        self.lastOwnHealth = health
+        self.attempts = 0
+        self.observations = 0
+        show("Поиск живого босса…")
+        return true
+    end
+    function state:Damage(health)
+        if not self.enabled then return end
+        if self.lastOwnHealth and health < self.lastOwnHealth then
+            self:Stop("Получен урон — отход и стоп. Неуязвимость не гарантируется", true)
+        else
+            self.lastOwnHealth = health
+        end
+    end
+    local function step(now)
+        if not state.enabled then return end
+        if not runtime.alive then state:Stop(nil, false) return end
+        if api.conflict() then
+            state:Stop("Стоп: включён другой режим боя/перемещения", false)
+            return
+        end
+        local ownHealth = api.ownHealth()
+        if not ownHealth or ownHealth <= 0 then
+            state:Stop("Персонаж недоступен — автоатака выключена", false)
+            return
+        end
+        state:Damage(ownHealth)
+        if not state.enabled then return end
+        local dt = state.lastTick and math.clamp(now - state.lastTick, 0, 0.25) or 0
+        state.lastTick = now
+        if runtime.networkPaused then
+            state.nextAttack = now + state.interval
+            if state.status ~= "Пауза сети — атаки не отправляются" then
+                show("Пауза сети — атаки не отправляются")
+            end
+            return
+        end
+        local info = state.target and api.info(state.target)
+        if not info or info.health <= 0 then
+            if state.target then
+                api.release(true)
+                state.target = nil
+                state.nextScan = 0
+            end
+            if now >= state.nextScan then state:Scan() end
+            for _, candidate in ipairs(state.candidates) do
+                if not state.selected or candidate.model == state.selected
+                    or candidate.model:GetFullName() == state.selectedPath then
+                    local current = api.info(candidate.model)
+                    if current and current.health > 0 then
+                        state.target = candidate.model
+                        info = current
+                        break
+                    end
+                end
+            end
+            if not state.target then
+                if state.status ~= "Живой босс не найден — ожидание появления" then
+                    show("Живой босс не найден — ожидание появления")
+                end
+                return
+            end
+            state.lastTargetHealth = info.health
+            state.noProgress = 0
+            state.attempts = 0
+            state.observations = 0
+            state.nextAttack = now
+            api.claim(function(health) state:Damage(health) end)
+            if not state.enabled then return end
+        end
+        if info.health < state.lastTargetHealth then
+            state.observations += 1
+            state.noProgress = 0
+        else
+            state.noProgress += dt
+        end
+        state.lastTargetHealth = info.health
+        -- A decrease is only an observation: other players may also attack.
+        if state.noProgress >= 12 and state.attempts > 0 then
+            state:Stop("HP босса не снижается 12 с — отход и стоп; способ атаки не подтверждён", true)
+            return
+        end
+        api.hold(info, state.height)
+        if now >= state.nextAttack then
+            state.nextAttack = now + state.interval -- no catch-up bursts after lag
+            local generation = state.generation
+            local target = state.target
+            local ok, reason = api.punch(info, function()
+                return runtime.alive and state.enabled and state.generation == generation
+                    and not runtime.networkPaused and state.target == target
+            end)
+            if state.generation ~= generation or not state.enabled then return end
+            if ok == false then state:Stop(reason or "Ошибка атаки — стоп", true) return end
+            state.attempts += 1
+        end
+        if now >= state.nextUI then
+            state.nextUI = now + 0.4
+            show(("%s • HP %s • %s"):format(info.name, tostring(math.ceil(info.health)),
+                state.observations > 0 and "HP снижается (источник урона неизвестен)" or "проверка попаданий…"))
+        end
+    end
+    function state:Tick(now)
+        if self.busy or not self.enabled then return end
+        self.busy = true
+        local ok, problem = pcall(step, now)
+        self.busy = false
+        if not ok then
+            self:Stop("Ошибка босса — отход и стоп: " .. tostring(problem):sub(1, 100), true)
+        end
+    end
+    return state
+end
+
+end)()
+-- Embedded after the core helpers; no new long-lived outer locals.
+do
+    local Players, World = a, workspace
+    local Collection = game:GetService("CollectionService")
+    local saved = nil
+    local function isPlayerModel(model)
+        for _, player in ipairs(Players:GetPlayers()) do
+            if player.Character and (model == player.Character or model:IsDescendantOf(player.Character)) then return true end
+        end
+        return false
+    end
+    local function info(model)
+        if not model or not model:IsA("Model") or not model:IsDescendantOf(World) or isPlayerModel(model) then return nil end
+        local marked = false
+        local parent = model
+        while parent and parent ~= World do
+            local name = parent.Name:lower()
+            if name:find("pet", 1, true) or name:find("preview", 1, true) or name:find("template", 1, true) then return nil end
+            local bossName = parent == model and (name:find("boss", 1, true) or name:find("босс", 1, true))
+            local bossFolder = parent:IsA("Folder") and (name == "boss" or name == "bosses" or name == "bossfolder")
+            if bossName or bossFolder
+                or parent:GetAttribute("IsBoss") == true or Collection:HasTag(parent, "Boss") then marked = true end
+            parent = parent.Parent
+        end
+        if not marked then return nil end
+        local humanoid = model:FindFirstChildOfClass("Humanoid")
+        local root = model:FindFirstChild("HumanoidRootPart") or model.PrimaryPart or model:FindFirstChild("Torso")
+        -- No guessed remote names or arbitrary NPC fallback.
+        if not humanoid or not root or not root:IsA("BasePart") then return nil end
+        return { model = model, name = model.Name, root = root, health = humanoid.Health,
+            maxHealth = humanoid.MaxHealth, humanoid = humanoid }
+    end
+    local function release(retreat)
+        local old = saved
+        saved = nil
+        if not old then return end
+        if old.healthConnection then old.healthConnection:Disconnect() end
+        if old.humanoid.Parent then old.humanoid.AutoRotate = old.autoRotate end
+        if old.root.Parent and old.character == aM() and old.humanoid.Health > 0 then
+            if retreat then old.root.CFrame = old.origin end
+            old.root.AssemblyLinearVelocity = Vector3.zero
+            old.root.AssemblyAngularVelocity = Vector3.zero
+        end
+    end
+    q.boss = q.bossFactory(q, {
+        now = os.clock,
+        supported = function() return type(firetouchinterest) == "function" end,
+        ownHealth = function() local humanoid = aN() return humanoid and humanoid.Health end,
+        prepare = function() jT() end,
+        conflict = function()
+            return q.bugActive or q.trainActive or q.machineActive or q.kingLock
+                or q.lockPosition or q.lockRock or q.autoRebirth or q.autoQuest or q.killMode ~= "off"
+        end,
+        scan = function()
+            local list, origin = {}, aO()
+            for _, node in ipairs(World:GetDescendants()) do
+                if node:IsA("Humanoid") then
+                    local candidate = info(node.Parent)
+                    if candidate and candidate.health > 0 then
+                        candidate.distance = origin and (origin.Position - candidate.root.Position).Magnitude or 0
+                        table.insert(list, candidate)
+                    end
+                end
+            end
+            table.sort(list, function(x, y) return x.distance < y.distance end)
+            return list
+        end,
+        info = info,
+        claim = function(onHealth)
+            release(false)
+            local root, humanoid = aO(), aN()
+            assert(root and humanoid and not root.Anchored and not humanoid.Sit, "Персонаж закреплён или сидит")
+            saved = { character = aM(), root = root, humanoid = humanoid, origin = root.CFrame, autoRotate = humanoid.AutoRotate }
+            humanoid.AutoRotate = false
+            saved.healthConnection = humanoid.HealthChanged:Connect(onHealth)
+        end,
+        release = release,
+        hold = function(target, height)
+            assert(saved and saved.character == aM() and saved.root.Parent, "Персонаж сменился")
+            local size = target.model:GetExtentsSize()
+            local distance = math.max(height, size.Z * 0.5 + 8)
+            local position = target.root.Position + Vector3.new(0, size.Y * 0.5 + height, 0)
+                - target.root.CFrame.LookVector * distance
+            saved.root.CFrame = CFrame.lookAt(position, target.root.Position)
+            saved.root.AssemblyLinearVelocity = Vector3.zero
+            saved.root.AssemblyAngularVelocity = Vector3.zero
+        end,
+        punch = function(target, stillActive)
+            if not stillActive() then return true end
+            local tool, problem = dj()
+            if not stillActive() then return true end
+            if not tool then return false, tostring(problem) end
+            local character = aM()
+            if not character or not info(target.model) then return false, "Цель или персонаж исчезли" end
+            if not stillActive() then return true end
+            d4(tool)
+            tool:Activate()
+            if not stillActive() then return true end
+            ek()
+            local contacts = 0
+            for _, name in ipairs({"RightHand", "LeftHand", "Right Arm", "Left Arm"}) do
+                if not stillActive() then return true end
+                local hand = character:FindFirstChild(name, true)
+                if hand and hand:IsA("BasePart") and target.root.Parent then
+                    firetouchinterest(hand, target.root, 0)
+                    firetouchinterest(hand, target.root, 1)
+                    contacts += 1
+                end
+            end
+            if contacts == 0 then return false, "Не найдены руки персонажа для Punch" end
+            return true
+        end,
+    })
+    q.bossFactory = nil
+    -- One-shot teleports have no persistent flag for the conflict guard.
+    local teleport = q.teleportToIsland
+    if type(teleport) == "function" then
+        q.teleportToIsland = function(...)
+            q.boss:Stop("Телепорт — автоатака выключена", false)
+            return teleport(...)
+        end
+    end
+    aJ(c.Heartbeat:Connect(function() q.boss:Tick(os.clock()) end))
+    aJ(j.CharacterRemoving:Connect(function() q.boss:Stop("Респавн — автоатака выключена", false) end))
+end
+
+local function l6()local l7=Instance.new("ScreenGui")l7.Name=l;
 l7.ResetOnSpawn=false;
 l7.IgnoreGuiInset=true;
 l7.DisplayOrder=999999;
@@ -2354,7 +2657,7 @@ mg(nh,9)local ni=Instance.new("ScrollingFrame")ni.Parent=nh;
 ni.Size=UDim2.new(1,-8,1,-6)ni.Position=UDim2.fromOffset(4,3)ni.BackgroundTransparency=1;
 ni.BorderSizePixel=0;
 ni.Active=true;
-ni.ScrollingEnabled=false;
+ni.ScrollingEnabled=true;
 ni.ScrollingDirection=Enum.ScrollingDirection.X;
 ni.CanvasSize=UDim2.fromOffset(0,0)ni.ScrollBarThickness=0;
 ni.ScrollBarImageColor3=lw.Accent;
@@ -2377,7 +2680,7 @@ nn.Size=UDim2.new(1,-12,0,2)nn.Position=UDim2.new(0,6,1,-3)nn.BackgroundColor3=l
 nn.BorderSizePixel=0;
 nn.Visible=false;
 mg(nn,2)end;
-local no=kr(ni,"КАМНИ",lw.Accent)nk(no,6)local np=kr(ni,"ФАРМ",lw.Surface)nk(np,62)local nq=kr(ni,"КАЧ",lw.Surface)nk(nq,118)local nr=kr(ni,"РЕБ",lw.Surface)nk(nr,174)local ns=kr(ni,"ШОП",lw.Surface)nk(ns,230)local nt=kr(ni,"КИЛЛ",lw.Surface)nk(nt,286)q.layoutUI.eggTab=kr(ni,"ЯЙЦА",lw.Surface)nk(q.layoutUI.eggTab,342)q.layoutUI.teleportTab=kr(ni,"ТП",lw.Surface)nk(q.layoutUI.teleportTab,398)q.layoutUI.questTab=kr(ni,"КВЕСТЫ",lw.Surface)nk(q.layoutUI.questTab,454)q.layoutUI.systemTab=kr(ni,"ЕЩЁ",lw.Surface)nk(q.layoutUI.systemTab,510)q.layoutUI.navigationTabs={{id="bug",node=no},{id="farm",node=np},{id="train",node=nq},{id="reb",node=nr},{id="crystal",node=ns},{id="kill",node=nt},{id="egg",node=q.layoutUI.eggTab},{id="teleport",node=q.layoutUI.teleportTab},{id="quest",node=q.layoutUI.questTab},{id="system",node=q.layoutUI.systemTab}}function q.layoutUI.captureTabOrder()local ll={}for o,av in ipairs(q.layoutUI.navigationTabs or{})do table.insert(ll,av)end;
+local no=kr(ni,"КАМНИ",lw.Accent)nk(no,6)local np=kr(ni,"ФАРМ",lw.Surface)nk(np,62)local nq=kr(ni,"КАЧ",lw.Surface)nk(nq,118)local nr=kr(ni,"РЕБ",lw.Surface)nk(nr,174)local ns=kr(ni,"ШОП",lw.Surface)nk(ns,230)local nt=kr(ni,"КИЛЛ",lw.Surface)nk(nt,286)q.layoutUI.eggTab=kr(ni,"ЯЙЦА",lw.Surface)nk(q.layoutUI.eggTab,342)q.layoutUI.teleportTab=kr(ni,"ТП",lw.Surface)nk(q.layoutUI.teleportTab,398)q.layoutUI.questTab=kr(ni,"КВЕСТЫ",lw.Surface)nk(q.layoutUI.questTab,454)q.layoutUI.systemTab=kr(ni,"ЕЩЁ",lw.Surface)nk(q.layoutUI.systemTab,510)q.layoutUI.bossTab=kr(ni,"БОСС",lw.Surface)nk(q.layoutUI.bossTab,6)q.layoutUI.bossTab.LayoutOrder=0;q.layoutUI.navigationTabs={{id="boss",node=q.layoutUI.bossTab},{id="bug",node=no},{id="farm",node=np},{id="train",node=nq},{id="reb",node=nr},{id="crystal",node=ns},{id="kill",node=nt},{id="egg",node=q.layoutUI.eggTab},{id="teleport",node=q.layoutUI.teleportTab},{id="quest",node=q.layoutUI.questTab},{id="system",node=q.layoutUI.systemTab}}function q.layoutUI.captureTabOrder()local ll={}for o,av in ipairs(q.layoutUI.navigationTabs or{})do table.insert(ll,av)end;
 table.sort(ll,function(bJ,bK)return bJ.node.LayoutOrder<bK.node.LayoutOrder end)local nu={}for o,av in ipairs(ll)do table.insert(nu,av.id)end;
 return nu end;
 function q.layoutUI.applyTabOrder(nu,mC)local ll=q.layoutUI.navigationTabs or{}local nv={}local nw={}local nx=0;
@@ -2515,6 +2818,7 @@ local nV=nR(lw.Success)nV.Visible=false;
 local nW=nR(lw.Accent2)nW.Visible=false;
 local nX=nR(lw.Danger)nX.Visible=false;
 local nY=nR(lw.Neon)nY.Visible=false;
+q.layoutUI.bossPage=nR(lw.Danger)q.layoutUI.bossPage.Visible=false;
 q.layoutUI.eggPage=nR(lw.Warm)q.layoutUI.eggPage.Visible=false;
 q.layoutUI.teleportPage=nR(lw.Neon)q.layoutUI.teleportPage.Visible=false;
 q.layoutUI.questPage=nR(lw.Success)q.layoutUI.questPage.Visible=false;
@@ -2548,8 +2852,8 @@ local function o3(k4)local o4=Instance.new("UIPadding")o4.Parent=k4;
 o4.PaddingTop=UDim.new(0,2)o4.PaddingBottom=UDim.new(0,2)o4.PaddingLeft=UDim.new(0,1)o4.PaddingRight=UDim.new(0,1)local o5=Instance.new("UIListLayout")o5.Parent=k4;
 o5.SortOrder=Enum.SortOrder.LayoutOrder;
 o5.Padding=UDim.new(0,5)return o5 end;
-local o6=o3(nT)local o7=o3(nU)local o8=o3(nV)local o9=o3(nW)local oa=o3(nX)local ob=o3(nY)q.layoutUI.eggList=o3(q.layoutUI.eggPage)q.layoutUI.teleportList=o3(q.layoutUI.teleportPage)q.layoutUI.questList=o3(q.layoutUI.questPage)q.layoutUI.systemList=o3(q.layoutUI.systemPage)q.layoutUI.interfaceList=o3(q.layoutUI.interfacePage)local function oc()task.defer(function()nT.CanvasSize=UDim2.new(0,0,0,o6.AbsoluteContentSize.Y+20)nU.CanvasSize=UDim2.new(0,0,0,o7.AbsoluteContentSize.Y+20)nV.CanvasSize=UDim2.new(0,0,0,o8.AbsoluteContentSize.Y+20)nW.CanvasSize=UDim2.new(0,0,0,o9.AbsoluteContentSize.Y+20)nX.CanvasSize=UDim2.new(0,0,0,oa.AbsoluteContentSize.Y+20)nY.CanvasSize=UDim2.new(0,0,0,ob.AbsoluteContentSize.Y+20)q.layoutUI.eggPage.CanvasSize=UDim2.new(0,0,0,q.layoutUI.eggList.AbsoluteContentSize.Y+20)q.layoutUI.teleportPage.CanvasSize=UDim2.new(0,0,0,q.layoutUI.teleportList.AbsoluteContentSize.Y+20)q.layoutUI.questPage.CanvasSize=UDim2.new(0,0,0,q.layoutUI.questList.AbsoluteContentSize.Y+20)q.layoutUI.systemPage.CanvasSize=UDim2.new(0,0,0,q.layoutUI.systemList.AbsoluteContentSize.Y+20)q.layoutUI.interfacePage.CanvasSize=UDim2.new(0,0,0,q.layoutUI.interfaceList.AbsoluteContentSize.Y+20)end)end;
-aJ(o6:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(oc))aJ(o7:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(oc))aJ(o8:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(oc))aJ(o9:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(oc))aJ(oa:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(oc))aJ(ob:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(oc))aJ(q.layoutUI.eggList:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(oc))aJ(q.layoutUI.teleportList:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(oc))aJ(q.layoutUI.questList:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(oc))aJ(q.layoutUI.systemList:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(oc))aJ(q.layoutUI.interfaceList:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(oc))local function od(ab,nB)local oe=Instance.new("Frame")oe.Parent=ab;
+local o6=o3(nT)local o7=o3(nU)local o8=o3(nV)local o9=o3(nW)local oa=o3(nX)local ob=o3(nY)q.layoutUI.bossList=o3(q.layoutUI.bossPage)q.layoutUI.eggList=o3(q.layoutUI.eggPage)q.layoutUI.teleportList=o3(q.layoutUI.teleportPage)q.layoutUI.questList=o3(q.layoutUI.questPage)q.layoutUI.systemList=o3(q.layoutUI.systemPage)q.layoutUI.interfaceList=o3(q.layoutUI.interfacePage)local function oc()task.defer(function()nT.CanvasSize=UDim2.new(0,0,0,o6.AbsoluteContentSize.Y+20)nU.CanvasSize=UDim2.new(0,0,0,o7.AbsoluteContentSize.Y+20)nV.CanvasSize=UDim2.new(0,0,0,o8.AbsoluteContentSize.Y+20)nW.CanvasSize=UDim2.new(0,0,0,o9.AbsoluteContentSize.Y+20)nX.CanvasSize=UDim2.new(0,0,0,oa.AbsoluteContentSize.Y+20)nY.CanvasSize=UDim2.new(0,0,0,ob.AbsoluteContentSize.Y+20)q.layoutUI.bossPage.CanvasSize=UDim2.new(0,0,0,q.layoutUI.bossList.AbsoluteContentSize.Y+20)q.layoutUI.eggPage.CanvasSize=UDim2.new(0,0,0,q.layoutUI.eggList.AbsoluteContentSize.Y+20)q.layoutUI.teleportPage.CanvasSize=UDim2.new(0,0,0,q.layoutUI.teleportList.AbsoluteContentSize.Y+20)q.layoutUI.questPage.CanvasSize=UDim2.new(0,0,0,q.layoutUI.questList.AbsoluteContentSize.Y+20)q.layoutUI.systemPage.CanvasSize=UDim2.new(0,0,0,q.layoutUI.systemList.AbsoluteContentSize.Y+20)q.layoutUI.interfacePage.CanvasSize=UDim2.new(0,0,0,q.layoutUI.interfaceList.AbsoluteContentSize.Y+20)end)end;
+aJ(o6:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(oc))aJ(o7:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(oc))aJ(o8:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(oc))aJ(o9:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(oc))aJ(oa:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(oc))aJ(ob:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(oc))aJ(q.layoutUI.bossList:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(oc))aJ(q.layoutUI.eggList:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(oc))aJ(q.layoutUI.teleportList:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(oc))aJ(q.layoutUI.questList:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(oc))aJ(q.layoutUI.systemList:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(oc))aJ(q.layoutUI.interfaceList:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(oc))local function od(ab,nB)local oe=Instance.new("Frame")oe.Parent=ab;
 oe.Size=UDim2.new(1,0,0,nB)oe.BackgroundColor3=lw.Surface;
 oe.BackgroundTransparency=0.10;
 oe.BorderSizePixel=0;
@@ -2835,6 +3139,56 @@ aJ(p3.Activated:Connect(pq))aJ(p9.Activated:Connect(function()if not pm then ret
 local jl=pm;
 if jl.multiple and jl.onDone then jl.onDone(jl.selected)end;
 pq()end))aJ(p4:GetPropertyChangedSignal("Text"):Connect(function()if pm then pr(true)end end))q.closePicker=pq;
+do
+    local card, body = oq(q.layoutUI.bossPage, "БОСС • ТЕСТ", 230)
+    card.LayoutOrder = 1
+    local toggle, toggleNode = oC(body, "◎", "АВТОАТАКА БОССА", "Дистанция + стоп при получении урона", false, function(enabled, control)
+        if enabled then
+            local ok, started = pcall(function() return q.boss:Start() end)
+            if not ok then q.boss:Stop("Ошибка запуска: " .. tostring(started):sub(1, 90), true) end
+            control.Set(ok and started == true, true)
+        else q.boss:Stop("Выключено — возврат к точке старта", true) end
+    end)
+    q.leverRefs.boss = toggle
+    toggleNode.LayoutOrder = 1
+    local selection = oY(body, "ЦЕЛЬ", "Ближайший босс", function()
+        local ok, list = pcall(function() return q.boss:Scan() end)
+        if not ok then q.boss:Stop("Ошибка поиска босса", true) return end
+        local options = {{id = "auto", label = "Ближайший босс", sub = "Автопоиск при появлении на сервере"}}
+        for index, candidate in ipairs(list) do
+            table.insert(options, {id = tostring(index), model = candidate.model, label = candidate.name,
+                sub = ("HP %s • %d studs"):format(tostring(math.ceil(candidate.health)), math.floor(candidate.distance))})
+        end
+        pG("БОССЫ НА СЕРВЕРЕ", options, {onDone = function(choice)
+            q.boss:Select(choice.model)
+        end})
+    end)
+    selection.Row.LayoutOrder = 2
+    local height, heightNode = oI(body, "ВЫСОТА", "Studs над боссом; не гарантирует защиту", q.boss.height,
+        function(value) q.boss.height = value end, 8, 100)
+    heightNode.LayoutOrder = 3
+    local status = mt(body, q.boss.status, 10, Enum.Font.Gotham, lw.Text)
+    status.Size = UDim2.new(1, -4, 0, 44)
+    status.TextWrapped = true
+    status.TextXAlignment = Enum.TextXAlignment.Left
+    status.LayoutOrder = 4
+    local hint = mt(body, "Тест новой механики. Старт останавливает другие режимы. При уроне или 12 с без снижения HP — отход и стоп.", 9, Enum.Font.Gotham, lw.Muted)
+    hint.Size = UDim2.new(1, -4, 0, 40)
+    hint.TextWrapped = true
+    hint.LayoutOrder = 5
+    q.refreshBossUI = function()
+        if not q.alive or not status.Parent then return end
+        status.Text = q.boss.status
+        selection.Set(q.boss.selected and q.boss.selected.Name or "Ближайший босс")
+        toggle.Set(q.boss.enabled, true)
+    end
+    local function resize()
+        if card.Parent then card.Size = UDim2.new(1, 0, 0, body.UIListLayout.AbsoluteContentSize.Y + 36) oc() end
+    end
+    aJ(body.UIListLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(resize))
+    task.defer(resize)
+end
+
 local pJ,pK=oj(nT,"АВТОФАРМ",106,3)pJ.LayoutOrder=2;
 local pL,pM=oq(nT,"ВЫБОР КАМНЯ",170)pL.LayoutOrder=1;
 local pN=od(pM,70)pN.LayoutOrder=1;
@@ -3495,17 +3849,17 @@ q.layoutUI.auraSelection=sI;
 q.refreshExtraUI=function()local sJ=q.language=="en"and" players"or" игроков"sj.Set(fC(q.killWhitelist)..sJ)sk.Set(fC(q.killBlacklist)..sJ)sA.Set(q.layoutUI.officialName(q.selectedCrystal,q.layoutUI.gameObjectContext(q.selectedCrystal)))sE()sx.Set(sy())sH.Set(q.selectedPet and q.layoutUI.officialName(q.selectedPet,q.layoutUI.gameObjectContext(q.selectedPet))or q.layoutUI.staticText("ВЫБРАТЬ"))sI.Set(q.selectedAura and q.layoutUI.officialName(q.selectedAura,q.layoutUI.gameObjectContext(q.selectedAura))or q.layoutUI.staticText("ВЫБРАТЬ"))end;
 fG()local sK="bug"local sL=false;
 local sM=n7.Size;
-q.layoutUI.sectionInfo={bug={title="КАМНИ",hint="Выбери камень и включи автоудар."},farm={title="ТРЕНАЖЁРЫ",hint="Выбери локацию и нужный тренажёр."},train={title="ТРЕНИРОВКА",hint="Выбери упражнение для автокачалки."},reb={title="РЕБИРТЫ",hint="Установи цель или запусти ребирты."},crystal={title="МАГАЗИН",hint="Выбери товар и включи покупку."},kill={title="АВТОКИЛ",hint="Выбери игроков и режим атаки."},egg={title="ПРОТЕИНОВЫЕ ЯЙЦА",hint="Только Protein Egg: ×2 к силе."},teleport={title="ТЕЛЕПОРТЫ",hint="Выбери остров и переместись."},quest={title="АВТОКВЕСТЫ",hint="Выбери NPC и запусти автоквест."},system={title="НАСТРОЙКИ",hint="Питомцы, графика, сеть и защита клиента."},interface={title="ИНТЕРФЕЙС",hint="Настрой цвета, неон и прозрачность."}}local function sN()local sO=n7.AbsoluteSize.X<420;
+q.layoutUI.sectionInfo={boss={title="БОСС • ТЕСТ",hint="Автоатака с дистанции. При уроне — отход и стоп."},bug={title="КАМНИ",hint="Выбери камень и включи автоудар."},farm={title="ТРЕНАЖЁРЫ",hint="Выбери локацию и нужный тренажёр."},train={title="ТРЕНИРОВКА",hint="Выбери упражнение для автокачалки."},reb={title="РЕБИРТЫ",hint="Установи цель или запусти ребирты."},crystal={title="МАГАЗИН",hint="Выбери товар и включи покупку."},kill={title="АВТОКИЛ",hint="Выбери игроков и режим атаки."},egg={title="ПРОТЕИНОВЫЕ ЯЙЦА",hint="Только Protein Egg: ×2 к силе."},teleport={title="ТЕЛЕПОРТЫ",hint="Выбери остров и переместись."},quest={title="АВТОКВЕСТЫ",hint="Выбери NPC и запусти автоквест."},system={title="НАСТРОЙКИ",hint="Питомцы, графика, сеть и защита клиента."},interface={title="ИНТЕРФЕЙС",hint="Настрой цвета, неон и прозрачность."}}local function sN()local sO=n7.AbsoluteSize.X<420;
 local sP=n7.AbsoluteSize.Y<440;
-nh.Size=UDim2.new(1,-16,0,sP and 34 or 38)nh.Position=UDim2.fromOffset(8,52)nI.Size=UDim2.new(1,-12,1,sP and-92 or-96)nI.Position=UDim2.fromOffset(6,sP and 90 or 94)q.layoutUI.navigationGrid.CellSize=UDim2.new(1/10,sO and-2 or-3,1,0)q.layoutUI.navigationGrid.CellPadding=UDim2.fromOffset(sO and 2 or 3,0)ni.CanvasSize=UDim2.fromOffset(0,0)ni.ScrollBarThickness=0;
+nh.Size=UDim2.new(1,-16,0,sP and 34 or 38)nh.Position=UDim2.fromOffset(8,52)nI.Size=UDim2.new(1,-12,1,sP and-92 or-96)nI.Position=UDim2.fromOffset(6,sP and 90 or 94)do local count=#q.layoutUI.navigationTabs;local gap=3;local width=math.max(49,math.floor((ni.AbsoluteSize.X-(count-1)*gap)/count));q.layoutUI.navigationGrid.FillDirectionMaxCells=count;q.layoutUI.navigationGrid.CellSize=UDim2.new(0,width,1,-3);q.layoutUI.navigationGrid.CellPadding=UDim2.fromOffset(gap,0);ni.CanvasSize=UDim2.fromOffset(count*(width+gap)-gap,0);ni.ScrollBarThickness=2 end;
 nc.TextSize=sO and 12 or 14;
 ne.TextSize=sO and 6 or 7;
 nK.TextSize=sO and 11 or 12;
 q.layoutUI.quickHint.TextSize=sO and 8 or 9;
 nQ.TextSize=sO and 7 or 8;
-for o,nl in ipairs({no,np,nq,nr,ns,nt,q.layoutUI.eggTab,q.layoutUI.teleportTab,q.layoutUI.questTab,q.layoutUI.systemTab})do nl.TextSize=sO and(n7.AbsoluteSize.X<320 and 6 or 7)or 8 end;
+for o,nl in ipairs({no,np,nq,nr,ns,nt,q.layoutUI.bossTab,q.layoutUI.eggTab,q.layoutUI.teleportTab,q.layoutUI.questTab,q.layoutUI.systemTab})do nl.TextSize=9 end;
 q.layoutUI.interfaceSideTab.Position=UDim2.fromOffset(n7.Position.X.Offset>=26 and-23 or 1,sP and 92 or 98)if sP then nJ.Size=UDim2.new(1,-12,0,67)q.layoutUI.quickHint.Position=UDim2.fromOffset(8,21)q.layoutUI.quickHint.Size=UDim2.new(1,-16,0,13)nL.Position=UDim2.fromOffset(6,36)nL.Size=UDim2.new(1,-12,0,25)else nJ.Size=UDim2.new(1,-12,0,76)q.layoutUI.quickHint.Position=UDim2.fromOffset(8,23)q.layoutUI.quickHint.Size=UDim2.new(1,-16,0,15)nL.Position=UDim2.fromOffset(6,43)nL.Size=UDim2.new(1,-12,0,26)end;
-for o,nS in ipairs({nT,nU,nV,nW,nX,nY,q.layoutUI.eggPage,q.layoutUI.teleportPage,q.layoutUI.questPage,q.layoutUI.systemPage,q.layoutUI.interfacePage})do nS.Position=UDim2.fromOffset(6,sP and 78 or 87)nS.Size=UDim2.new(1,-12,1,sP and-129 or-138)end;
+for o,nS in ipairs({nT,nU,nV,nW,nX,nY,q.layoutUI.bossPage,q.layoutUI.eggPage,q.layoutUI.teleportPage,q.layoutUI.questPage,q.layoutUI.systemPage,q.layoutUI.interfacePage})do nS.Position=UDim2.fromOffset(6,sP and 78 or 87)nS.Size=UDim2.new(1,-12,1,sP and-129 or-138)end;
 oc()end;
 local function sQ(nl,ht)nl.BackgroundColor3=ht and lw.SurfaceAlt or lw.Surface;
 nl.BackgroundTransparency=ht and 0.34 or 1;
@@ -3527,16 +3881,16 @@ nV.Visible=not sL and sV;
 nW.Visible=not sL and sW;
 nX.Visible=not sL and sX;
 nY.Visible=not sL and k5;
-q.layoutUI.eggPage.Visible=not sL and ku;
+q.layoutUI.bossPage.Visible=not sL and u=="boss";q.layoutUI.eggPage.Visible=not sL and ku;
 q.layoutUI.teleportPage.Visible=not sL and r4;
 q.layoutUI.questPage.Visible=not sL and hq;
 q.layoutUI.systemPage.Visible=not sL and sY;
 q.layoutUI.interfacePage.Visible=not sL and sZ;
-if not sL and sS~=u then local nS=sT and nT or sU and nU or sV and nV or sW and nW or sX and nX or k5 and nY or ku and q.layoutUI.eggPage or r4 and q.layoutUI.teleportPage or hq and q.layoutUI.questPage or sY and q.layoutUI.systemPage or sZ and q.layoutUI.interfacePage or nil;
+if not sL and sS~=u then local nS=u=="boss"and q.layoutUI.bossPage or sT and nT or sU and nU or sV and nV or sW and nW or sX and nX or k5 and nY or ku and q.layoutUI.eggPage or r4 and q.layoutUI.teleportPage or hq and q.layoutUI.questPage or sY and q.layoutUI.systemPage or sZ and q.layoutUI.interfacePage or nil;
 if nS then local k2=nS.Position;
 local s_=math.floor(math.clamp(tonumber(q.layoutUI.appearance.pageMotion)or 40,0,100)*0.2+0.5)if s_>0 then nS.Position=UDim2.new(k2.X.Scale,k2.X.Offset+s_,k2.Y.Scale,k2.Y.Offset)q.layoutUI.animate(nS,{Position=k2},0.16)end;
 q.layoutUI.pulseMotionBlur()end end;
-sQ(no,sT)sQ(np,sU)sQ(nq,sV)sQ(nr,sW)sQ(nt,sX)sQ(ns,k5)sQ(q.layoutUI.eggTab,ku)sQ(q.layoutUI.teleportTab,r4)sQ(q.layoutUI.questTab,hq)sQ(q.layoutUI.systemTab,sY)q.layoutUI.interfaceSideTab.BackgroundColor3=sZ and lw.SurfaceAlt or lw.Panel;
+sQ(q.layoutUI.bossTab,u=="boss")sQ(no,sT)sQ(np,sU)sQ(nq,sV)sQ(nr,sW)sQ(nt,sX)sQ(ns,k5)sQ(q.layoutUI.eggTab,ku)sQ(q.layoutUI.teleportTab,r4)sQ(q.layoutUI.questTab,hq)sQ(q.layoutUI.systemTab,sY)q.layoutUI.interfaceSideTab.BackgroundColor3=sZ and lw.SurfaceAlt or lw.Panel;
 local t0=q.layoutUI.interfaceSideTab:FindFirstChild("NeonEdge")if t0 then t0.Color=sZ and lw.Accent or lw.Border;
 t0.Transparency=sZ and 0.25 or 0.62 end;
 local bw=q.layoutUI.sectionInfo[u]if bw then nc.Text="ROCK BUG HUB"ne.Text="The Great Bastra"nK.Text=q.layoutUI.staticText(bw.title)q.layoutUI.quickHint.Text=q.layoutUI.staticText(bw.hint)end;
@@ -3547,7 +3901,7 @@ if r4 and not q.machineScanned and not q.machineScanInFlight then q.refreshMachi
 if r4 and type(q.refreshTeleportUI)=="function"then q.refreshTeleportUI()end;
 if hq and type(q.refreshQuestUI)=="function"then q.refreshQuestUI()end;
 if sZ and type(q.refreshAppearanceUI)=="function"then q.refreshAppearanceUI()end;
-if ku and type(q.refreshEggUI)=="function"then q.refreshEggUI()end end;
+if u=="boss"and q.refreshBossUI then q.refreshBossUI()end;if ku and type(q.refreshEggUI)=="function"then q.refreshEggUI()end end;
 function q.layoutUI.applyLanguage(cJ,mC)cJ=cJ=="en"and"en"or"ru"q.language=cJ;
 n.RockBugLanguage=cJ;
 q.gameTranslators=q.gameTranslators or{}q.translationToken=(q.translationToken or 0)+1;
@@ -3754,1047 +4108,3 @@ local b6=os.clock()local tX={}for o,tY in ipairs(tW)do if b6-tY<=30 then table.i
 table.insert(tX,b6)tW=tX;
 if#tW>=4 then warn("RockBugHub scheduler stopped: "..tostring(hg))q:Stop("scheduler repeatedly failed")return end;
 dK("scheduler recovery",b6)aP(("SCHEDULER RECOVERY %d/3 | state preserved | %s"):format(#tW,tostring(hg):sub(1,70)))task.wait(math.min(0.5*#tW,1.5))end end)
-
--- RBH TRADE DIAGNOSTICS v1.0 -- test only, passive and OFF until Start.
--- No remote is sent/replayed and no offer, acceptance or inventory is modified.
-task.defer(function()
-    local env = type(getgenv) == "function" and getgenv() or _G
-    local runtime = env.RockBugRuntime
-    if not runtime or not runtime.alive or not runtime.uiRoot then return end
-    if env.RockBugTradeDiagnostics then pcall(function() env.RockBugTradeDiagnostics:Destroy() end) end
-
-    local Players = game:GetService("Players")
-    local RS = game:GetService("ReplicatedStorage")
-    local Http = game:GetService("HttpService")
-    local Collection = game:GetService("CollectionService")
-    local UIS = game:GetService("UserInputService")
-    local player = Players.LocalPlayer
-    local playerGui = player and player:FindFirstChildOfClass("PlayerGui")
-    if not playerGui then return end
-
-    local state = {
-        active = false, alive = true, generation = 0, sequence = 0, action = 0,
-        entries = {}, bytes = 0, dropped = 0, maxEntries = 400, maxBytes = 4194304,
-        connections = {}, remoteConnections = {}, guiNodes = {}, guiTruncated = false,
-        ids = setmetatable({}, {__mode = "k"}), nextId = 0,
-        hookStatus = "не включён", lastGui = "", inventoryBusy = false,
-        inventoryPending = false, afterPending = 0, lastError = nil, tag = "",
-    }
-    env.RockBugTradeDiagnostics = state
-    runtime.TradeDiagnostics = state
-
-    local function connect(signal, fn)
-        local c = signal:Connect(fn)
-        table.insert(state.connections, c)
-        return c
-    end
-    local function disconnectAll(list)
-        for _, c in pairs(list) do pcall(function() c:Disconnect() end) end
-        table.clear(list)
-    end
-    local function path(obj)
-        local ok, name = pcall(function() return obj:GetFullName() end)
-        return ok and name or tostring(obj)
-    end
-    local function identity(obj)
-        if not state.ids[obj] then
-            state.nextId = state.nextId + 1
-            state.ids[obj] = state.nextId
-        end
-        return {type = "Instance", id = state.ids[obj], path = path(obj), class = obj.ClassName}
-    end
-    local function encode(value)
-        local ok, result = pcall(function() return Http:JSONEncode(value) end)
-        if ok then return result end
-        state.lastError = tostring(result)
-        return nil
-    end
-    local function serial(value, depth, seen)
-        depth, seen = depth or 0, seen or {}
-        local kind = typeof(value)
-        if value == nil then return {type = "nil"} end
-        if kind == "boolean" then return value end
-        if kind == "number" then
-            if value == value and value ~= math.huge and value ~= -math.huge then return value end
-            return {type = "number", value = tostring(value)}
-        end
-        if kind == "string" then
-            if #value <= 4096 then return value end
-            return {type = "string", value = value:sub(1, 4096), truncated = true, bytes = #value}
-        end
-        if kind == "Instance" then return identity(value) end
-        if kind ~= "table" then return {type = kind, value = tostring(value)} end
-        if seen[value] then return {type = "table", cycle = true} end
-        if depth >= 6 then return {type = "table", truncated = "depth"} end
-        seen[value] = true
-        local result = {type = "table", entries = {}}
-        for key, item in pairs(value) do
-            if #result.entries >= 100 then result.truncated = "items"; break end
-            table.insert(result.entries, {key = serial(key, depth + 1, seen), value = serial(item, depth + 1, seen)})
-        end
-        seen[value] = nil
-        return result
-    end
-    local function arguments(args)
-        local result = {n = args.n, values = {}}
-        for index = 1, math.min(args.n, 64) do
-            result.values[index] = serial(args[index])
-        end
-        if args.n > 64 then result.truncated = true end
-        return result
-    end
-    local function add(kind, data)
-        if not state.alive then return nil end
-        state.sequence = state.sequence + 1
-        local entry = {
-            seq = state.sequence, utc_ms = DateTime.now().UnixTimestampMillis,
-            monotonic = os.clock(), kind = kind, label = state.tag, data = data,
-        }
-        local json = encode(entry)
-        if not json then return nil end
-        if #json > state.maxBytes then
-            json = encode({seq = entry.seq, utc_ms = entry.utc_ms, kind = "ENTRY_TOO_LARGE", original = kind, bytes = #json})
-        end
-        while #state.entries > 0 and (#state.entries >= state.maxEntries or state.bytes + #json > state.maxBytes) do
-            local first = table.remove(state.entries, 1)
-            state.bytes = state.bytes - #first.json
-            state.dropped = state.dropped + 1
-        end
-        table.insert(state.entries, {json = json, seq = entry.seq, kind = kind})
-        state.bytes = state.bytes + #json
-        return entry.seq
-    end
-    local function related(name)
-        name = string.lower(tostring(name or ""))
-        return name:find("trad", 1, true) or name:find("gift", 1, true)
-            or name:find("обмен", 1, true) or name:find("трейд", 1, true)
-    end
-    local function isTradeRemote(obj)
-        return typeof(obj) == "Instance"
-            and (obj:IsA("RemoteEvent") or obj:IsA("RemoteFunction") or obj:IsA("UnreliableRemoteEvent"))
-            and related(path(obj))
-    end
-    local function guiRefresh()
-        state.guiNodes = {}
-        state.guiTruncated = false
-        -- Only official PlayerGui objects; never Workspace, player chats, or this hub.
-        local function walk(obj, inside)
-            if #state.guiNodes >= 400 then state.guiTruncated = true; return end
-            if obj == runtime.uiRoot or obj == state.gui then return end
-            if tostring(obj.Name):find("RockBugHub", 1, true) then return end
-            if string.lower(tostring(obj.Name)):find("chat", 1, true) then return end
-            inside = inside or related(obj.Name)
-            if inside and (obj:IsA("GuiObject") or obj:IsA("LayerCollector") or obj:IsA("ValueBase") or obj:IsA("Model")) then
-                table.insert(state.guiNodes, obj)
-            end
-            for _, child in ipairs(obj:GetChildren()) do walk(child, inside) end
-        end
-        walk(playerGui, false)
-    end
-    local function guiSnapshot()
-        local out = {nodes = {}, truncated = state.guiTruncated, note = "client GUI only; not proof of server acceptance"}
-        for _, obj in ipairs(state.guiNodes) do
-            if obj.Parent then
-                local row = identity(obj)
-                pcall(function()
-                    if obj:IsA("GuiObject") then
-                        row.visible = obj.Visible
-                        row.effective_visible = obj.Visible
-                        local parent = obj.Parent
-                        while parent and parent ~= playerGui do
-                            if parent:IsA("GuiObject") and not parent.Visible then row.effective_visible = false end
-                            if parent:IsA("LayerCollector") and not parent.Enabled then row.effective_visible = false end
-                            parent = parent.Parent
-                        end
-                    end
-                    if obj:IsA("LayerCollector") then row.enabled = obj.Enabled end
-                    if obj:IsA("TextLabel") or obj:IsA("TextButton") or obj:IsA("TextBox") then row.text = serial(obj.Text) end
-                    if obj:IsA("ImageLabel") or obj:IsA("ImageButton") then row.image = obj.Image end
-                    if obj:IsA("ValueBase") then row.value = serial(obj.Value) end
-                    row.attributes = serial(obj:GetAttributes())
-                end)
-                table.insert(out.nodes, row)
-            end
-        end
-        return out
-    end
-    local function inventorySnapshot(reason)
-        if not state.active then return end
-        if state.inventoryBusy then state.inventoryPending = true; return end
-        state.inventoryBusy = true
-        local generation = state.generation
-        task.spawn(function()
-            local ok, err = pcall(function()
-                local folder = player:FindFirstChild("petsFolder")
-                if not folder then add("INVENTORY", {reason = reason, missing = "petsFolder"}); return end
-                local nodes = folder:GetDescendants()
-                local rows, batch = {}, 0
-                add("INVENTORY_BEGIN", {reason = reason, root = path(folder), descendants = #nodes,
-                    note = "all subfolders and instances; IDs distinguish identical pet names"})
-                for index, obj in ipairs(nodes) do
-                    if not state.active or state.generation ~= generation then return end
-                    local row = identity(obj)
-                    row.name = obj.Name
-                    row.parent = obj.Parent and identity(obj.Parent) or nil
-                    pcall(function() row.attributes = serial(obj:GetAttributes()) end)
-                    pcall(function() row.tags = Collection:GetTags(obj) end)
-                    if obj:IsA("ValueBase") then pcall(function() row.value = serial(obj.Value) end) end
-                    table.insert(rows, row)
-                    if #rows >= 80 or index == #nodes then
-                        batch = batch + 1
-                        add("INVENTORY_BATCH", {reason = reason, batch = batch, nodes = rows})
-                        rows = {}
-                        task.wait()
-                    end
-                    if index >= 12000 then
-                        add("INVENTORY_TRUNCATED", {reason = reason, scanned = index, total = #nodes})
-                        break
-                    end
-                end
-                if state.active and state.generation == generation then
-                    add("INVENTORY_END", {reason = reason, batches = batch})
-                end
-            end)
-            state.inventoryBusy = false
-            if not ok then state.lastError = tostring(err); add("DIAGNOSTIC_ERROR", {where = "inventory", message = tostring(err)}) end
-            if state.inventoryPending then
-                state.inventoryPending = false
-                inventorySnapshot("pending action")
-            end
-        end)
-    end
-    local function scheduleAfter(action)
-        if state.afterPending >= 12 then add("AFTER_SNAPSHOT_SKIPPED", {action = action, reason = "rate cap"}); return end
-        state.afterPending = state.afterPending + 1
-        local generation = state.generation
-        task.delay(0.2, function()
-            state.afterPending = math.max(0, state.afterPending - 1)
-            if not state.active or state.generation ~= generation then return end
-            pcall(function() guiRefresh(); add("GUI_AFTER_200MS", {action = action, gui = guiSnapshot()}) end)
-        end)
-        state.inventoryPending = true
-        task.delay(0.9, function()
-            if not state.active or state.generation ~= generation then return end
-            pcall(function() guiRefresh(); add("GUI_AFTER_900MS", {action = action, gui = guiSnapshot()}) end)
-            if state.inventoryPending then
-                state.inventoryPending = false
-                inventorySnapshot("after action " .. tostring(action))
-            end
-        end)
-    end
-    local function recordIncoming(remote, ...)
-        if not state.active then return end
-        local args = table.pack(...)
-        pcall(function()
-            local id = add("INCOMING_EVENT", {remote = identity(remote), args = arguments(args)})
-            scheduleAfter(id)
-        end)
-    end
-    local function watchRemote(obj)
-        if not state.active or not isTradeRemote(obj) or state.remoteConnections[obj] then return end
-        if obj:IsA("RemoteEvent") or obj:IsA("UnreliableRemoteEvent") then
-            state.remoteConnections[obj] = obj.OnClientEvent:Connect(function(...) recordIncoming(obj, ...) end)
-            add("REMOTE_WATCH", identity(obj))
-        end
-        -- OnClientInvoke is deliberately not replaced: it is a single gameplay callback.
-    end
-    local function enableHook()
-        local bridge = env.RockBugTradeDiagHookV1
-        if not bridge then
-            if type(hookmetamethod) ~= "function" or type(getnamecallmethod) ~= "function" then
-                state.hookStatus = "нет API: исходящие не записываются"
-                return
-            end
-            bridge = {}
-            local previous
-            local ok, err = pcall(function()
-                previous = hookmetamethod(game, "__namecall", function(remote, ...)
-                    local method = getnamecallmethod()
-                    local capture = bridge.capture
-                    local ticket
-                    if capture and (method == "FireServer" or method == "InvokeServer") then
-                        local success, value = pcall(capture, "out", remote, method, table.pack(...))
-                        if success then ticket = value end
-                    end
-                    if ticket and method == "InvokeServer" then
-                        -- Forward once, preserving yielding, nil positions and original errors.
-                        local values = table.pack(previous(remote, ...))
-                        if bridge.capture == capture then pcall(capture, "return", remote, method, values, ticket) end
-                        return table.unpack(values, 1, values.n)
-                    end
-                    return previous(remote, ...)
-                end)
-            end)
-            if not ok then state.hookStatus = "hook недоступен: " .. tostring(err):sub(1, 90); return end
-            env.RockBugTradeDiagHookV1 = bridge
-        end
-        state.capture = function(direction, remote, method, args, ticket)
-            if not state.active or not runtime.alive or not isTradeRemote(remote) then return end
-            if direction == "return" then
-                if ticket.generation == state.generation then
-                    add("FUNCTION_RETURN", {action = ticket.id, remote = identity(remote), values = arguments(args)})
-                end
-                return
-            end
-            local origin = "unknown"
-            if type(checkcaller) == "function" then origin = checkcaller() and "executor" or "game" end
-            local id = add("OUTGOING_CALL", {remote = identity(remote), method = method, origin = origin,
-                args = arguments(args), gui_before = guiSnapshot(),
-                note = method == "FireServer" and "no server return value; request does not prove success" or nil})
-            scheduleAfter(id)
-            return {id = id, generation = state.generation}
-        end
-        bridge.capture = state.capture
-        state.hookStatus = "namecall включён"
-    end
-    function state:Pause()
-        if self.active then add("RECORDING_PAUSED", {}) end
-        self.active = false
-        self.generation = self.generation + 1
-        self.inventoryPending = false
-        disconnectAll(self.remoteConnections)
-        local bridge = env.RockBugTradeDiagHookV1
-        if bridge and bridge.capture == self.capture then bridge.capture = nil end
-        -- Keep a single inert forwarding hook: never overwrite another script's hook.
-    end
-    function state:Start()
-        if self.active or not self.alive then return end
-        self.active = true
-        self.generation = self.generation + 1
-        guiRefresh()
-        enableHook()
-        add("RECORDING_STARTED", {version = "1.0", hook = self.hookStatus,
-            notes = {"Passive only. No trades sent or accepted.",
-                "Namecall observation cannot see cached/direct method calls.",
-                "OnClientInvoke is not replaced. GUI is client evidence only.",
-                "Argument/inventory truncation and ring-buffer drops are explicitly recorded."}})
-        local remotes = RS:GetDescendants()
-        for _, obj in ipairs(remotes) do watchRemote(obj) end
-        add("GUI_BASELINE", guiSnapshot())
-        inventorySnapshot("baseline")
-    end
-    function state:Destroy()
-        if not self.alive then return end
-        self:Pause()
-        self.alive = false
-        disconnectAll(self.connections)
-        if self.gui then self.gui:Destroy() end
-        if env.RockBugTradeDiagnostics == self then env.RockBugTradeDiagnostics = nil end
-        if runtime.TradeDiagnostics == self then runtime.TradeDiagnostics = nil end
-    end
-
-    local function make(class, props, parent)
-        local obj = Instance.new(class)
-        for key, value in pairs(props) do obj[key] = value end
-        obj.Parent = parent
-        return obj
-    end
-    local color = Color3.fromRGB
-    local function round(obj)
-        make("UICorner", {CornerRadius = UDim.new(0, 8)}, obj)
-    end
-    local gui = make("ScreenGui", {Name = "RockBugHubTradeDiagnostics", ResetOnSpawn = false,
-        DisplayOrder = runtime.uiRoot.DisplayOrder + 2, ZIndexBehavior = Enum.ZIndexBehavior.Sibling}, playerGui)
-    state.gui = gui
-    local launcher = make("TextButton", {Name = "TradeLog", Text = "ТРЕЙД-ЛОГ",
-        Size = UDim2.fromOffset(102, 32), Position = UDim2.new(1, -112, 0.5, -16),
-        BackgroundColor3 = color(36, 29, 57), TextColor3 = color(229, 217, 255),
-        Font = Enum.Font.GothamBold, TextSize = 12, BorderSizePixel = 0}, gui)
-    round(launcher)
-    local panel = make("Frame", {Name = "Panel", Visible = false, AnchorPoint = Vector2.new(0.5, 0.5),
-        Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(480, 470),
-        BackgroundColor3 = color(18, 19, 29), BorderSizePixel = 0}, gui)
-    round(panel)
-    make("UIStroke", {Color = color(165, 114, 255), Thickness = 1.5}, panel)
-    local scale = make("UIScale", {Scale = 1}, panel)
-    local title = make("TextLabel", {Text = "ДИАГНОСТИКА ТРЕЙДА · TEST", Position = UDim2.fromOffset(14, 8),
-        Size = UDim2.new(1, -62, 0, 28), BackgroundTransparency = 1, TextColor3 = color(235, 225, 255),
-        Font = Enum.Font.GothamBold, TextSize = 14, TextXAlignment = Enum.TextXAlignment.Left}, panel)
-    local status = make("TextLabel", {Position = UDim2.fromOffset(14, 38), Size = UDim2.new(1, -28, 0, 32),
-        BackgroundTransparency = 1, TextColor3 = color(175, 161, 201), Font = Enum.Font.Gotham,
-        TextSize = 11, TextWrapped = true, TextXAlignment = Enum.TextXAlignment.Left}, panel)
-    make("TextLabel", {Text = "Начать → вручную открыть обмен и добавить/убрать обычного пета → Снимок → Пауза → Копировать. Не подтверждай ценные сделки ради теста.",
-        Position = UDim2.fromOffset(14, 74), Size = UDim2.new(1, -28, 0, 46), BackgroundTransparency = 1,
-        TextColor3 = color(205, 207, 220), TextWrapped = true, Font = Enum.Font.Gotham, TextSize = 12,
-        TextXAlignment = Enum.TextXAlignment.Left}, panel)
-    local label = make("TextBox", {Text = "", PlaceholderText = "Метка: обычный пет / скрытый №1",
-        ClearTextOnFocus = false, Position = UDim2.fromOffset(14, 126), Size = UDim2.new(1, -28, 0, 32),
-        BackgroundColor3 = color(31, 33, 48), TextColor3 = color(230, 230, 245), Font = Enum.Font.Gotham,
-        TextSize = 12, BorderSizePixel = 0}, panel)
-    round(label)
-    connect(label:GetPropertyChangedSignal("Text"), function() state.tag = label.Text:sub(1, 160) end)
-    local actions = make("Frame", {Position = UDim2.fromOffset(14, 166), Size = UDim2.new(1, -28, 0, 72),
-        BackgroundTransparency = 1}, panel)
-    make("UIGridLayout", {CellSize = UDim2.new(1/3, -5, 0, 32), CellPadding = UDim2.fromOffset(6, 6),
-        SortOrder = Enum.SortOrder.LayoutOrder}, actions)
-    local function button(text, fn)
-        local obj = make("TextButton", {Text = text, BackgroundColor3 = color(47, 36, 68),
-            TextColor3 = color(231, 220, 250), Font = Enum.Font.GothamBold, TextSize = 12,
-            BorderSizePixel = 0, LayoutOrder = #actions:GetChildren()}, actions)
-        round(obj)
-        connect(obj.Activated, function()
-            local ok, err = pcall(fn)
-            if not ok then state.lastError = tostring(err); add("DIAGNOSTIC_ERROR", {message = tostring(err)}) end
-        end)
-        return obj
-    end
-    local scroll = make("ScrollingFrame", {Position = UDim2.fromOffset(14, 248),
-        Size = UDim2.new(1, -28, 1, -262), BackgroundColor3 = color(12, 14, 22),
-        BorderSizePixel = 0, ScrollBarThickness = 4, CanvasSize = UDim2.new(),
-        AutomaticCanvasSize = Enum.AutomaticSize.Y}, panel)
-    round(scroll)
-    local output = make("TextBox", {Position = UDim2.fromOffset(8, 6), Size = UDim2.new(1, -20, 0, 20),
-        AutomaticSize = Enum.AutomaticSize.Y, BackgroundTransparency = 1,
-        TextColor3 = color(209, 215, 235), Font = Enum.Font.Code, TextSize = 11,
-        TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top,
-        TextWrapped = true, MultiLine = true, TextEditable = false, ClearTextOnFocus = false,
-        Text = "Запись выключена. Фарм и трейд не меняются."}, scroll)
-    local preview = true
-    local function export()
-        local lines = {encode({format = "RBH_TRADE_DIAGNOSTICS_1", exported_utc_ms = DateTime.now().UnixTimestampMillis,
-            player_user_id = player.UserId, place_id = game.PlaceId, job_id = game.JobId,
-            entries = #state.entries, dropped = state.dropped, hook = state.hookStatus,
-            privacy = "local export only; includes pet inventory, trade GUI and server identifiers"})}
-        for _, entry in ipairs(state.entries) do table.insert(lines, entry.json) end
-        return table.concat(lines, "\n")
-    end
-    state.Export = export
-    local record = button("Начать", function()
-        preview = true
-        if state.active then state:Pause() else state:Start() end
-    end)
-    button("Снимок", function()
-        preview = true
-        if not state.active then state.lastError = "Сначала нажми Начать"; return end
-        guiRefresh()
-        add("MANUAL_MARK", {gui = guiSnapshot()})
-        inventorySnapshot("manual: " .. state.tag)
-    end)
-    button("Копировать", function()
-        local text = export()
-        if type(setclipboard) == "function" then
-            setclipboard(text)
-            state.lastError = "Лог скопирован"
-        else
-            preview = false
-            output.Text = text:sub(1, 180000)
-            state.lastError = #text > 180000 and "Большой лог: используй Сохранить" or "Выдели текст лога и скопируй вручную"
-        end
-    end)
-    button("Сохранить", function()
-        if type(writefile) ~= "function" then state.lastError = "Запись файла недоступна; используй Копировать"; return end
-        local filename = "RockBugHub_Trade_" .. tostring(DateTime.now().UnixTimestampMillis) .. ".jsonl"
-        writefile(filename, export())
-        state.lastError = "Сохранено: " .. filename
-    end)
-    button("Очистить", function()
-        if state.active or state.inventoryBusy then state.lastError = "Сначала поставь запись на паузу"; return end
-        table.clear(state.entries)
-        state.bytes, state.dropped, state.lastError = 0, 0, nil
-        preview = true
-        output.Text = "Лог очищен."
-    end)
-    button("Скрыть", function() panel.Visible = false end)
-    local close = make("TextButton", {Text = "×", Position = UDim2.new(1, -42, 0, 8),
-        Size = UDim2.fromOffset(30, 28), BackgroundTransparency = 1, TextColor3 = color(235, 211, 244),
-        Font = Enum.Font.GothamBold, TextSize = 22}, panel)
-    connect(close.Activated, function() state:Pause(); panel.Visible = false end)
-    connect(launcher.Activated, function() panel.Visible = not panel.Visible end)
-    local drag
-    local function dragStart(obj, input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-            drag = {object = obj, start = input.Position, position = obj.Position, input = input}
-        end
-    end
-    connect(title.InputBegan, function(input) dragStart(panel, input) end)
-    connect(launcher.InputBegan, function(input) dragStart(launcher, input) end)
-    connect(UIS.InputChanged, function(input)
-        if not drag then return end
-        if input.UserInputType == Enum.UserInputType.MouseMovement or input == drag.input then
-            local delta = input.Position - drag.start
-            drag.object.Position = UDim2.new(drag.position.X.Scale, drag.position.X.Offset + delta.X,
-                drag.position.Y.Scale, drag.position.Y.Offset + delta.Y)
-        end
-    end)
-    connect(UIS.InputEnded, function(input)
-        if drag and (input == drag.input or input.UserInputType == Enum.UserInputType.MouseButton1) then drag = nil end
-    end)
-    connect(runtime.uiRoot.Destroying, function() state:Destroy() end)
-    connect(RS.DescendantAdded, function(obj) if state.active then pcall(watchRemote, obj) end end)
-    local camera = workspace.CurrentCamera
-    local function resize()
-        camera = workspace.CurrentCamera
-        if not camera then return end
-        local viewport = camera.ViewportSize
-        scale.Scale = math.min(1, math.max(0.3, (viewport.X - 20) / 480), math.max(0.3, (viewport.Y - 60) / 470))
-    end
-    if camera then connect(camera:GetPropertyChangedSignal("ViewportSize"), resize) end
-    resize()
-    add("MODULE_READY", {active = false, no_automatic_trades = true})
-    task.spawn(function()
-        local tick = 0
-        while state.alive and runtime.alive do
-            local ok, err = pcall(function()
-                tick = tick + 1
-                if state.active then
-                    if tick % 5 == 0 then guiRefresh() end
-                    local snapshot = guiSnapshot()
-                    local json = encode(snapshot)
-                    if json and json ~= state.lastGui then
-                        state.lastGui = json
-                        add("GUI_CHANGED", snapshot)
-                    end
-                end
-                record.Text = state.active and "Пауза" or "Начать"
-                launcher.Text = state.active and "● ТРЕЙД-ЛОГ" or "ТРЕЙД-ЛОГ"
-                status.Text = (state.active and "ЗАПИСЬ" or "ПАУЗА") .. " · " .. #state.entries
-                    .. " записей · " .. state.dropped .. " вытеснено\n"
-                    .. (state.lastError or state.hookStatus)
-                if panel.Visible and preview then
-                    local tail = {}
-                    for index = math.max(1, #state.entries - 7), #state.entries do
-                        local entry = state.entries[index]
-                        table.insert(tail, entry.json:sub(1, 800))
-                    end
-                    output.Text = table.concat(tail, "\n\n")
-                end
-            end)
-            if not ok then state.lastError = tostring(err) end
-            task.wait(0.4)
-        end
-        state:Destroy()
-    end)
-end)
-
-
--- RBH MINI PET TRANSFER v1.1 — HIDDEN PETS, TEST ONLY
--- Deliberate user actions only: sendTradeRequest and offerItem.
--- No acceptance, replay loop, gift fallback, or mutation of inventory/trade flags.
-task.defer(function()
-    local env = type(getgenv) == "function" and getgenv() or _G
-    local runtime = env.RockBugRuntime
-    if not runtime or not runtime.alive or not runtime.uiRoot then return end
-    if env.RockBugMiniTransfer then pcall(function() env.RockBugMiniTransfer:Destroy() end) end
-    local Players = game:GetService("Players")
-    local RS = game:GetService("ReplicatedStorage")
-    local Http = game:GetService("HttpService")
-    local UIS = game:GetService("UserInputService")
-    local player = Players.LocalPlayer
-    local pg = player and player:FindFirstChildOfClass("PlayerGui")
-    if not pg then return end
-    local state = {
-        alive = true, target = nil, pet = nil, partnerConfirmed = false,
-        pending = nil, lastOffer = nil, request = nil, generation = 0, nextRequest = 0, nextOffer = 0, events = {},
-        hiddenNames = {}, hiddenNamesText = "",
-        tried = setmetatable({}, {__mode="k"}), ids = setmetatable({}, {__mode="k"}),
-        nextId = 0, connections = {}, remote = nil, remoteConnection = nil,
-        status = "Сначала выбери игрока. Автоподтверждения сделки здесь нет.",
-        pickerKind = nil, options = {}, filter = "", page = 1, rows = {},
-    }
-    env.RockBugMiniTransfer = state
-    runtime.MiniPetTransfer = state
-    local function connect(signal, fn)
-        local connection = signal:Connect(fn)
-        table.insert(state.connections, connection)
-        return connection
-    end
-    local function fullName(obj)
-        local ok, name = pcall(function() return obj:GetFullName() end)
-        return ok and name or tostring(obj)
-    end
-    local function describe(obj)
-        if not state.ids[obj] then state.nextId = state.nextId + 1; state.ids[obj] = state.nextId end
-        local row = {id = state.ids[obj], name = obj.Name, path = fullName(obj), class = obj.ClassName}
-        pcall(function() if obj:IsA("ValueBase") then row.value = tostring(obj.Value):sub(1, 300) end end)
-        return row
-    end
-    local function brief(value, depth, seen)
-        depth, seen = depth or 0, seen or {}
-        if value == nil then return {type="nil"} end
-        local kind = typeof(value)
-        if kind == "Instance" then return describe(value) end
-        if kind == "string" then return value:sub(1, 600) end
-        if kind == "number" then return tostring(value) end
-        if kind == "boolean" then return value end
-        if kind ~= "table" then return tostring(value):sub(1, 200) end
-        if depth >= 4 or seen[value] then return {truncated=true} end
-        seen[value] = true
-        local rows = {}
-        for key, item in pairs(value) do
-            if #rows >= 40 then table.insert(rows, {truncated=true}); break end
-            table.insert(rows, {key=brief(key, depth+1, seen), value=brief(item, depth+1, seen)})
-        end
-        seen[value] = nil
-        return rows
-    end
-    local function log(kind, data)
-        table.insert(state.events, {utc_ms=DateTime.now().UnixTimestampMillis, kind=kind, data=data})
-        if #state.events > 100 then table.remove(state.events, 1) end
-    end
-    local function message(text)
-        state.status = text
-        if state.statusLabel then state.statusLabel.Text = text end
-    end
-    local function belongs(obj, root)
-        local cursor = obj
-        while cursor do if cursor == root then return true end; cursor = cursor.Parent end
-        return false
-    end
-    local function targetValid()
-        return state.target and state.target ~= player and state.target.Parent == Players
-    end
-    local function petValid(pet)
-        local folder = player:FindFirstChild("petsFolder")
-        if not folder or not pet or not pet:IsA("StringValue") or not belongs(pet, folder) then return false end
-        local cursor = pet.Parent
-        while cursor and cursor ~= folder do
-            -- Do not treat StringValue metadata inside a pet as a second pet.
-            if cursor:IsA("StringValue") then return false end
-            cursor = cursor.Parent
-        end
-        return true
-    end
-    local function normalizeName(name)
-        return string.lower(tostring(name):match("^%s*(.-)%s*$"))
-    end
-    function state:SetHiddenNames(text)
-        if self.pending then message("Дождись результата отправки."); return false end
-        if type(text)~="string" or #text>4096 then message("Список слишком длинный (максимум 4096 символов)."); return false end
-        local names, display={}, {}
-        for name in text:gmatch("[^,;\r\n]+") do
-            name=name:match("^%s*(.-)%s*$")
-            local key=normalizeName(name)
-            if #name>120 then message("Слишком длинное имя пета."); return false end
-            if key~="" and not names[key] then
-                if #display>=100 then message("Максимум 100 имён."); return false end
-                names[key]=true; table.insert(display,name)
-            end
-        end
-        if #display==0 then message("Укажи хотя бы одно имя скрытого пета."); return false end
-        self.hiddenNames=names
-        self.hiddenNamesText=table.concat(display,"; ")
-        env.RockBugHiddenPetNames=self.hiddenNamesText
-        if self.pet and not names[normalizeName(self.pet.Name)] then
-            self.pet=nil; self.partnerConfirmed=false
-            if self.petButton then self.petButton.Text="3. Выбрать скрытого пета" end
-            if self.confirmButton then self.confirmButton.Text="□ Я проверил собеседника в открытом трейде" end
-        end
-        log("HIDDEN_FILTER",{names=display,source="user list, not server tradeability metadata"})
-        return true
-    end
-    local function isHidden(pet)
-        return petValid(pet) and state.hiddenNames[normalizeName(pet.Name)]==true
-    end
-    local function requestValid()
-        local r=state.request
-        return r and targetValid() and r.target==state.target and r.remote==state.remote
-            and r.remote.Parent~=nil and os.clock()-r.sentAt<=120
-    end
-    if not state:SetHiddenNames(type(env.RockBugHiddenPetNames)=="string" and env.RockBugHiddenPetNames or "Nuclear Hydra") then
-        state:SetHiddenNames("Nuclear Hydra")
-    end
-
-    local function tradeGuiSnapshot()
-        local rows, queue, head, limited={}, {{obj=pg,inside=false,visible=true}}, 1, false
-        local function excluded(obj)
-            local name=string.lower(tostring(obj.Name))
-            return obj==runtime.uiRoot or obj==state.gui
-                or name:find("rockbug",1,true) or name:find("chat",1,true)
-        end
-        -- Breadth-first discovery: a huge unrelated UI branch cannot consume
-        -- the whole budget before its sibling trade window is inspected.
-        while head<=#queue and head<=8000 do
-            local item=queue[head]; head=head+1
-            local obj=item.obj
-            if not excluded(obj) then
-                local name=string.lower(tostring(obj.Name))
-                local inside=item.inside or name:find("trad",1,true) or name:find("обмен",1,true) or name:find("трейд",1,true)
-                local visible=item.visible
-                if obj:IsA("GuiObject") then visible=visible and obj.Visible end
-                if obj:IsA("LayerCollector") then visible=visible and obj.Enabled end
-                if inside then
-                    if #rows<160 then
-                        local row={path=fullName(obj),class=obj.ClassName,visible=visible==true}
-                        if obj:IsA("TextLabel") or obj:IsA("TextButton") then row.text=obj.Text:sub(1,400) end
-                        if obj:IsA("ObjectValue") and typeof(obj.Value)=="Instance" then row.instance=describe(obj.Value) end
-                        if obj:IsA("ImageLabel") or obj:IsA("ImageButton") then row.image=obj.Image end
-                        table.insert(rows,row)
-                    else limited=true end
-                end
-                for _, child in ipairs(obj:GetChildren()) do
-                    if not excluded(child) then
-                        if #queue>=8000 then limited=true; break end
-                        table.insert(queue,{obj=child,inside=inside,visible=visible})
-                    end
-                end
-            end
-        end
-        return {nodes=rows,truncated=limited or head<=#queue,visited=head-1,
-            note="client GUI evidence only; trade partner and server acceptance are not inferred"}
-    end
-    local function observeRemote()
-        local folder = RS:FindFirstChild("rEvents")
-        local remote = folder and folder:FindFirstChild("tradingEvent")
-        if not remote or not remote:IsA("RemoteEvent") then return nil end
-        if state.remote ~= remote then
-            if state.remoteConnection then state.remoteConnection:Disconnect() end
-            state.remote = remote
-            state.remoteConnection = remote.OnClientEvent:Connect(function(...)
-                if not state.alive then return end
-                local args = table.pack(...)
-                local packed = {n=args.n, values={}}
-                for i=1,math.min(args.n,32) do packed.values[i]=brief(args[i]) end
-                log("SERVER_EVENT", packed)
-                if args[1]=="tradeComplete" then
-                    local ticket=state.lastOffer
-                    state.request=nil; state.partnerConfirmed=false
-                    if state.confirmButton then state.confirmButton.Text="□ Я проверил собеседника в открытом трейде" end
-                    if ticket and not ticket.completed then
-                        ticket.completed=true
-                        if state.pending==ticket then state.pending=nil end
-                        task.delay(1,function()
-                            if not state.alive then return end
-                            log("AFTER_TRADE_COMPLETE",{pet=describe(ticket.pet),target_user_selected=describe(ticket.target),
-                                still_in_inventory=petValid(ticket.pet),gui_after=tradeGuiSnapshot(),
-                                result="unverified",note="tradeComplete has no pet list; recipient inventory was not verified"})
-                            message("Игра сообщила о завершении трейда. Проверь пета у получателя — это событие само не доказывает передачу.")
-                        end)
-                    end
-                elseif args[1]=="tradeAccepted" and state.request then
-                    -- The observed event can omit the peer. Never use it as
-                    -- automatic partner confirmation or trigger another offer.
-                    for i=2,args.n do
-                        if typeof(args[i])=="Instance" and args[i]:IsA("Player")
-                            and args[i]~=player and args[i]~=state.request.target then
-                            state.request=nil; state.partnerConfirmed=false
-                            if state.confirmButton then state.confirmButton.Text="□ Я проверил собеседника в открытом трейде" end
-                            message("Событие обмена указывает другого игрока. Выбери получателя и отправь запрос заново.")
-                            break
-                        end
-                    end
-                end
-                if state.pending then
-                    state.pending.events = state.pending.events + 1
-                    local text=type(args[1])=="string" and args[1]:sub(1,120) or "(без текстового типа)"
-                    message("Событие игры: "..text..". Это ещё не подтверждение передачи. Проверь слот у второго игрока.")
-                end
-            end)
-        end
-        return remote
-    end
-    function state:ListPets()
-        local root=player:FindFirstChild("petsFolder")
-        local list={}
-        if root then
-            for _, obj in ipairs(root:GetDescendants()) do
-                if isHidden(obj) then
-                    local data=describe(obj)
-                    table.insert(list,{instance=obj,id=data.id,
-                        label=obj.Name.."  #"..data.id.." · "..tostring(obj.Parent.Name), path=data.path})
-                end
-            end
-        end
-        table.sort(list,function(a,b)
-            if a.label==b.label then return a.id<b.id end
-            return string.lower(a.label)<string.lower(b.label)
-        end)
-        return list
-    end
-    function state:ChoosePlayer(target)
-        if not target or target==player or target.Parent~=Players then message("Игрок уже вышел с сервера."); return false end
-        if self.pending then message("Дождись результата текущей пробы."); return false end
-        self.target=target
-        self.request=nil
-        self.partnerConfirmed=false
-        self.generation=self.generation+1
-        self.targetButton.Text="Игрок: @"..target.Name.." · "..target.DisplayName
-        self.confirmButton.Text="□ Я проверил собеседника в открытом трейде"
-        message("Получатель выбран: @"..target.Name..". Запрос обмена отправляется отдельной кнопкой.")
-        return true
-    end
-    function state:ChoosePet(pet)
-        if not petValid(pet) then message("Этот экземпляр уже не в твоём инвентаре."); return false end
-        if not isHidden(pet) then message("Пет не входит в твой список скрытых. Обычные петы здесь не отправляются."); return false end
-        if self.pending then message("Дождись результата текущей пробы."); return false end
-        self.pet=pet
-        local data=describe(pet)
-        self.petButton.Text="Пет: "..pet.Name.."  #"..data.id.." · "..pet.Parent.Name
-        message("Выбран конкретный экземпляр. Наличие в списке не означает, что сервер разрешает передачу.")
-        return true
-    end
-    function state:ConfirmPartner()
-        if not targetValid() then message("Сначала выбери игрока."); return false end
-        if self.pending then message("Дождись результата текущей пробы."); return false end
-        if not requestValid() then message("Сначала отправь запрос выбранному игроку. Старое подтверждение не подходит."); return false end
-        if os.clock()-self.request.sentAt<0.5 then message("Дождись открытия обмена и проверь имя собеседника."); return false end
-        self.partnerConfirmed=not self.partnerConfirmed
-        self.confirmButton.Text=(self.partnerConfirmed and "✓ " or "□ ").."Открыт трейд именно с @"..self.target.Name
-        return self.partnerConfirmed
-    end
-    function state:RequestTrade()
-        if not self.alive or not runtime.alive then return false end
-        if self.pending then message("Дождись результата текущей пробы."); return false end
-        if not targetValid() then message("Выбери игрока с этого сервера."); return false end
-        if os.clock()<self.nextRequest then message("Подожди 10 секунд между запросами."); return false end
-        local remote=observeRemote()
-        if not remote then message("tradingEvent не найден. Запрос не отправлен."); return false end
-        self.nextRequest=os.clock()+10
-        self.partnerConfirmed=false
-        self.confirmButton.Text="□ Я проверил собеседника в открытом трейде"
-        self.request={target=self.target,remote=remote,sentAt=os.clock()}
-        log("REQUEST", {target=describe(self.target)})
-        local ok, err=pcall(function() remote:FireServer("sendTradeRequest",self.target) end)
-        if not ok then self.request=nil; log("LOCAL_ERROR",{error=tostring(err)}); message("Ошибка отправки: "..tostring(err):sub(1,160)); return false end
-        message("Запрос отправлен @"..self.target.Name..". Он должен принять его в игре. Затем проверь имя собеседника.")
-        return true
-    end
-    function state:OfferPet()
-        if not self.alive or not runtime.alive then return false end
-        if self.pending then message("Одна проба уже отправлена. Повторов нет."); return false end
-        if not targetValid() then self.partnerConfirmed=false; message("Получатель отсутствует. Выбери игрока заново."); return false end
-        if not requestValid() then self.partnerConfirmed=false; message("Нет свежего запроса этому игроку. Сначала открой обмен через кнопку 2."); return false end
-        if not self.partnerConfirmed then message("Открой обмен и отметь проверку собеседника. offerItem действует на текущий трейд."); return false end
-        if not petValid(self.pet) then message("Питомец исчез или переместился. Обнови выбор."); return false end
-        if not isHidden(self.pet) then message("Этот пет не в списке скрытых. Отправка заблокирована."); return false end
-        if self.tried[self.pet] then message("Этот экземпляр уже пробовали. Повтор заблокирован до ручного сброса пробы."); return false end
-        if os.clock()<self.nextOffer then message("Подожди перед следующей пробой."); return false end
-        if type(runtime.isPetCurrentlyEquipped)=="function" then
-            local ok,equipped=pcall(runtime.isPetCurrentlyEquipped,self.pet)
-            if not ok then message("Не удалось проверить экипировку; проба не отправлена."); return false end
-            if equipped then message("Этот пет экипирован. Сними его в игре сам — экипировку скрипт не меняет."); return false end
-        end
-        local remote=observeRemote()
-        if not remote then message("tradingEvent не найден. Проба не отправлена."); return false end
-        if not self.request or self.request.remote~=remote then self.partnerConfirmed=false; message("Серверный объект обмена изменился. Отправь запрос заново."); return false end
-        local pet, target=self.pet,self.target
-        local ticket={pet=pet,target=target,events=0,generation=self.generation}
-        self.pending=ticket
-        self.lastOffer=ticket
-        self.tried[pet]=true
-        self.partnerConfirmed=false
-        self.confirmButton.Text="□ Я проверил собеседника в открытом трейде"
-        self.nextOffer=os.clock()+6
-        log("OFFER_ATTEMPT",{pet=describe(pet),target_user_selected=describe(target),request_age=os.clock()-self.request.sentAt,hidden_filter="user list",gui_before=tradeGuiSnapshot()})
-        local ok,err=pcall(function() remote:FireServer("offerItem",pet) end)
-        if not ok then
-            self.pending=nil
-            log("LOCAL_ERROR",{error=tostring(err)})
-            message("Локальная ошибка отправки: "..tostring(err):sub(1,160))
-            return false
-        end
-        message("offerItem отправлен один раз. Серверное принятие и передача пока не подтверждены.")
-        task.delay(0.5,function()
-            if self.alive and self.pending==ticket then log("GUI_AFTER_OFFER",tradeGuiSnapshot()) end
-        end)
-        task.delay(6,function()
-            if not self.alive or self.pending~=ticket then return end
-            self.pending=nil
-            log("OFFER_OBSERVATION",{pet=describe(pet),incoming_events=ticket.events,
-                still_in_inventory=petValid(pet),gui_after=tradeGuiSnapshot(),result="unverified"})
-            message(ticket.events==0
-                and "За 6 секунд событий трейда нет. Это не доказанный отказ. Проверь слот у второго игрока; автоповтора нет."
-                or "Есть события игры, но передача не подтверждена. Проверь слот у второго игрока. Принятие сделки — только в игре.")
-        end)
-        return true
-    end
-    function state:ResetAttempt()
-        if self.pending then message("Сначала дождись завершения пробы."); return false end
-        self.generation=self.generation+1
-        self.tried=setmetatable({}, {__mode="k"})
-        self.partnerConfirmed=false
-        self.confirmButton.Text="□ Я проверил собеседника в открытом трейде"
-        log("MANUAL_RESET",{})
-        message("Проба сброшена. Ничего в игровом трейде не отменено. Перед новой попыткой проверь обмен и собеседника.")
-        return true
-    end
-    function state:Export()
-        local ok,result=pcall(function()
-            return Http:JSONEncode({format="RBH_MINI_TRANSFER_2",events=self.events,hidden_names=self.hiddenNamesText,
-                note="Observed requests/events only, not proof of server acceptance. No automatic final acceptance."})
-        end)
-        if not ok then message("Не удалось собрать отчёт: "..tostring(result)); return nil end
-        return result
-    end
-    function state:Destroy()
-        if not self.alive then return end
-        self.alive=false
-        self.pending=nil
-        self.request=nil
-        self.partnerConfirmed=false
-        if self.remoteConnection then self.remoteConnection:Disconnect() end
-        for _, connection in ipairs(self.connections) do connection:Disconnect() end
-        if self.gui then self.gui:Destroy() end
-        if env.RockBugMiniTransfer==self then env.RockBugMiniTransfer=nil end
-        if runtime.MiniPetTransfer==self then runtime.MiniPetTransfer=nil end
-    end
-
-    local C=Color3.fromRGB
-    local function make(class,properties,parent)
-        local obj=Instance.new(class)
-        for key,value in pairs(properties) do obj[key]=value end
-        obj.Parent=parent
-        return obj
-    end
-    local function rounded(obj) make("UICorner",{CornerRadius=UDim.new(0,8)},obj); return obj end
-    local function button(parent,text,y,callback,transient)
-        local obj=rounded(make("TextButton",{Text=text,Position=UDim2.fromOffset(12,y),
-            Size=UDim2.new(1,-24,0,34),BackgroundColor3=C(43,33,63),TextColor3=C(234,223,255),
-            Font=Enum.Font.GothamBold,TextSize=12,TextWrapped=true,BorderSizePixel=0},parent))
-        local function activate()
-            local ok,err=pcall(callback)
-            if not ok then message("Ошибка мини-окна: "..tostring(err):sub(1,150)) end
-        end
-        if transient then obj.Activated:Connect(activate) else connect(obj.Activated,activate) end
-        return obj
-    end
-    local gui=make("ScreenGui",{Name="RockBugHubMiniTransfer",ResetOnSpawn=false,
-        DisplayOrder=runtime.uiRoot.DisplayOrder+3,ZIndexBehavior=Enum.ZIndexBehavior.Sibling},pg)
-    state.gui=gui
-    local launcher=button(gui,"СКРЫТЫЕ ПЕТЫ",0,function()
-        state.panel.Visible=not state.panel.Visible
-        if not state.panel.Visible then state.partnerConfirmed=false; state.confirmButton.Text="□ Я проверил собеседника в открытом трейде" end
-    end)
-    launcher.Size=UDim2.fromOffset(126,32)
-    launcher.Position=UDim2.new(1,-136,0.5,22)
-    local panel=rounded(make("Frame",{Name="MiniTransfer",Visible=false,AnchorPoint=Vector2.new(0.5,0.5),
-        Position=UDim2.fromScale(0.5,0.5),Size=UDim2.fromOffset(470,472),
-        BackgroundColor3=C(17,19,29),BorderSizePixel=0},gui))
-    state.panel=panel
-    make("UIStroke",{Color=C(169,120,255),Thickness=1.5},panel)
-    local scale=make("UIScale",{Scale=1},panel)
-    local title=make("TextLabel",{Text="СКРЫТЫЕ ПЕТЫ · СЕРВЕРНЫЙ ТРЕЙД",Position=UDim2.fromOffset(12,8),
-        Size=UDim2.new(1,-60,0,28),BackgroundTransparency=1,TextColor3=C(238,225,255),
-        Font=Enum.Font.GothamBold,TextSize=15,TextXAlignment=Enum.TextXAlignment.Left},panel)
-    make("TextLabel",{Text="Выбор по твоему списку скрытых (изначально Nuclear Hydra).\nОтправка в открытый трейд. Сервер может отклонить пета.",
-        Position=UDim2.fromOffset(12,39),Size=UDim2.new(1,-24,0,42),BackgroundTransparency=1,
-        TextColor3=C(186,181,205),Font=Enum.Font.Gotham,TextSize=12,TextWrapped=true},panel)
-    local showPicker
-    state.targetButton=button(panel,"1. Выбрать игрока с сервера",90,function() showPicker("players") end)
-    button(panel,"2. Отправить запрос обмена",130,function() state:RequestTrade() end)
-    state.petButton=button(panel,"3. Выбрать скрытого пета",170,function() showPicker("pets") end)
-    state.confirmButton=button(panel,"□ Я проверил собеседника в открытом трейде",214,function() state:ConfirmPartner() end)
-    button(panel,"4. Отправить выбранного пета в обмен",254,function() state:OfferPet() end)
-    state.statusLabel=make("TextLabel",{Text=state.status,Position=UDim2.fromOffset(12,297),
-        Size=UDim2.new(1,-24,0,64),BackgroundTransparency=1,TextColor3=C(214,200,247),
-        Font=Enum.Font.Gotham,TextSize=12,TextWrapped=true,TextYAlignment=Enum.TextYAlignment.Top},panel)
-    local copy=button(panel,"Копировать отчёт",365,function()
-        local report=state:Export()
-        if not report then return end
-        if type(setclipboard)=="function" then setclipboard(report); message("Отчёт скопирован. Он содержит только наблюдения, не вывод об успехе.")
-        elseif type(writefile)=="function" then
-            local filename="RockBugHub_Transfer_"..DateTime.now().UnixTimestampMillis..".json"
-            writefile(filename,report); message("Отчёт сохранён в файлы исполнителя: "..filename)
-        else message("Буфер/файлы недоступны. Отчёт доступен через RockBugRuntime.MiniPetTransfer:Export().") end
-    end)
-    local reset=button(panel,"Сбросить пробу",405,function() state:ResetAttempt() end)
-    local close=button(panel,"×",8,function()
-        panel.Visible=false; state.partnerConfirmed=false
-        state.confirmButton.Text="□ Я проверил собеседника в открытом трейде"
-    end)
-    close.Position=UDim2.new(1,-40,0,8);close.Size=UDim2.fromOffset(28,28)
-
-    local picker=rounded(make("Frame",{Name="Picker",Visible=false,Size=UDim2.fromScale(1,1),
-        BackgroundColor3=C(20,21,33),BorderSizePixel=0},panel))
-    local search=rounded(make("TextBox",{Text="",PlaceholderText="Поиск по имени / пути / #номеру",
-        Position=UDim2.fromOffset(12,48),Size=UDim2.new(1,-24,0,32),ClearTextOnFocus=false,
-        BackgroundColor3=C(34,33,50),TextColor3=C(230,224,244),TextSize=12,Font=Enum.Font.Gotham,
-        BorderSizePixel=0},picker))
-    local pickerTitle=make("TextLabel",{Position=UDim2.fromOffset(12,8),Size=UDim2.new(1,-54,0,28),
-        BackgroundTransparency=1,Font=Enum.Font.GothamBold,TextSize=13,TextColor3=C(230,222,249)},picker)
-    local hiddenNamesLabel=make("TextLabel",{Text="Скрытые петы — имена через ;",Position=UDim2.fromOffset(12,84),
-        Size=UDim2.new(1,-24,0,16),BackgroundTransparency=1,TextColor3=C(186,181,205),
-        Font=Enum.Font.Gotham,TextSize=11,TextXAlignment=Enum.TextXAlignment.Left},picker)
-    local hiddenNamesBox=rounded(make("TextBox",{Text=state.hiddenNamesText,
-        PlaceholderText="Скрытые петы: имена через ;",Position=UDim2.fromOffset(12,104),
-        Size=UDim2.new(1,-24,0,32),ClearTextOnFocus=false,BackgroundColor3=C(34,33,50),
-        TextColor3=C(230,224,244),TextSize=12,Font=Enum.Font.Gotham,BorderSizePixel=0},picker))
-    state.hiddenNamesBox=hiddenNamesBox
-    local list=make("ScrollingFrame",{Position=UDim2.fromOffset(12,144),Size=UDim2.new(1,-24,1,-236),
-        BackgroundTransparency=1,BorderSizePixel=0,CanvasSize=UDim2.new(),ScrollBarThickness=5,
-        AutomaticCanvasSize=Enum.AutomaticSize.Y},picker)
-    make("UIListLayout",{Padding=UDim.new(0,5),SortOrder=Enum.SortOrder.LayoutOrder},list)
-    local renderPicker
-    renderPicker=function()
-        for _, row in ipairs(state.rows) do row:Destroy() end
-        state.rows={}
-        local matching={}
-        local needle=string.lower(search.Text)
-        for _, option in ipairs(state.options) do
-            if needle=="" or string.find(string.lower(option.label.." "..(option.path or "")),needle,1,true) then table.insert(matching,option) end
-        end
-        local pages=math.max(1,math.ceil(#matching/60))
-        state.page=math.clamp(state.page,1,pages)
-        pickerTitle.Text=(state.pickerKind=="pets" and "СКРЫТЫЕ ПО СПИСКУ" or "ИГРОКИ").." · "..#matching.." · "..state.page.."/"..pages
-        for index=(state.page-1)*60+1,math.min(#matching,state.page*60) do
-            local option=matching[index]
-            local row=button(list,option.label..(option.path and "\n"..option.path or ""),0,function()
-                local ok=state.pickerKind=="pets" and state:ChoosePet(option.instance) or nil
-                if state.pickerKind=="players" then ok=state:ChoosePlayer(option.instance) end
-                if ok then picker.Visible=false end
-            end,true)
-            row.Size=UDim2.new(1,-8,0,46);row.LayoutOrder=index
-            table.insert(state.rows,row)
-        end
-        list.CanvasPosition=Vector2.new(0,0)
-    end
-    showPicker=function(kind)
-        if state.pending then message("Дождись результата пробы."); return end
-        state.pickerKind=kind;state.page=1;state.options={}
-        hiddenNamesLabel.Visible=kind=="pets"
-        hiddenNamesBox.Visible=kind=="pets"
-        list.Position=UDim2.fromOffset(12,kind=="pets" and 144 or 88)
-        list.Size=UDim2.new(1,-24,1,kind=="pets" and -236 or -180)
-        hiddenNamesBox.Text=state.hiddenNamesText
-        if kind=="pets" then state.options=state:ListPets()
-        else
-            for _, target in ipairs(Players:GetPlayers()) do
-                if target~=player then table.insert(state.options,{instance=target,label="@"..target.Name.." · "..target.DisplayName}) end
-            end
-            table.sort(state.options,function(a,b)return a.label<b.label end)
-        end
-        search.Text=""
-        renderPicker()
-        picker.Visible=true
-    end
-    connect(hiddenNamesBox.FocusLost,function()
-        if state:SetHiddenNames(hiddenNamesBox.Text) then
-            hiddenNamesBox.Text=state.hiddenNamesText
-            if state.pickerKind=="pets" then state.options=state:ListPets();state.page=1;renderPicker() end
-        else hiddenNamesBox.Text=state.hiddenNamesText end
-    end)
-    connect(search:GetPropertyChangedSignal("Text"),function() state.page=1;renderPicker() end)
-    local prev=button(picker,"←",388,function() state.page=math.max(1,state.page-1);renderPicker() end)
-    prev.Size=UDim2.new(0.3,-12,0,32)
-    local refresh=button(picker,"Обновить",388,function()showPicker(state.pickerKind)end)
-    refresh.Position=UDim2.new(0.3,0,0,388);refresh.Size=UDim2.new(0.4,0,0,32)
-    local nextPage=button(picker,"→",388,function()state.page=state.page+1;renderPicker()end)
-    nextPage.Position=UDim2.new(0.7,8,0,388);nextPage.Size=UDim2.new(0.3,-20,0,32)
-    button(picker,"Назад",430,function()picker.Visible=false end)
-    local drag
-    connect(title.InputBegan,function(input)
-        if input.UserInputType==Enum.UserInputType.MouseButton1 or input.UserInputType==Enum.UserInputType.Touch then
-            drag={input=input,start=input.Position,position=panel.Position}
-        end
-    end)
-    connect(UIS.InputChanged,function(input)
-        if drag and (input==drag.input or input.UserInputType==Enum.UserInputType.MouseMovement) then
-            local d=input.Position-drag.start
-            panel.Position=UDim2.new(drag.position.X.Scale,drag.position.X.Offset+d.X,drag.position.Y.Scale,drag.position.Y.Offset+d.Y)
-        end
-    end)
-    connect(UIS.InputEnded,function(input)if drag and (input==drag.input or input.UserInputType==Enum.UserInputType.MouseButton1)then drag=nil end end)
-    local camera=workspace.CurrentCamera
-    local function resize()
-        camera=workspace.CurrentCamera
-        if camera then
-            scale.Scale=math.min(1,math.max(0.3,(camera.ViewportSize.X-20)/470),math.max(0.3,(camera.ViewportSize.Y-60)/472))
-        end
-    end
-    if camera then connect(camera:GetPropertyChangedSignal("ViewportSize"),resize) end
-    resize()
-    connect(Players.PlayerRemoving,function(target)
-        if state.target==target then state.request=nil;state.partnerConfirmed=false;message("Выбранный игрок вышел. Передача заблокирована.") end
-    end)
-    observeRemote()
-    connect(runtime.uiRoot.Destroying,function()state:Destroy()end)
-end)
