@@ -4,7 +4,7 @@ pcall(function()i=game:GetService("NetworkClient")end)if not game:IsLoaded()then
 local j=a.LocalPlayer;
 while not j do task.wait()j=a.LocalPlayer end;
 local k=j:WaitForChild("PlayerGui",60)if not k then warn("[RockBugHub] PlayerGui was not created")pcall(function()g:SetCore("SendNotification",{Title="RockBugHub",Text="Ошибка запуска: PlayerGui не найден",Duration=8})end)return end;
-local l="RockBugHub_TEST_v4_22_BOSS_T4"local m="4.22BOSS-T4"local n=type(getgenv)=="function"and getgenv()or _G;
+local l="RockBugHub_TEST_v4_22_BOSS_T5"local m="4.22BOSS-T5"local n=type(getgenv)=="function"and getgenv()or _G;
 do
     -- Retire the old experimental windows and their listeners on hot reload.
     for _, key in ipairs({"RockBugTradeDiagnostics", "RockBugMiniTransfer"}) do
@@ -1996,7 +1996,7 @@ return function(runtime, api)
         height = 18, interval = 0.10, status = "Выключено", candidates = {},
         nextScan = 0, nextAttack = 0, nextUI = 0, retryAt = 0, noProgress = 0,
         lastTargetHealth = nil, lastOwnHealth = nil, lastTick = nil,
-        attempts = 0, observations = 0, busy = false,
+        attempts = 0, observations = 0, joinUntil = 0, busy = false,
     }
     local function show(message)
         state.status = message
@@ -2115,7 +2115,13 @@ return function(runtime, api)
             state.nextAttack = now
             api.claim(function(health) state:Damage(health) end)
             if not state.enabled then return end
+            if api.join and api.join(info) then
+                state.joinUntil = now + 0.65
+                show("Вхожу на арену физически…")
+                return
+            end
         end
+        if now < state.joinUntil then return end
         if info.healthKnown and state.lastTargetHealth and info.health < state.lastTargetHealth then
             state.observations += 1
             state.noProgress = 0
@@ -2157,8 +2163,9 @@ return function(runtime, api)
         if now >= state.nextUI then
             state.nextUI = now + 0.4
             local healthText = info.healthKnown and tostring(math.ceil(info.health)) or "скрыто сервером"
-            show(("%s • HP %s • %s"):format(info.name, healthText,
-                state.observations > 0 and "HP снижается (источник урона неизвестен)" or "атака идёт…"))
+            local requirement = api.requirement and api.requirement() or nil
+            show(("%s • HP %s • %s"):format(info.name, healthText, requirement
+                or (state.observations > 0 and "HP снижается (источник урона неизвестен)" or "атака идёт…")))
         end
     end
     function state:Tick(now)
@@ -2179,6 +2186,7 @@ do
     local Players, World = a, workspace
     local Collection = game:GetService("CollectionService")
     local saved = nil
+    local knownBoss = setmetatable({}, {__mode = "k"})
     local function isPlayerModel(model)
         for _, player in ipairs(Players:GetPlayers()) do
             if player.Character and (model == player.Character or model:IsDescendantOf(player.Character)) then return true end
@@ -2198,7 +2206,9 @@ do
                 or parent:GetAttribute("IsBoss") == true or Collection:HasTag(parent, "Boss") then marked = true end
             parent = parent.Parent
         end
+        if not marked then marked = knownBoss[model] == true end
         if not marked then return nil end
+        knownBoss[model] = true
         local humanoid = model:FindFirstChildOfClass("Humanoid")
         local root = model:FindFirstChild("HumanoidRootPart") or model.PrimaryPart or model:FindFirstChild("Torso")
             or model:FindFirstChildWhichIsA("BasePart", true)
@@ -2240,6 +2250,32 @@ do
             old.root.Anchored = old.anchored
         end
     end
+    local function findArenaPart(target)
+        local best, bestScore = nil, -math.huge
+        for _, part in ipairs(World:GetDescendants()) do
+            if part:IsA("BasePart") and not part:IsDescendantOf(target.model) then
+                local distance = (part.Position - target.root.Position).Magnitude
+                if distance <= 180 then
+                    local path = (part.Name .. " " .. (part.Parent and part.Parent.Name or "")):lower()
+                    local score = 0
+                    local explicit = false
+                    if path:find("boss", 1, true) then score += 80 explicit = true end
+                    if path:find("arena", 1, true) or path:find("battle", 1, true) then score += 60 explicit = true end
+                    if path:find("join", 1, true) or path:find("trigger", 1, true) or path:find("zone", 1, true) then score += 50 explicit = true end
+                    if explicit and part:FindFirstChildOfClass("TouchTransmitter") then score += 45 end
+                    local horizontal = math.min(part.Size.X, part.Size.Z)
+                    local planar = (Vector2.new(part.Position.X, part.Position.Z)
+                        - Vector2.new(target.root.Position.X, target.root.Position.Z)).Magnitude
+                    local coversBoss = planar <= math.max(part.Size.X, part.Size.Z) * 0.5 + 8
+                    if part.CanCollide and horizontal >= 18 and horizontal <= 160 and coversBoss
+                        and part.Position.Y <= target.root.Position.Y then score += 35 + math.min(25, horizontal * 0.25) end
+                    score -= distance * 0.08
+                    if score > bestScore and score >= 35 then best, bestScore = part, score end
+                end
+            end
+        end
+        return best
+    end
     q.boss = q.bossFactory(q, {
         now = os.clock,
         ownHealth = function() local humanoid = aN() return humanoid and humanoid.Health end,
@@ -2250,7 +2286,21 @@ do
         end,
         scan = function()
             local list, origin = {}, aO()
-            for _, node in ipairs(World:GetDescendants()) do
+            local nodes = World:GetDescendants()
+            for _, node in ipairs(nodes) do
+                if node:IsA("TextLabel") or node:IsA("TextButton") then
+                    local label = tostring(node.Text or ""):lower()
+                    if (label:find("boss", 1, true) or label:find("босс", 1, true))
+                        and not label:find("damage", 1, true) then
+                        local gui = node:FindFirstAncestorWhichIsA("BillboardGui")
+                        local anchor = gui and gui.Adornee
+                        local model = anchor and anchor:FindFirstAncestorWhichIsA("Model")
+                            or node:FindFirstAncestorWhichIsA("Model")
+                        if model then knownBoss[model] = true end
+                    end
+                end
+            end
+            for _, node in ipairs(nodes) do
                 if node:IsA("Model") then
                     local candidate = info(node)
                     if candidate and candidate.alive then
@@ -2263,6 +2313,19 @@ do
             return list
         end,
         info = info,
+        requirement = function()
+            for _, node in ipairs(k:GetDescendants()) do
+                if node:IsA("TextLabel") or node:IsA("TextButton") then
+                    local label = tostring(node.Text or "")
+                    local lower = label:lower()
+                    if (lower:find("игрок", 1, true) or lower:find("player", 1, true))
+                        and (lower:find("драк", 1, true) or lower:find("fight", 1, true)) then
+                        return label:gsub("%s+", " "):sub(1, 70)
+                    end
+                end
+            end
+            return nil
+        end,
         claim = function(onHealth)
             release(false)
             local root, humanoid = aO(), aN()
@@ -2275,6 +2338,26 @@ do
             saved.healthConnection = humanoid.HealthChanged:Connect(onHealth)
         end,
         release = release,
+        join = function(target)
+            assert(saved and saved.root.Parent, "Персонаж сменился")
+            local floor = findArenaPart(target)
+            if not floor then return false end
+            local root = saved.root
+            local offset = math.clamp(math.min(floor.Size.X, floor.Size.Z) * 0.2, 4, 12)
+            local position = floor.Position + Vector3.new(0, floor.Size.Y * 0.5 + 3.2, 0) - target.root.CFrame.LookVector * offset
+            root.CFrame = CFrame.new(position, target.root.Position)
+            root.AssemblyLinearVelocity = Vector3.zero
+            root.AssemblyAngularVelocity = Vector3.zero
+            if type(firetouchinterest) == "function" then
+                for _, contact in ipairs({root, saved.character:FindFirstChild("LeftFoot"), saved.character:FindFirstChild("RightFoot")}) do
+                    if contact and contact:IsA("BasePart") then
+                        firetouchinterest(contact, floor, 0)
+                        firetouchinterest(contact, floor, 1)
+                    end
+                end
+            end
+            return true
+        end,
         hold = function(target, height)
             assert(saved and saved.character == aM() and saved.root.Parent, "Персонаж сменился")
             local size = target.model:GetExtentsSize()
@@ -3197,6 +3280,10 @@ do
     launch.TextSize = 12
     local card, body = oq(q.layoutUI.bossPage, "БОСС • ТЕСТ", 184)
     card.LayoutOrder = 1
+    local location = mt(body, "ЛОКАЦИЯ: STARTER ISLAND • круглая арена за KING HILL", 9, Enum.Font.GothamBold, lw.Accent2)
+    location.Size = UDim2.new(1, -4, 0, 24)
+    location.TextWrapped = true
+    location.LayoutOrder = 0
     local function paintLaunch()
         launch.Text = q.boss.enabled and "■  ОСТАНОВИТЬ АВТОБОССА" or "▶  ЗАПУСТИТЬ АВТОБОССА"
         launch.BackgroundColor3 = q.boss.enabled and lw.Danger or lw.Success
