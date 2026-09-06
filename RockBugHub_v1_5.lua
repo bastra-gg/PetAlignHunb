@@ -4,7 +4,7 @@ pcall(function()i=game:GetService("NetworkClient")end)if not game:IsLoaded()then
 local j=a.LocalPlayer;
 while not j do task.wait()j=a.LocalPlayer end;
 local k=j:WaitForChild("PlayerGui",60)if not k then warn("[RockBugHub] PlayerGui was not created")pcall(function()g:SetCore("SendNotification",{Title="RockBugHub",Text="Ошибка запуска: PlayerGui не найден",Duration=8})end)return end;
-local l="RockBugHub_TEST_v4_22_BOSS_T6"local m="4.22BOSS-T6"local n=type(getgenv)=="function"and getgenv()or _G;
+local l="RockBugHub_TEST_v4_22_BOSS_T7"local m="4.22BOSS-T7"local n=type(getgenv)=="function"and getgenv()or _G;
 do
     -- Retire the old experimental windows and their listeners on hot reload.
     for _, key in ipairs({"RockBugTradeDiagnostics", "RockBugMiniTransfer"}) do
@@ -1996,7 +1996,7 @@ return function(runtime, api)
         height = 18, interval = 0.10, status = "Выключено", candidates = {},
         nextScan = 0, nextAttack = 0, nextUI = 0, retryAt = 0, noProgress = 0,
         lastTargetHealth = nil, lastOwnHealth = nil, lastTick = nil,
-        attempts = 0, observations = 0, entered = false, busy = false,
+        attempts = 0, observations = 0, busy = false,
     }
     local function show(message)
         state.status = message
@@ -2008,7 +2008,6 @@ return function(runtime, api)
         self.generation += 1
         if wasEnabled then pcall(api.release, retreat == true) end
         self.target = nil
-        self.entered = false
         self.lastTick = nil
         if runtime.leverRefs and runtime.leverRefs.boss then
             runtime.leverRefs.boss.Set(false, true)
@@ -2035,8 +2034,7 @@ return function(runtime, api)
         self.retryAt = 0
         self.attempts = 0
         self.observations = 0
-        self.entered = false
-        show(health and health > 0 and "Запущено — ищу только COMMON BOSS…" or "Запущено — жду персонажа и COMMON BOSS…")
+        show(health and health > 0 and "Запущено — ищу текущего босса…" or "Запущено — жду персонажа и текущего босса…")
         return true
     end
     function state:Damage(health)
@@ -2058,7 +2056,6 @@ return function(runtime, api)
         if not ownHealth or ownHealth <= 0 then
             api.release(false)
             state.target = nil
-            state.entered = false
             state.lastOwnHealth = nil
             state.nextAttack = now + state.interval
             if state.status ~= "Автобосс включён — жду живого персонажа…" then
@@ -2073,7 +2070,6 @@ return function(runtime, api)
         if runtime.networkPaused then
             api.release(true)
             state.target = nil
-            state.entered = false
             state.nextScan = 0
             state.nextAttack = now + state.interval
             if state.status ~= "Пауза сети — атаки не отправляются" then
@@ -2087,7 +2083,6 @@ return function(runtime, api)
             if state.target then
                 api.release(true)
                 state.target = nil
-                state.entered = false
                 state.nextScan = 0
             end
             if now >= state.nextScan then state:Scan() end
@@ -2100,8 +2095,8 @@ return function(runtime, api)
                 end
             end
             if not state.target then
-                if state.status ~= "COMMON BOSS не найден — жду появления" then
-                    show("COMMON BOSS не найден — жду появления")
+                if state.status ~= "Активный босс не найден — жду появления" then
+                    show("Активный босс не найден — жду появления")
                 end
                 return
             end
@@ -2112,18 +2107,7 @@ return function(runtime, api)
             state.nextAttack = now
             api.claim(function(health) state:Damage(health) end)
             if not state.enabled then return end
-            state.entered = api.enter and api.enter(info) == true or false
-            show(state.entered and "COMMON BOSS найден • вошёл на арену" or "COMMON BOSS найден")
-        end
-        local requirement = api.requirement and api.requirement() or nil
-        if requirement then
-            state.noProgress = 0
-            state.lastTick = now
-            if now >= state.nextUI then
-                state.nextUI = now + 0.4
-                show("COMMON BOSS • на арене • " .. requirement)
-            end
-            return
+            show(info.name .. " найден — начинаю атаку")
         end
         if info.healthKnown and state.lastTargetHealth and info.health < state.lastTargetHealth then
             state.observations += 1
@@ -2166,7 +2150,7 @@ return function(runtime, api)
         if now >= state.nextUI then
             state.nextUI = now + 0.4
             local healthText = info.healthKnown and tostring(math.ceil(info.health)) or "скрыто сервером"
-            show(("COMMON BOSS • HP %s • %s"):format(healthText,
+            show(("%s • HP %s • %s"):format(info.name, healthText,
                 state.observations > 0 and "HP снижается (источник урона неизвестен)" or "атака идёт…"))
         end
     end
@@ -2188,8 +2172,16 @@ do
     local Players, World = a, workspace
     local saved = nil
     local knownBoss = setmetatable({}, {__mode = "k"})
+    local bossTitles = {
+        commonboss = "COMMON BOSS", uncommonboss = "UNCOMMON BOSS", rareboss = "RARE BOSS",
+        epicboss = "EPIC BOSS", legendaryboss = "LEGENDARY BOSS", mythicboss = "MYTHIC BOSS",
+        mythicalboss = "MYTHICAL BOSS", uniqueboss = "UNIQUE BOSS",
+    }
     local function normalized(value)
         return tostring(value or ""):lower():gsub("[^%w]", "")
+    end
+    local function bossTitle(value)
+        return bossTitles[normalized(value)]
     end
     local function isPlayerModel(model)
         for _, player in ipairs(Players:GetPlayers()) do
@@ -2205,8 +2197,9 @@ do
             if name:find("pet", 1, true) or name:find("preview", 1, true) or name:find("template", 1, true) then return nil end
             parent = parent.Parent
         end
-        if normalized(model.Name) ~= "commonboss" and knownBoss[model] ~= true then return nil end
-        knownBoss[model] = true
+        local title = bossTitle(model.Name) or knownBoss[model]
+        if not title then return nil end
+        knownBoss[model] = title
         local humanoid = model:FindFirstChildOfClass("Humanoid")
         local root = model:FindFirstChild("HumanoidRootPart") or model.PrimaryPart or model:FindFirstChild("Torso")
             or model:FindFirstChildWhichIsA("BasePart", true)
@@ -2231,7 +2224,7 @@ do
         end
         if not root or not root:IsA("BasePart") then return nil end
         health = healthKnown and health or 1
-        return { model = model, name = model.Name, root = root, health = health,
+        return { model = model, name = title, root = root, health = health,
             maxHealth = maxHealth or health, healthKnown = healthKnown,
             alive = model.Parent ~= nil and (not healthKnown or health > 0), humanoid = humanoid }
     end
@@ -2261,17 +2254,18 @@ do
             local nodes = World:GetDescendants()
             for _, node in ipairs(nodes) do
                 if node:IsA("TextLabel") or node:IsA("TextButton") then
-                    if normalized(node.Text) == "commonboss" then
+                    local title = bossTitle(node.Text)
+                    if title then
                         local gui = node:FindFirstAncestorWhichIsA("BillboardGui")
                         local anchor = gui and gui.Adornee
                         local model = anchor and (anchor:IsA("Model") and anchor or anchor:FindFirstAncestorWhichIsA("Model"))
                             or node:FindFirstAncestorWhichIsA("Model")
-                        if model then knownBoss[model] = true end
+                        if model then knownBoss[model] = title end
                     end
                 end
             end
             for _, node in ipairs(nodes) do
-                if node:IsA("Model") and (normalized(node.Name) == "commonboss" or knownBoss[node]) and not seen[node] then
+                if node:IsA("Model") and (bossTitle(node.Name) or knownBoss[node]) and not seen[node] then
                     seen[node] = true
                     local candidate = info(node)
                     if candidate and candidate.alive then
@@ -2284,19 +2278,6 @@ do
             return list[1] and {list[1]} or {}
         end,
         info = info,
-        requirement = function()
-            for _, node in ipairs(k:GetDescendants()) do
-                if node:IsA("TextLabel") or node:IsA("TextButton") then
-                    local label = tostring(node.Text or "")
-                    local lower = label:lower()
-                    if (lower:find("игрок", 1, true) or lower:find("player", 1, true))
-                        and (lower:find("драк", 1, true) or lower:find("fight", 1, true)) then
-                        return label:gsub("%s+", " "):sub(1, 70)
-                    end
-                end
-            end
-            return nil
-        end,
         claim = function(onHealth)
             release(false)
             local root, humanoid = aO(), aN()
@@ -2309,19 +2290,6 @@ do
             saved.healthConnection = humanoid.HealthChanged:Connect(onHealth)
         end,
         release = release,
-        enter = function(target)
-            assert(saved and saved.root.Parent, "Персонаж сменился")
-            local root = saved.root
-            local boxCF, size = target.model:GetBoundingBox()
-            local offset = math.clamp(size.Z * 0.5 + 7, 8, 18)
-            local floorY = boxCF.Position.Y - size.Y * 0.5 + 3.2
-            local position = Vector3.new(boxCF.Position.X, floorY, boxCF.Position.Z)
-                - target.root.CFrame.LookVector * offset
-            root.CFrame = CFrame.new(position, target.root.Position)
-            root.AssemblyLinearVelocity = Vector3.zero
-            root.AssemblyAngularVelocity = Vector3.zero
-            return true
-        end,
         hold = function(target, height)
             assert(saved and saved.character == aM() and saved.root.Parent, "Персонаж сменился")
             local size = target.model:GetExtentsSize()
@@ -3242,7 +3210,7 @@ do
     launch.Size = UDim2.new(1, -4, 0, 42)
     launch.LayoutOrder = 0
     launch.TextSize = 12
-    local card, body = oq(q.layoutUI.bossPage, "COMMON BOSS • ТЕСТ", 184)
+    local card, body = oq(q.layoutUI.bossPage, "ТЕКУЩИЙ БОСС • ТЕСТ", 184)
     card.LayoutOrder = 1
     local location = mt(body, "STARTER ISLAND • круглая арена • VIEW REWARDS", 9, Enum.Font.GothamBold, lw.Accent2)
     location.Size = UDim2.new(1, -4, 0, 24)
@@ -3261,7 +3229,7 @@ do
         end
         paintLaunch()
     end))
-    local targetLabel = mt(body, "ЦЕЛЬ: COMMON BOSS • без выбора ложных объектов", 10, Enum.Font.GothamBold, lw.Text)
+    local targetLabel = mt(body, "ЦЕЛЬ: определяется по точной надписи над активным боссом", 10, Enum.Font.GothamBold, lw.Text)
     targetLabel.Size = UDim2.new(1, -4, 0, 28)
     targetLabel.TextWrapped = true
     targetLabel.TextXAlignment = Enum.TextXAlignment.Left
@@ -3274,7 +3242,7 @@ do
     status.TextWrapped = true
     status.TextXAlignment = Enum.TextXAlignment.Left
     status.LayoutOrder = 3
-    local hint = mt(body, "Скрипт входит на арену по точному COMMON BOSS. Пока игра требует 2 игроков, атака не запускается. После старта боя — фиксация над боссом.", 9, Enum.Font.Gotham, lw.Muted)
+    local hint = mt(body, "Редкость определяется автоматически. Скрипт не выбирает случайные модели: фиксируется над найденным активным боссом и сразу атакует.", 9, Enum.Font.Gotham, lw.Muted)
     hint.Size = UDim2.new(1, -4, 0, 40)
     hint.TextWrapped = true
     hint.LayoutOrder = 4
