@@ -4,7 +4,7 @@ pcall(function()i=game:GetService("NetworkClient")end)if not game:IsLoaded()then
 local j=a.LocalPlayer;
 while not j do task.wait()j=a.LocalPlayer end;
 local k=j:WaitForChild("PlayerGui",60)if not k then warn("[RockBugHub] PlayerGui was not created")pcall(function()g:SetCore("SendNotification",{Title="RockBugHub",Text="Ошибка запуска: PlayerGui не найден",Duration=8})end)return end;
-local l="RockBugHub_TEST_v4_22_BOSS_T7"local m="4.22BOSS-T7"local n=type(getgenv)=="function"and getgenv()or _G;
+local l="RockBugHub_TEST_v4_22_BOSS_T8"local m="4.22BOSS-T8"local n=type(getgenv)=="function"and getgenv()or _G;
 do
     -- Retire the old experimental windows and their listeners on hot reload.
     for _, key in ipairs({"RockBugTradeDiagnostics", "RockBugMiniTransfer"}) do
@@ -1993,10 +1993,10 @@ B(function()e:CaptureController()e:ClickButton2(Vector2.new())end)end))q.bossFac
 return function(runtime, api)
     local state = {
         enabled = false, generation = 0, target = nil,
-        height = 18, interval = 0.10, status = "Выключено", candidates = {},
+        height = 18, interval = 0.08, status = "Выключено", candidates = {},
         nextScan = 0, nextAttack = 0, nextUI = 0, retryAt = 0, noProgress = 0,
-        lastTargetHealth = nil, lastOwnHealth = nil, lastTick = nil,
-        attempts = 0, observations = 0, busy = false,
+        lastTargetHealth = nil, lastOwnHealth = nil, lastBossDamage = nil, damageStart = nil, lastTick = nil,
+        attempts = 0, observations = 0, damageEvents = 0, busy = false,
     }
     local function show(message)
         state.status = message
@@ -2034,16 +2034,25 @@ return function(runtime, api)
         self.retryAt = 0
         self.attempts = 0
         self.observations = 0
+        self.damageEvents = 0
+        self.lastBossDamage = nil
+        self.damageStart = nil
         show(health and health > 0 and "Запущено — ищу текущего босса…" or "Запущено — жду персонажа и текущего босса…")
         return true
     end
     function state:Damage(health)
         if not self.enabled then return end
         if self.lastOwnHealth and health < self.lastOwnHealth then
-            self:Stop("Получен урон — отход и стоп. Неуязвимость не гарантируется", true)
-        else
-            self.lastOwnHealth = health
+            self.damageEvents += 1
+            self.height = math.min(100, self.height + 8)
+            show(("Получен урон — безопасная высота поднята до %d"):format(self.height))
         end
+        self.lastOwnHealth = health
+    end
+    local function readBossDamage()
+        if not api.damage then return nil end
+        local ok, value = pcall(api.damage)
+        return ok and type(value) == "number" and value or nil
     end
     local function step(now)
         if not state.enabled then return end
@@ -2101,6 +2110,8 @@ return function(runtime, api)
                 return
             end
             state.lastTargetHealth = info.health
+            state.lastBossDamage = readBossDamage()
+            state.damageStart = state.lastBossDamage
             state.noProgress = 0
             state.attempts = 0
             state.observations = 0
@@ -2109,21 +2120,25 @@ return function(runtime, api)
             if not state.enabled then return end
             show(info.name .. " найден — начинаю атаку")
         end
-        if info.healthKnown and state.lastTargetHealth and info.health < state.lastTargetHealth then
+        local progressed = info.healthKnown and state.lastTargetHealth and info.health < state.lastTargetHealth
+        local bossDamage = readBossDamage()
+        if bossDamage and state.lastBossDamage and bossDamage > state.lastBossDamage then progressed = true end
+        if progressed then
             state.observations += 1
             state.noProgress = 0
-        elseif info.healthKnown then
+        elseif info.healthKnown or bossDamage ~= nil then
             state.noProgress += dt
         end
         state.lastTargetHealth = info.health
+        state.lastBossDamage = bossDamage
         -- A decrease is only an observation: other players may also attack.
-        if info.healthKnown and state.noProgress >= 12 and state.attempts > 0 then
+        if (info.healthKnown or bossDamage ~= nil) and state.noProgress >= 10 and state.attempts > 0 then
             api.release(true)
             state.target = nil
             state.retryAt = now + 4
             state.nextScan = state.retryAt
             state.lastTick = nil
-            show("HP не снижается — отошёл; новый поиск через 4 секунды")
+            show("Урон не подтверждён — новый захват цели через 4 секунды")
             return
         end
         api.hold(info, state.height)
@@ -2149,9 +2164,9 @@ return function(runtime, api)
         end
         if now >= state.nextUI then
             state.nextUI = now + 0.4
-            local healthText = info.healthKnown and tostring(math.ceil(info.health)) or "скрыто сервером"
-            show(("%s • HP %s • %s"):format(info.name, healthText,
-                state.observations > 0 and "HP снижается (источник урона неизвестен)" or "атака идёт…"))
+            local damageText = bossDamage and state.damageStart and (" • Boss Damage +%s"):format(tostring(math.max(0, bossDamage - state.damageStart))) or ""
+            show(("%s • %s%s • %s"):format(info.name, info.modelName or info.model.Name, damageText,
+                state.observations > 0 and "урон подтверждён" or "проверяю урон…"))
         end
     end
     function state:Tick(now)
@@ -2172,6 +2187,9 @@ do
     local Players, World = a, workspace
     local saved = nil
     local knownBoss = setmetatable({}, {__mode = "k"})
+    local knownMeta = setmetatable({}, {__mode = "k"})
+    local hitCache = setmetatable({}, {__mode = "k"})
+    local bossDamageNode = nil
     local bossTitles = {
         commonboss = "COMMON BOSS", uncommonboss = "UNCOMMON BOSS", rareboss = "RARE BOSS",
         epicboss = "EPIC BOSS", legendaryboss = "LEGENDARY BOSS", mythicboss = "MYTHIC BOSS",
@@ -2182,6 +2200,34 @@ do
     end
     local function bossTitle(value)
         return bossTitles[normalized(value)]
+    end
+    local function rootOf(model)
+        return model and (model:FindFirstChild("HumanoidRootPart") or model.PrimaryPart
+            or model:FindFirstChild("UpperTorso") or model:FindFirstChild("Torso")
+            or model:FindFirstChildWhichIsA("BasePart", true))
+    end
+    local function objectPosition(object)
+        if not object then return nil end
+        if object:IsA("Attachment") then return object.WorldPosition end
+        if object:IsA("BasePart") then return object.Position end
+        if object:IsA("Model") then return object:GetPivot().Position end
+        return nil
+    end
+    local function replicatedHealth(model)
+        local humanoid = model:FindFirstChildOfClass("Humanoid")
+        if humanoid then return humanoid, humanoid.Health, humanoid.MaxHealth, true end
+        for _, node in ipairs(model:GetDescendants()) do
+            local key = normalized(node.Name)
+            if (key == "health" or key == "hp" or key == "bosshealth")
+                and (node:IsA("NumberValue") or node:IsA("IntValue")) then
+                return nil, node.Value, node.Value, true
+            end
+        end
+        for _, key in ipairs({"Health", "HP", "BossHealth"}) do
+            local value = model:GetAttribute(key)
+            if type(value) == "number" then return nil, value, value, true end
+        end
+        return nil, 1, 1, false
     end
     local function isPlayerModel(model)
         for _, player in ipairs(Players:GetPlayers()) do
@@ -2200,33 +2246,61 @@ do
         local title = bossTitle(model.Name) or knownBoss[model]
         if not title then return nil end
         knownBoss[model] = title
-        local humanoid = model:FindFirstChildOfClass("Humanoid")
-        local root = model:FindFirstChild("HumanoidRootPart") or model.PrimaryPart or model:FindFirstChild("Torso")
-            or model:FindFirstChildWhichIsA("BasePart", true)
-        -- The new system may keep HP in a replicated value/attribute instead of Humanoid.
-        local health, maxHealth, healthKnown = nil, nil, false
-        if humanoid then health, maxHealth, healthKnown = humanoid.Health, humanoid.MaxHealth, true end
-        if not healthKnown then
-            for _, node in ipairs(model:GetDescendants()) do
-                local key = node.Name:lower():gsub("[^%w]", "")
-                if (key == "health" or key == "hp" or key == "bosshealth")
-                    and (node:IsA("NumberValue") or node:IsA("IntValue")) then
-                    health, maxHealth, healthKnown = node.Value, node.Value, true
-                    break
-                end
-            end
-        end
-        if not healthKnown then
-            for _, key in ipairs({"Health", "HP", "BossHealth"}) do
-                local value = model:GetAttribute(key)
-                if type(value) == "number" then health, maxHealth, healthKnown = value, value, true break end
-            end
-        end
+        local root = rootOf(model)
+        local humanoid, health, maxHealth, healthKnown = replicatedHealth(model)
         if not root or not root:IsA("BasePart") then return nil end
-        health = healthKnown and health or 1
-        return { model = model, name = title, root = root, health = health,
+        local meta = knownMeta[model] or {}
+        return { model = model, name = title, modelName = model.Name, root = root, health = health,
             maxHealth = maxHealth or health, healthKnown = healthKnown,
-            alive = model.Parent ~= nil and (not healthKnown or health > 0), humanoid = humanoid }
+            alive = model.Parent ~= nil and (not healthKnown or health > 0), humanoid = humanoid,
+            detection = meta.detection, confidence = meta.confidence }
+    end
+    local function attackParts(target)
+        local cached = hitCache[target.model]
+        if cached and cached.untilAt > os.clock() then return cached.parts end
+        local ranked, used = {}, {}
+        for _, part in ipairs(target.model:GetDescendants()) do
+            if part:IsA("BasePart") then
+                local key = normalized(part.Name)
+                local score = part == target.root and 240 or 0
+                if key:find("hitbox", 1, true) or key:find("damage", 1, true) then score += 400 end
+                if key == "humanoidrootpart" or key == "uppertorso" or key == "torso" or key == "head" then score += 260 end
+                if part:FindFirstChildOfClass("TouchTransmitter") then score += 500 end
+                if part.CanTouch then score += 40 end
+                score += math.min(80, part.Size.Magnitude)
+                table.insert(ranked, {part = part, score = score})
+            end
+        end
+        table.sort(ranked, function(x, y) return x.score > y.score end)
+        local parts = {}
+        for _, item in ipairs(ranked) do
+            if not used[item.part] then
+                used[item.part] = true
+                table.insert(parts, item.part)
+                if #parts >= 5 then break end
+            end
+        end
+        hitCache[target.model] = {parts = parts, untilAt = os.clock() + 1}
+        return parts
+    end
+    local function bossDamage()
+        if bossDamageNode and bossDamageNode.Parent
+            and (bossDamageNode:IsA("NumberValue") or bossDamageNode:IsA("IntValue")) then
+            return bossDamageNode.Value
+        end
+        bossDamageNode = nil
+        for _, node in ipairs(j:GetDescendants()) do
+            if normalized(node.Name) == "bossdamage"
+                and (node:IsA("NumberValue") or node:IsA("IntValue")) then
+                bossDamageNode = node
+                return node.Value
+            end
+        end
+        for _, key in ipairs({"BossDamage", "Boss Damage"}) do
+            local value = j:GetAttribute(key)
+            if type(value) == "number" then return value end
+        end
+        return nil
     end
     local function release(retreat)
         local old = saved
@@ -2250,34 +2324,66 @@ do
                 or q.lockPosition or q.lockRock or q.autoRebirth or q.autoQuest or q.killMode ~= "off"
         end,
         scan = function()
-            local list, origin, seen = {}, aO(), setmetatable({}, {__mode = "k"})
+            local list, origin, seen, anchors = {}, aO(), setmetatable({}, {__mode = "k"}), {}
+            local linkedThisScan = setmetatable({}, {__mode = "k"})
             local nodes = World:GetDescendants()
             for _, node in ipairs(nodes) do
                 if node:IsA("TextLabel") or node:IsA("TextButton") then
                     local title = bossTitle(node.Text)
                     if title then
                         local gui = node:FindFirstAncestorWhichIsA("BillboardGui")
-                        local anchor = gui and gui.Adornee
+                            or node:FindFirstAncestorWhichIsA("SurfaceGui")
+                        local anchor = gui and (gui.Adornee or gui.Parent)
                         local model = anchor and (anchor:IsA("Model") and anchor or anchor:FindFirstAncestorWhichIsA("Model"))
                             or node:FindFirstAncestorWhichIsA("Model")
-                        if model then knownBoss[model] = title end
+                        local position = objectPosition(anchor) or (model and objectPosition(model))
+                        if model then knownBoss[model], linkedThisScan[model] = title, title end
+                        if position then table.insert(anchors, {position = position, title = title, direct = model}) end
                     end
                 end
             end
             for _, node in ipairs(nodes) do
-                if node:IsA("Model") and (bossTitle(node.Name) or knownBoss[node]) and not seen[node] then
+                if node:IsA("Model") and not seen[node] and not isPlayerModel(node) then
                     seen[node] = true
-                    local candidate = info(node)
-                    if candidate and candidate.alive then
+                    local root = rootOf(node)
+                    local exactTitle, linkedTitle = bossTitle(node.Name), linkedThisScan[node]
+                    local nearest, anchorTitle, direct = math.huge, nil, false
+                    if root then
+                        for _, anchor in ipairs(anchors) do
+                            local distance = (root.Position - anchor.position).Magnitude
+                            if distance < nearest then nearest, anchorTitle, direct = distance, anchor.title, anchor.direct == node end
+                        end
+                    end
+                    local humanoid, _, _, healthKnown = nil, nil, nil, false
+                    if exactTitle or linkedTitle or (root and nearest <= 100) then
+                        humanoid, _, _, healthKnown = replicatedHealth(node)
+                    end
+                    local nearLivingBoss = root and nearest <= 100 and (humanoid ~= nil or healthKnown)
+                    local title = exactTitle or linkedTitle or (nearLivingBoss and anchorTitle)
+                    if title then
+                        knownBoss[node] = title
+                        local score = (exactTitle and 900 or 0) + (direct and 300 or 0)
+                            + (humanoid and 600 or 0) + (healthKnown and 350 or 0)
+                            + (nearest < math.huge and math.max(0, 500 - nearest * 4) or 0)
+                            + (root and not root.Anchored and 80 or 0)
+                        knownMeta[node] = {detection = exactTitle and "model-name" or (direct and "label-adornee" or "label-near-live-model"), confidence = score}
+                        local candidate = info(node)
+                        if candidate and candidate.alive then
                         candidate.distance = origin and (origin.Position - candidate.root.Position).Magnitude or 0
+                        candidate.score = score
                         table.insert(list, candidate)
+                        end
                     end
                 end
             end
-            table.sort(list, function(x, y) return x.distance < y.distance end)
+            table.sort(list, function(x, y)
+                if x.score ~= y.score then return x.score > y.score end
+                return x.distance < y.distance
+            end)
             return list[1] and {list[1]} or {}
         end,
         info = info,
+        damage = bossDamage,
         claim = function(onHealth)
             release(false)
             local root, humanoid = aO(), aN()
@@ -2293,9 +2399,7 @@ do
         hold = function(target, height)
             assert(saved and saved.character == aM() and saved.root.Parent, "Персонаж сменился")
             local size = target.model:GetExtentsSize()
-            local distance = math.max(height, size.Z * 0.5 + 8)
-            local position = target.root.Position + Vector3.new(0, size.Y * 0.5 + height, 0)
-                - target.root.CFrame.LookVector * distance
+            local position = target.root.Position + Vector3.new(0, math.clamp(size.Y * 0.5, 3, 40) + height, 0)
             saved.root.CFrame = CFrame.lookAt(position, target.root.Position)
             saved.root.AssemblyLinearVelocity = Vector3.zero
             saved.root.AssemblyAngularVelocity = Vector3.zero
@@ -2313,12 +2417,18 @@ do
             if not stillActive() then return true end
             ek()
             if type(firetouchinterest) == "function" then
+                local parts = attackParts(target)
                 for _, name in ipairs({"RightHand", "LeftHand", "Right Arm", "Left Arm"}) do
                     if not stillActive() then return true end
                     local hand = character:FindFirstChild(name, true)
-                    if hand and hand:IsA("BasePart") and target.root.Parent then
-                        firetouchinterest(hand, target.root, 0)
-                        firetouchinterest(hand, target.root, 1)
+                    if hand and hand:IsA("BasePart") then
+                        for _, part in ipairs(parts) do
+                            if not stillActive() then return true end
+                            if part.Parent then
+                                firetouchinterest(hand, part, 0)
+                                firetouchinterest(hand, part, 1)
+                            end
+                        end
                     end
                 end
             end
@@ -3242,7 +3352,7 @@ do
     status.TextWrapped = true
     status.TextXAlignment = Enum.TextXAlignment.Left
     status.LayoutOrder = 3
-    local hint = mt(body, "Редкость определяется автоматически. Скрипт не выбирает случайные модели: фиксируется над найденным активным боссом и сразу атакует.", 9, Enum.Font.Gotham, lw.Muted)
+    local hint = mt(body, "Поиск: точная надпись босса → её Adornee → живая модель с HP. Удары идут по реальным hitbox-деталям; рост Boss Damage подтверждает попадание.", 9, Enum.Font.Gotham, lw.Muted)
     hint.Size = UDim2.new(1, -4, 0, 40)
     hint.TextWrapped = true
     hint.LayoutOrder = 4
