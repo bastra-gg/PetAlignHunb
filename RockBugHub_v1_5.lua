@@ -4,7 +4,7 @@ pcall(function()i=game:GetService("NetworkClient")end)if not game:IsLoaded()then
 local j=a.LocalPlayer;
 while not j do task.wait()j=a.LocalPlayer end;
 local k=j:WaitForChild("PlayerGui",60)if not k then warn("[RockBugHub] PlayerGui was not created")pcall(function()g:SetCore("SendNotification",{Title="RockBugHub",Text="Ошибка запуска: PlayerGui не найден",Duration=8})end)return end;
-local l="RockBugHub_TEST_v4_25_BOSS_T15"local m="4.25BOSS-T15"local n=type(getgenv)=="function"and getgenv()or _G;
+local l="RockBugHub_TEST_v4_25_BOSS_T16"local m="4.25BOSS-T16"local n=type(getgenv)=="function"and getgenv()or _G;
 do
     -- Retire the old experimental windows and their listeners on hot reload.
     for _, key in ipairs({"RockBugTradeDiagnostics", "RockBugMiniTransfer"}) do
@@ -2223,6 +2223,7 @@ do
     local knownBoss = setmetatable({}, {__mode = "k"})
     local knownMeta = setmetatable({}, {__mode = "k"})
     local hitCache = setmetatable({}, {__mode = "k"})
+    q.bossFollowCache = setmetatable({}, {__mode = "k"})
     local bossDamageNode = nil
     local bossTitles = {
         commonboss = "COMMON BOSS", uncommonboss = "UNCOMMON BOSS", rareboss = "RARE BOSS",
@@ -2269,6 +2270,36 @@ do
         end
         return false
     end
+    function q.bossMovingRootOf(model, fallback)
+        local cached = q.bossFollowCache[model]
+        if cached and cached.part and cached.part.Parent and cached.untilAt > os.clock() then
+            return cached.part, cached.humanoid
+        end
+        local best, bestHumanoid, bestScore = fallback, nil, fallback and 50 or -math.huge
+        for _, node in ipairs(model:GetDescendants()) do
+            if node:IsA("Humanoid") and node.Health > 0 and node.Parent
+                and not Players:GetPlayerFromCharacter(node.Parent) then
+                local part = node.RootPart or node.Parent:FindFirstChild("HumanoidRootPart")
+                    or node.Parent:FindFirstChild("UpperTorso") or node.Parent:FindFirstChild("Torso")
+                if part and part:IsA("BasePart") then
+                    local score = 2000 + (part.Anchored and 0 or 500)
+                    if score > bestScore then best, bestHumanoid, bestScore = part, node, score end
+                end
+            elseif node:IsA("BasePart") then
+                local key = normalized(node.Name)
+                local score = key == "humanoidrootpart" and 1100
+                    or (key == "uppertorso" or key == "lowertorso" or key == "torso") and 850
+                    or key == "head" and 650 or 0
+                if score > 0 then
+                    if not node.Anchored then score += 450 end
+                    if node.Transparency < 0.98 then score += 40 end
+                    if score > bestScore then best, bestScore = node, score end
+                end
+            end
+        end
+        q.bossFollowCache[model] = {part = best, humanoid = bestHumanoid, untilAt = os.clock() + 0.5}
+        return best, bestHumanoid
+    end
     local function info(model)
         if not model or not model:IsA("Model") or not model:IsDescendantOf(World) or isPlayerModel(model) then return nil end
         local parent = model
@@ -2280,8 +2311,12 @@ do
         local title = bossTitle(model.Name) or knownBoss[model]
         if not title then return nil end
         knownBoss[model] = title
-        local root = rootOf(model)
         local humanoid, health, maxHealth, healthKnown = replicatedHealth(model)
+        local root, nestedHumanoid = q.bossMovingRootOf(model, (humanoid and humanoid.RootPart) or rootOf(model))
+        if not humanoid and nestedHumanoid then
+            humanoid = nestedHumanoid
+            health, maxHealth, healthKnown = humanoid.Health, humanoid.MaxHealth, true
+        end
         if not root or not root:IsA("BasePart") then return nil end
         local meta = knownMeta[model] or {}
         return { model = model, name = title, modelName = model.Name, root = root, health = health,
@@ -2293,10 +2328,14 @@ do
         local cached = hitCache[target.model]
         if cached and cached.untilAt > os.clock() then return cached.parts end
         local ranked, used = {}, {}
+        local bodyModel = target.humanoid and target.humanoid.Parent
         for _, part in ipairs(target.model:GetDescendants()) do
             if part:IsA("BasePart") then
                 local key = normalized(part.Name)
                 local score = part == target.root and 240 or 0
+                if bodyModel then
+                    if part == bodyModel or part:IsDescendantOf(bodyModel) then score += 700 else score -= 350 end
+                end
                 if key:find("hitbox", 1, true) or key:find("damage", 1, true) then score += 400 end
                 if key == "humanoidrootpart" or key == "uppertorso" or key == "torso" or key == "head" then score += 260 end
                 if part:FindFirstChildOfClass("TouchTransmitter") then score += 500 end
@@ -3625,7 +3664,7 @@ do
     targetLabel.TextWrapped = true
     targetLabel.TextXAlignment = Enum.TextXAlignment.Left
     targetLabel.LayoutOrder = 1
-    local rangeLabel = mt(body, "РЕЖИМ: ФИЗИЧЕСКИ ПОД АРЕНОЙ • БЕЗ ВРАЩЕНИЯ", 10, Enum.Font.GothamBold, lw.Success)
+    local rangeLabel = mt(body, "РЕЖИМ: СЛЕЖЕНИЕ ЗА ТЕЛОМ • БЕЗ ВРАЩЕНИЯ", 10, Enum.Font.GothamBold, lw.Success)
     rangeLabel.Size = UDim2.new(1, -4, 0, 28)
     rangeLabel.TextWrapped = true
     rangeLabel.TextXAlignment = Enum.TextXAlignment.Left
@@ -3635,7 +3674,7 @@ do
     status.TextWrapped = true
     status.TextXAlignment = Enum.TextXAlignment.Left
     status.LayoutOrder = 3
-    local hint = mt(body, "Держит персонажа совсем близко под полом физикой, без Anchored. Контакт хитбокса создаётся до Punch; при уроне позиция чуть опускается.", 9, Enum.Font.Gotham, lw.Muted)
+    local hint = mt(body, "Следует под движущимся HumanoidRootPart босса, а не под центром арены. Контакт хитбокса создаётся до Punch; при уроне позиция чуть опускается.", 9, Enum.Font.Gotham, lw.Muted)
     hint.Size = UDim2.new(1, -4, 0, 40)
     hint.TextWrapped = true
     hint.LayoutOrder = 4
