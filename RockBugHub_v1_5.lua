@@ -4,7 +4,7 @@ pcall(function()i=game:GetService("NetworkClient")end)if not game:IsLoaded()then
 local j=a.LocalPlayer;
 while not j do task.wait()j=a.LocalPlayer end;
 local k=j:WaitForChild("PlayerGui",60)if not k then warn("[RockBugHub] PlayerGui was not created")pcall(function()g:SetCore("SendNotification",{Title="RockBugHub",Text="Ошибка запуска: PlayerGui не найден",Duration=8})end)return end;
-local l="RockBugHub_TEST_v4_25_BOSS_T17"local m="4.25BOSS-T17"local n=type(getgenv)=="function"and getgenv()or _G;
+local l="RockBugHub_TEST_v4_25_BOSS_T18"local m="4.25BOSS-T18"local n=type(getgenv)=="function"and getgenv()or _G;
 do
     -- Retire the old experimental windows and their listeners on hot reload.
     for _, key in ipairs({"RockBugTradeDiagnostics", "RockBugMiniTransfer"}) do
@@ -2028,7 +2028,7 @@ B(function()e:CaptureController()e:ClickButton2(Vector2.new())end)end))q.bossFac
 return function(runtime, api)
     local state = {
         enabled = false, generation = 0, target = nil,
-        height = 3.5, interval = 0.01, status = "Выключено", candidates = {},
+        height = 4.5, interval = 0.01, status = "Выключено", candidates = {},
         nextScan = 0, nextAttack = 0, nextUI = 0, retryAt = 0, noProgress = 0,
         lastTargetHealth = nil, lastOwnHealth = nil, lastBossDamage = nil, damageStart = nil, lastTick = nil,
         attempts = 0, observations = 0, damageEvents = 0, busy = false,
@@ -2070,7 +2070,7 @@ return function(runtime, api)
         self.attempts = 0
         self.observations = 0
         self.damageEvents = 0
-        self.height = 3.5
+        self.height = 4.5
         self.lastBossDamage = nil
         self.damageStart = nil
         show(health and health > 0 and "Запущено — ищу текущего босса…" or "Запущено — жду персонажа и текущего босса…")
@@ -2080,7 +2080,7 @@ return function(runtime, api)
         if not self.enabled then return end
         if self.lastOwnHealth and health < self.lastOwnHealth then
             self.damageEvents += 1
-            self.height = math.min(6, self.height + 0.5)
+            self.height = math.min(7, self.height + 0.5)
             show(("Получен урон • опускаюсь чуть глубже: %.2f"):format(self.height))
         end
         self.lastOwnHealth = health
@@ -2663,7 +2663,7 @@ do
             assert(saved and saved.character == aM() and saved.root.Parent, "Персонаж сменился")
             assert(target.root and target.root.Parent, "Босс исчез")
             saved.humanoid.AutoRotate = false
-            local depth = math.clamp(tonumber(height) or 3.5, 3.25, 6)
+            local depth = math.clamp(tonumber(height) or 4.5, 4.25, 7)
             if not saved.arenaY then
                 local ray = RaycastParams.new()
                 ray.FilterType = Enum.RaycastFilterType.Exclude
