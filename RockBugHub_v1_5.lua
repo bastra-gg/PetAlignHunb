@@ -4,7 +4,7 @@ pcall(function()i=game:GetService("NetworkClient")end)if not game:IsLoaded()then
 local j=a.LocalPlayer;
 while not j do task.wait()j=a.LocalPlayer end;
 local k=j:WaitForChild("PlayerGui",60)if not k then warn("[RockBugHub] PlayerGui was not created")pcall(function()g:SetCore("SendNotification",{Title="RockBugHub",Text="Ошибка запуска: PlayerGui не найден",Duration=8})end)return end;
-local l="RockBugHub_TEST_v4_25_BOSS_T19"local m="4.25BOSS-T19"local n=type(getgenv)=="function"and getgenv()or _G;
+local l="RockBugHub_TEST_v4_25_BOSS_T20"local m="4.25BOSS-T20"local n=type(getgenv)=="function"and getgenv()or _G;
 do
     -- Retire the old experimental windows and their listeners on hot reload.
     for _, key in ipairs({"RockBugTradeDiagnostics", "RockBugMiniTransfer"}) do
@@ -2680,48 +2680,25 @@ do
                 saved.depth = depth
                 saved.underY = saved.arenaY - depth
             end
-            local targetVelocity = target.root.AssemblyLinearVelocity
             local base = target.root.Position
-            local dangers = dangerParts(target)
             local revision = tonumber(damageRevision) or 0
-            local mustMove = saved.lastDamageRevision ~= revision or not saved.safeOffset
-            saved.lastDamageRevision = revision
-            if not mustMove and saved.safeOffset then
-                local current = base + saved.safeOffset
-                for _, danger in ipairs(dangers) do
-                    if horizontalBox(danger, current, 2.2) then mustMove = true break end
-                end
-            end
-            if mustMove then
+            if saved.lastDamageRevision ~= revision or not saved.safeOffset then
                 local delta = saved.root.Position - base
                 local startAngle = saved.safeAngle or math.atan2(delta.Z, delta.X)
                 if revision > 0 then startAngle += math.pi * 0.65 end
-                local best, bestAngle, bestDistance = nil, nil, math.huge
-                for index = 0, 15 do
-                    local angle = startAngle + index * math.pi * 2 / 16
-                    local offset = Vector3.new(math.cos(angle) * 3.2, 0, math.sin(angle) * 3.2)
-                    local candidate = base + offset
-                    local blocked = false
-                    for _, danger in ipairs(dangers) do
-                        if horizontalBox(danger, candidate, 2.2) then blocked = true break end
-                    end
-                    if not blocked then
-                        local distance = (candidate - saved.root.Position).Magnitude
-                        if distance < bestDistance then best, bestAngle, bestDistance = offset, angle, distance end
-                    end
-                end
-                saved.safeOffset = best or Vector3.new(math.cos(startAngle) * 3.2, 0, math.sin(startAngle) * 3.2)
-                saved.safeAngle = bestAngle or startAngle
+                saved.safeOffset = Vector3.new(math.cos(startAngle) * 2.6, 0, math.sin(startAngle) * 2.6)
+                saved.safeAngle = startAngle
+                saved.lastDamageRevision = revision
             end
             local point = Vector3.new(base.X + saved.safeOffset.X, saved.underY, base.Z + saved.safeOffset.Z)
-            q.bossDangerCount = #dangers
+            q.bossDangerCount = 0
             saved.root.Anchored = false
             if not saved.holdPosition or not saved.holdPosition.Parent then
                 local hold = Instance.new("BodyPosition")
                 hold.Name = "RockBugBossPhysicalHold"
                 hold.MaxForce = Vector3.new(1e9, 1e9, 1e9)
-                hold.P = 90000
-                hold.D = 1900
+                hold.P = 80000
+                hold.D = 2000
                 hold.Position = point
                 hold.Parent = saved.root
                 saved.holdPosition = hold
@@ -2730,13 +2707,6 @@ do
             if not saved.positioned then
                 saved.positioned = true
                 saved.root.CFrame = CFrame.new(point) * saved.rotation
-            end
-            local flatGap = (Vector3.new(saved.root.Position.X, 0, saved.root.Position.Z)
-                - Vector3.new(point.X, 0, point.Z)).Magnitude
-            if flatGap > 1.5 then
-                local correction = Vector3.new(point.X - saved.root.Position.X, 0, point.Z - saved.root.Position.Z) * 10
-                if correction.Magnitude > 80 then correction = correction.Unit * 80 end
-                saved.root.AssemblyLinearVelocity = Vector3.new(targetVelocity.X, 0, targetVelocity.Z) + correction
             end
             saved.root.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
         end,
@@ -3703,7 +3673,7 @@ do
     targetLabel.TextWrapped = true
     targetLabel.TextXAlignment = Enum.TextXAlignment.Left
     targetLabel.LayoutOrder = 1
-    local rangeLabel = mt(body, "РЕЖИМ: СЛЕЖЕНИЕ + БЕЗОПАСНАЯ СТОРОНА", 10, Enum.Font.GothamBold, lw.Success)
+    local rangeLabel = mt(body, "РЕЖИМ: ПРОСТОЕ ФИЗИЧЕСКОЕ СЛЕЖЕНИЕ", 10, Enum.Font.GothamBold, lw.Success)
     rangeLabel.Size = UDim2.new(1, -4, 0, 28)
     rangeLabel.TextWrapped = true
     rangeLabel.TextXAlignment = Enum.TextXAlignment.Left
@@ -3713,7 +3683,7 @@ do
     status.TextWrapped = true
     status.TextXAlignment = Enum.TextXAlignment.Left
     status.LayoutOrder = 3
-    local hint = mt(body, "Физически следует за телом босса на расстоянии 3.2 studs и глубине 4.5. Сторона меняется только при зоне атаки или полученном уроне; поворот зафиксирован.", 9, Enum.Font.Gotham, lw.Muted)
+    local hint = mt(body, "Следует за живым корнем босса на глубине 4.5 и со смещением 2.6 studs. Сторона меняется только после полученного урона; повторных телепортов и вращения нет.", 9, Enum.Font.Gotham, lw.Muted)
     hint.Size = UDim2.new(1, -4, 0, 40)
     hint.TextWrapped = true
     hint.LayoutOrder = 4
