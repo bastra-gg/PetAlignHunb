@@ -4,7 +4,7 @@ pcall(function()i=game:GetService("NetworkClient")end)if not game:IsLoaded()then
 local j=a.LocalPlayer;
 while not j do task.wait()j=a.LocalPlayer end;
 local k=j:WaitForChild("PlayerGui",60)if not k then warn("[RockBugHub] PlayerGui was not created")pcall(function()g:SetCore("SendNotification",{Title="RockBugHub",Text="Ошибка запуска: PlayerGui не найден",Duration=8})end)return end;
-local l="RockBugHub_TEST_v4_25_BOSS_T24"local m="4.25BOSS-T24"local n=type(getgenv)=="function"and getgenv()or _G;
+local l="RockBugHub_TEST_v4_25_BOSS_T25"local m="4.25BOSS-T25"local n=type(getgenv)=="function"and getgenv()or _G;
 do
     -- Retire the old experimental windows and their listeners on hot reload.
     for _, key in ipairs({"RockBugTradeDiagnostics", "RockBugMiniTransfer"}) do
@@ -2190,7 +2190,12 @@ return function(runtime, api)
             state.nextAttack = now
             show(("Урон не виден • догоняю босса по X/Z, глубина безопасная: %.2f"):format(state.height))
         end
-        api.hold(info, state.height, state.damageEvents)
+        local positioned, positionProblem = api.hold(info, state.height, state.damageEvents)
+        if positioned == false then
+            show(positionProblem or "Ожидаю точку под боссом…")
+            state.nextAttack = now + state.interval
+            return
+        end
         if now >= state.nextAttack then
             state.nextAttack = now + state.interval -- no catch-up bursts after lag
             local generation = state.generation
@@ -2289,41 +2294,68 @@ do
     end
     function q.bossMovingRootOf(model, fallback)
         local cached = q.bossFollowCache[model]
-        if cached and cached.part and cached.part.Parent and cached.untilAt > os.clock() then
-            return cached.part, cached.humanoid
+        if cached and cached.part and cached.part:IsDescendantOf(model)
+            and (not cached.humanoid or cached.humanoid.Health > 0) and cached.untilAt > os.clock() then
+            return cached.part, cached.humanoid, cached.body
         end
-        -- The arena title can be attached to a stationary centre marker.  Prefer the
-        -- living boss body; use the title anchor only when no moving body exists.
-        local anchor, anchorPart = q.bossAnchorCache[model], nil
-        if anchor and anchor.Parent then
-            if anchor:IsA("Attachment") and anchor.Parent:IsA("BasePart") then anchorPart = anchor.Parent
-            elseif anchor:IsA("BasePart") then anchorPart = anchor end
-        end
-        local best = fallback or anchorPart
-        local bestHumanoid, bestScore = nil, best and 50 or -math.huge
-        for _, node in ipairs(model:GetDescendants()) do
-            if node:IsA("Humanoid") and node.Health > 0 and node.Parent
-                and not Players:GetPlayerFromCharacter(node.Parent) then
-                local part = node.RootPart or node.Parent:FindFirstChild("HumanoidRootPart")
-                    or node.Parent:FindFirstChild("UpperTorso") or node.Parent:FindFirstChild("Torso")
-                if part and part:IsA("BasePart") then
-                    local score = 2000 + (part.Anchored and 0 or 500)
-                    if score > bestScore then best, bestHumanoid, bestScore = part, node, score end
+        -- A sign/PrimaryPart is never sufficient evidence of a living boss.
+        -- Follow the rendered torso, which may move while HumanoidRootPart stays put.
+        local best, bestHumanoid, bestBody, bestScore = nil, nil, nil, -math.huge
+        local function consider(body, humanoid)
+            if not body or isPlayerModel(body) then return end
+            local ancestor = body
+            while ancestor and ancestor ~= World do
+                local key = normalized(ancestor.Name)
+                if key:find("pet", 1, true) or key:find("preview", 1, true)
+                    or key:find("template", 1, true) or key:find("reward", 1, true) then return end
+                ancestor = ancestor.Parent
+            end
+            local part = body:FindFirstChild("LowerTorso") or body:FindFirstChild("Torso")
+                or body:FindFirstChild("UpperTorso")
+            if not part then
+                local root = humanoid and humanoid.RootPart or body.PrimaryPart
+                for _, joint in ipairs(body:GetDescendants()) do
+                    if joint:IsA("Motor6D") and joint.Part0 == root and joint.Part1
+                        and joint.Part1:IsDescendantOf(body) then part = joint.Part1 break end
                 end
-            elseif node:IsA("BasePart") then
-                local key = normalized(node.Name)
-                local score = key == "humanoidrootpart" and 1100
-                    or (key == "uppertorso" or key == "lowertorso" or key == "torso") and 850
-                    or key == "head" and 650 or 0
-                if score > 0 then
-                    if not node.Anchored then score += 450 end
-                    if node.Transparency < 0.98 then score += 40 end
-                    if score > bestScore then best, bestScore = node, score end
+                part = part or body:FindFirstChild("Head") or root
+            end
+            if not part or not part:IsA("BasePart") then return end
+            local score = (humanoid and 2000 or 1000) + (body == model and 400 or 0)
+                + (bossTitle(body.Name) and 300 or 0) + (part.Anchored and 0 or 100)
+            if score > bestScore then
+                best, bestHumanoid, bestBody, bestScore = part, humanoid, body, score
+            end
+        end
+        for _, node in ipairs(model:GetDescendants()) do
+            if node:IsA("Humanoid") and node.Health > 0 then
+                consider(node.Parent, node)
+            elseif node:IsA("AnimationController") and node.Parent and node.Parent:IsA("Model") then
+                local humanoid, health, _, known = replicatedHealth(node.Parent)
+                if not humanoid and known and health > 0 then consider(node.Parent, nil) end
+            end
+        end
+        local bone, boneScore = nil, 0
+        if best then
+            for _, node in ipairs(best:GetDescendants()) do
+                if node:IsA("Bone") then
+                    local key = normalized(node.Name)
+                    local score = (key == "hips" or key == "pelvis" or key == "mixamorighips") and 3
+                        or key == "root" and 2 or not node.Parent:IsA("Bone") and 1 or 0
+                    if score > boneScore then bone, boneScore = node, score end
                 end
             end
         end
-        q.bossFollowCache[model] = {part = best, humanoid = bestHumanoid, untilAt = os.clock() + 0.5}
-        return best, bestHumanoid
+        q.bossFollowCache[model] = {part = best, humanoid = bestHumanoid, body = bestBody,
+            bone = bone, untilAt = os.clock() + 0.5}
+        return best, bestHumanoid, bestBody
+    end
+    function q.bossFollowPosition(target)
+        local cached = q.bossFollowCache[target.model]
+        if cached and cached.bone and cached.bone.Parent then
+            return cached.bone.TransformedWorldCFrame.Position
+        end
+        return target.root.Position
     end
     local function info(model)
         if not model or not model:IsA("Model") or not model:IsDescendantOf(World) or isPlayerModel(model) then return nil end
@@ -2337,24 +2369,26 @@ do
         if not title then return nil end
         knownBoss[model] = title
         local humanoid, health, maxHealth, healthKnown = replicatedHealth(model)
-        local root, nestedHumanoid = q.bossMovingRootOf(model, (humanoid and humanoid.RootPart) or rootOf(model))
-        if not humanoid and nestedHumanoid then
+        local root, nestedHumanoid, body = q.bossMovingRootOf(model)
+        if nestedHumanoid then
             humanoid = nestedHumanoid
             health, maxHealth, healthKnown = humanoid.Health, humanoid.MaxHealth, true
+        elseif body then
+            humanoid, health, maxHealth, healthKnown = replicatedHealth(body)
         end
         if not root or not root:IsA("BasePart") then return nil end
         local meta = knownMeta[model] or {}
         return { model = model, name = title, modelName = model.Name, root = root, health = health,
             maxHealth = maxHealth or health, healthKnown = healthKnown,
-            alive = model.Parent ~= nil and (not healthKnown or health > 0), humanoid = humanoid,
+            alive = model.Parent ~= nil and healthKnown and health > 0, humanoid = humanoid, bodyModel = body,
             detection = meta.detection, confidence = meta.confidence }
     end
     local function attackParts(target)
         local cached = hitCache[target.model]
         if cached and cached.untilAt > os.clock() then return cached.parts end
         local ranked, used = {}, {}
-        local bodyModel = target.humanoid and target.humanoid.Parent
-        for _, part in ipairs(target.model:GetDescendants()) do
+        local bodyModel = target.bodyModel or (target.humanoid and target.humanoid.Parent)
+        for _, part in ipairs((bodyModel or target.model):GetDescendants()) do
             if part:IsA("BasePart") then
                 local key = normalized(part.Name)
                 local score = part == target.root and 240 or 0
@@ -2585,7 +2619,7 @@ do
             end
         end
     end
-    q.boss = q.bossFactory(q, {
+    q.bossAdapter = {
         now = os.clock,
         ownHealth = function() local humanoid = aN() return humanoid and humanoid.Health end,
         prepare = function() jT() end,
@@ -2687,7 +2721,13 @@ do
                 onHealth(health)
             end)
             saved.spawnConnection = World.DescendantAdded:Connect(function(node)
-                if saved and node:IsA("BasePart") then saved.spawnedParts[node] = true saved.nextDangerScan = 0 end
+                if saved and node:IsA("BasePart") then
+                    saved.spawnedParts[node] = true saved.nextDangerScan = 0
+                    if node:IsDescendantOf(saved.character) then
+                        saved.collisionState[node] = node.CanCollide
+                        node.CanCollide = false
+                    end
+                end
             end)
         end,
         release = release,
@@ -2696,11 +2736,14 @@ do
             assert(target.root and target.root.Parent, "Босс исчез")
             saved.humanoid.AutoRotate = false
             local depth = math.clamp(tonumber(height) or 8, 8, 12)
+            local base = q.bossFollowPosition(target)
             if not saved.arenaY then
+                if saved.nextFloorProbe and os.clock() < saved.nextFloorProbe then return false, "Ожидаю пол арены…" end
+                saved.nextFloorProbe = os.clock() + 0.5
                 local ray = RaycastParams.new()
                 ray.FilterType = Enum.RaycastFilterType.Exclude
                 local exclusions = {target.root}
-                if target.humanoid and target.humanoid.Parent then table.insert(exclusions, target.humanoid.Parent) end
+                if target.bodyModel then table.insert(exclusions, target.bodyModel) end
                 for _, player in ipairs(Players:GetPlayers()) do
                     if player.Character then table.insert(exclusions, player.Character) end
                 end
@@ -2708,28 +2751,18 @@ do
                 pcall(function() ray.RespectCanCollide = true end)
                 local floorSamples = {}
                 for _, offset in ipairs({Vector3.new(9, 0, 0), Vector3.new(-9, 0, 0), Vector3.new(0, 0, 9), Vector3.new(0, 0, -9)}) do
-                    local hit = World:Raycast(target.root.Position + offset + Vector3.new(0, 12, 0), Vector3.new(0, -140, 0), ray)
-                    if hit and hit.Position.Y <= target.root.Position.Y + 4 then table.insert(floorSamples, hit.Position.Y) end
+                    local hit = World:Raycast(base + offset + Vector3.new(0, 12, 0), Vector3.new(0, -140, 0), ray)
+                    if hit and hit.Normal.Y > 0.8 and hit.Position.Y <= base.Y + 4 then table.insert(floorSamples, hit.Position.Y) end
                 end
                 table.sort(floorSamples)
-                saved.arenaY = #floorSamples > 0 and floorSamples[math.ceil(#floorSamples * 0.5)]
-                    or (target.root.Position.Y - math.max(5, target.root.Size.Y * 0.5))
+                if #floorSamples < 2 then return false, "Ожидаю пол под телом босса…" end
+                saved.arenaY = floorSamples[math.ceil(#floorSamples * 0.5)]
             end
             if saved.depth ~= depth or not saved.underY then
                 saved.depth = depth
                 saved.underY = saved.arenaY - depth
             end
-            local base = target.root.Position
-            local revision = tonumber(damageRevision) or 0
-            if saved.lastDamageRevision ~= revision or not saved.safeOffset then
-                local delta = saved.root.Position - base
-                local startAngle = saved.safeAngle or math.atan2(delta.Z, delta.X)
-                if revision > 0 then startAngle += math.pi * 0.65 end
-                saved.safeOffset = Vector3.new(math.cos(startAngle) * 2.6, 0, math.sin(startAngle) * 2.6)
-                saved.safeAngle = startAngle
-                saved.lastDamageRevision = revision
-            end
-            local point = Vector3.new(base.X + saved.safeOffset.X, saved.underY, base.Z + saved.safeOffset.Z)
+            local point = Vector3.new(base.X, saved.underY, base.Z)
             q.bossDangerCount = 0
             saved.root.Anchored = false
             if not saved.holdPosition or not saved.holdPosition.Parent then
@@ -2743,11 +2776,14 @@ do
                 saved.holdPosition = hold
             end
             saved.holdPosition.Position = point
-            if not saved.positioned then
-                saved.positioned = true
-                saved.root.CFrame = CFrame.new(point) * saved.rotation
+            for part in pairs(saved.collisionState) do
+                if part.Parent then part.CanCollide = false end
             end
+            saved.positioned = true
+            saved.root.CFrame = CFrame.new(point) * saved.rotation
+            saved.root.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
             saved.root.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+            return true
         end,
         punch = function(target, stillActive)
             if not stillActive() then return true end
@@ -2799,7 +2835,8 @@ do
             end
             return true
         end,
-    })
+    }
+    q.boss = q.bossFactory(q, q.bossAdapter)
     q.bossFactory = nil
     function q:StartBoss() return self.boss:Start() end
     function q:StopBoss() self.boss:Stop("Выключено — возврат к точке старта", true) end
@@ -2811,7 +2848,14 @@ do
             return teleport(...)
         end
     end
-    aJ(c.Heartbeat:Connect(function() q.boss:Tick(os.clock()) end))
+    aJ(c.Heartbeat:Connect(function()
+        -- Keep following on every frame even when equipping/punching has yielded.
+        if saved and q.boss.enabled and not q.networkPaused and not q.bossAdapter.conflict() then
+            local target = q.boss.target and info(q.boss.target)
+            if target then pcall(q.bossAdapter.hold, target, q.boss.height, q.boss.damageEvents) end
+        end
+        q.boss:Tick(os.clock())
+    end))
     aJ(j.CharacterRemoving:Connect(function()
         if q.boss.enabled then
             pcall(function() release(false) end)
@@ -3707,7 +3751,7 @@ do
         end
         paintLaunch()
     end))
-    local targetLabel = mt(body, "ЦЕЛЬ: определяется по точной надписи над активным боссом", 10, Enum.Font.GothamBold, lw.Text)
+    local targetLabel = mt(body, "ЦЕЛЬ: живое тело босса", 10, Enum.Font.GothamBold, lw.Text)
     targetLabel.Size = UDim2.new(1, -4, 0, 28)
     targetLabel.TextWrapped = true
     targetLabel.TextXAlignment = Enum.TextXAlignment.Left
@@ -3722,13 +3766,15 @@ do
     status.TextWrapped = true
     status.TextXAlignment = Enum.TextXAlignment.Left
     status.LayoutOrder = 3
-    local hint = mt(body, "Следует за живым корнем босса на глубине 8 studs под полом и со смещением 2.6. При уроне опускается до 12; повторных телепортов и вращения нет.", 9, Enum.Font.Gotham, lw.Muted)
+    local hint = mt(body, "Прямо под телом босса: X/Z обновляются каждый кадр, глубина — 8 под полом (до 12 при уроне). Направление персонажа фиксировано.", 9, Enum.Font.Gotham, lw.Muted)
     hint.Size = UDim2.new(1, -4, 0, 40)
     hint.TextWrapped = true
     hint.LayoutOrder = 4
     q.refreshBossUI = function()
         if not q.alive or not status.Parent then return end
         status.Text = q.boss.status
+        local cached = q.boss.target and q.bossFollowCache[q.boss.target]
+        targetLabel.Text = cached and cached.part and ("ЦЕЛЬ: " .. cached.part:GetFullName()) or "ЦЕЛЬ: ожидаю живое тело босса"
         paintLaunch()
     end
     local function resize()
@@ -4408,7 +4454,7 @@ q.layoutUI.auraSelection=sI;
 q.refreshExtraUI=function()local sJ=q.language=="en"and" players"or" игроков"sj.Set(fC(q.killWhitelist)..sJ)sk.Set(fC(q.killBlacklist)..sJ)sA.Set(q.layoutUI.officialName(q.selectedCrystal,q.layoutUI.gameObjectContext(q.selectedCrystal)))sE()sx.Set(sy())sH.Set(q.selectedPet and q.layoutUI.officialName(q.selectedPet,q.layoutUI.gameObjectContext(q.selectedPet))or q.layoutUI.staticText("ВЫБРАТЬ"))sI.Set(q.selectedAura and q.layoutUI.officialName(q.selectedAura,q.layoutUI.gameObjectContext(q.selectedAura))or q.layoutUI.staticText("ВЫБРАТЬ"))end;
 fG()local sK="bug"local sL=false;
 local sM=n7.Size;
-q.layoutUI.sectionInfo={boss={title="БОСС • ТЕСТ",hint="Мгновенное уклонение от найденных hitbox-зон."},bug={title="КАМНИ",hint="Выбери камень и включи автоудар."},farm={title="ТРЕНАЖЁРЫ",hint="Выбери локацию и нужный тренажёр."},train={title="ТРЕНИРОВКА",hint="Настрой темп и выбери упражнение."},reb={title="РЕБИРТЫ",hint="Установи цель или запусти ребирты."},crystal={title="МАГАЗИН",hint="Выбери товар и включи покупку."},kill={title="АВТОКИЛ",hint="Выбери игроков и режим атаки."},egg={title="ПРОТЕИНОВЫЕ ЯЙЦА",hint="Только Protein Egg: ×2 к силе."},teleport={title="ТЕЛЕПОРТЫ",hint="Выбери остров и переместись."},quest={title="АВТОКВЕСТЫ",hint="Выбери NPC и запусти автоквест."},system={title="НАСТРОЙКИ",hint="Питомцы, графика, сеть и защита клиента."},interface={title="ИНТЕРФЕЙС",hint="Настрой цвета, неон и прозрачность."}}local function sN()local sO=n7.AbsoluteSize.X<420;
+q.layoutUI.sectionInfo={boss={title="БОСС • ТЕСТ",hint="Слежение под телом босса на фиксированной глубине."},bug={title="КАМНИ",hint="Выбери камень и включи автоудар."},farm={title="ТРЕНАЖЁРЫ",hint="Выбери локацию и нужный тренажёр."},train={title="ТРЕНИРОВКА",hint="Настрой темп и выбери упражнение."},reb={title="РЕБИРТЫ",hint="Установи цель или запусти ребирты."},crystal={title="МАГАЗИН",hint="Выбери товар и включи покупку."},kill={title="АВТОКИЛ",hint="Выбери игроков и режим атаки."},egg={title="ПРОТЕИНОВЫЕ ЯЙЦА",hint="Только Protein Egg: ×2 к силе."},teleport={title="ТЕЛЕПОРТЫ",hint="Выбери остров и переместись."},quest={title="АВТОКВЕСТЫ",hint="Выбери NPC и запусти автоквест."},system={title="НАСТРОЙКИ",hint="Питомцы, графика, сеть и защита клиента."},interface={title="ИНТЕРФЕЙС",hint="Настрой цвета, неон и прозрачность."}}local function sN()local sO=n7.AbsoluteSize.X<420;
 local sP=n7.AbsoluteSize.Y<440;
 nh.Size=UDim2.new(1,-16,0,sP and 34 or 38)nh.Position=UDim2.fromOffset(8,52)nI.Size=UDim2.new(1,-12,1,sP and-92 or-96)nI.Position=UDim2.fromOffset(6,sP and 90 or 94)do local count=#q.layoutUI.navigationTabs;local gap=3;local width=math.max(49,math.floor((ni.AbsoluteSize.X-(count-1)*gap)/count));q.layoutUI.navigationGrid.FillDirectionMaxCells=count;q.layoutUI.navigationGrid.CellSize=UDim2.new(0,width,1,-3);q.layoutUI.navigationGrid.CellPadding=UDim2.fromOffset(gap,0);ni.CanvasSize=UDim2.fromOffset(count*(width+gap)-gap,0);ni.ScrollBarThickness=2 end;
 nc.TextSize=sO and 12 or 14;
