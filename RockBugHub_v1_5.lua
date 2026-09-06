@@ -4,7 +4,7 @@ pcall(function()i=game:GetService("NetworkClient")end)if not game:IsLoaded()then
 local j=a.LocalPlayer;
 while not j do task.wait()j=a.LocalPlayer end;
 local k=j:WaitForChild("PlayerGui",60)if not k then warn("[RockBugHub] PlayerGui was not created")pcall(function()g:SetCore("SendNotification",{Title="RockBugHub",Text="Ошибка запуска: PlayerGui не найден",Duration=8})end)return end;
-local l="RockBugHub_TEST_v4_25_BOSS_T21"local m="4.25BOSS-T21"local n=type(getgenv)=="function"and getgenv()or _G;
+local l="RockBugHub_TEST_v4_25_BOSS_T22"local m="4.25BOSS-T22"local n=type(getgenv)=="function"and getgenv()or _G;
 do
     -- Retire the old experimental windows and their listeners on hot reload.
     for _, key in ipairs({"RockBugTradeDiagnostics", "RockBugMiniTransfer"}) do
@@ -2223,6 +2223,7 @@ do
     local knownMeta = setmetatable({}, {__mode = "k"})
     local hitCache = setmetatable({}, {__mode = "k"})
     q.bossFollowCache = setmetatable({}, {__mode = "k"})
+    q.bossAnchorCache = setmetatable({}, {__mode = "k"})
     local bossDamageNode = nil
     local bossTitles = {
         commonboss = "COMMON BOSS", uncommonboss = "UNCOMMON BOSS", rareboss = "RARE BOSS",
@@ -2270,6 +2271,11 @@ do
         return false
     end
     function q.bossMovingRootOf(model, fallback)
+        local anchor = q.bossAnchorCache[model]
+        if anchor and anchor.Parent then
+            if anchor:IsA("Attachment") and anchor.Parent:IsA("BasePart") then return anchor.Parent, nil end
+            if anchor:IsA("BasePart") then return anchor, nil end
+        end
         local cached = q.bossFollowCache[model]
         if cached and cached.part and cached.part.Parent and cached.untilAt > os.clock() then
             return cached.part, cached.humanoid
@@ -2581,8 +2587,11 @@ do
                         local model = anchor and (anchor:IsA("Model") and anchor or anchor:FindFirstAncestorWhichIsA("Model"))
                             or node:FindFirstAncestorWhichIsA("Model")
                         local position = objectPosition(anchor) or (model and objectPosition(model))
-                        if model then knownBoss[model], linkedThisScan[model] = title, title end
-                        if position then table.insert(anchors, {position = position, title = title, direct = model}) end
+                        if model then
+                            knownBoss[model], linkedThisScan[model] = title, title
+                            if anchor then q.bossAnchorCache[model] = anchor end
+                        end
+                        if position then table.insert(anchors, {position = position, title = title, direct = model, object = anchor}) end
                     end
                 end
             end
@@ -2591,11 +2600,13 @@ do
                     seen[node] = true
                     local root = rootOf(node)
                     local exactTitle, linkedTitle = bossTitle(node.Name), linkedThisScan[node]
-                    local nearest, anchorTitle, direct = math.huge, nil, false
+                    local nearest, anchorTitle, nearestAnchor, direct = math.huge, nil, nil, false
                     if root then
                         for _, anchor in ipairs(anchors) do
                             local distance = (root.Position - anchor.position).Magnitude
-                            if distance < nearest then nearest, anchorTitle, direct = distance, anchor.title, anchor.direct == node end
+                            if distance < nearest then
+                                nearest, anchorTitle, nearestAnchor, direct = distance, anchor.title, anchor.object, anchor.direct == node
+                            end
                         end
                     end
                     local humanoid, _, _, healthKnown = nil, nil, nil, false
@@ -2606,6 +2617,7 @@ do
                     local title = exactTitle or linkedTitle or (nearLivingBoss and anchorTitle)
                     if title then
                         knownBoss[node] = title
+                        if nearestAnchor then q.bossAnchorCache[node] = nearestAnchor end
                         local score = (exactTitle and 900 or 0) + (direct and 300 or 0)
                             + (humanoid and 600 or 0) + (healthKnown and 350 or 0)
                             + (nearest < math.huge and math.max(0, 500 - nearest * 4) or 0)
@@ -2667,14 +2679,21 @@ do
             if not saved.arenaY then
                 local ray = RaycastParams.new()
                 ray.FilterType = Enum.RaycastFilterType.Exclude
-                local exclusions = {target.model}
+                local exclusions = {target.root}
+                if target.humanoid and target.humanoid.Parent then table.insert(exclusions, target.humanoid.Parent) end
                 for _, player in ipairs(Players:GetPlayers()) do
                     if player.Character then table.insert(exclusions, player.Character) end
                 end
                 ray.FilterDescendantsInstances = exclusions
                 pcall(function() ray.RespectCanCollide = true end)
-                local hit = World:Raycast(target.root.Position + Vector3.new(0, 12, 0), Vector3.new(0, -140, 0), ray)
-                saved.arenaY = hit and hit.Position.Y or (target.root.Position.Y - math.max(5, target.root.Size.Y * 0.5))
+                local floorSamples = {}
+                for _, offset in ipairs({Vector3.new(9, 0, 0), Vector3.new(-9, 0, 0), Vector3.new(0, 0, 9), Vector3.new(0, 0, -9)}) do
+                    local hit = World:Raycast(target.root.Position + offset + Vector3.new(0, 12, 0), Vector3.new(0, -140, 0), ray)
+                    if hit and hit.Position.Y <= target.root.Position.Y + 4 then table.insert(floorSamples, hit.Position.Y) end
+                end
+                table.sort(floorSamples)
+                saved.arenaY = #floorSamples > 0 and floorSamples[math.ceil(#floorSamples * 0.5)]
+                    or (target.root.Position.Y - math.max(5, target.root.Size.Y * 0.5))
             end
             if saved.depth ~= depth or not saved.underY then
                 saved.depth = depth
