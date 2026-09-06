@@ -2366,9 +2366,11 @@ do
             for _, part in ipairs(nearby) do
                 if part:IsA("BasePart") and part.Parent then
                     local broad = math.max(part.Size.X, part.Size.Z) >= 5
-                    local red = part.Transparency < 0.98 and looksRed(part) and broad
                     local spawned = saved and saved.spawnedParts and saved.spawnedParts[part]
-                    local named = dangerName(part) and broad and (spawned or not part:IsDescendantOf(target.model))
+                    local insideBoss = part:IsDescendantOf(target.model)
+                    local flat = part.Size.Y <= math.max(part.Size.X, part.Size.Z) * 0.30
+                    local red = part.Transparency < 0.98 and looksRed(part) and broad and (not insideBoss or spawned or flat)
+                    local named = dangerName(part) and broad and (spawned or not insideBoss)
                     if red or named then table.insert(result, part) end
                 end
             end
@@ -2439,6 +2441,7 @@ do
     local function release(retreat)
         local old = saved
         saved = nil
+        q.bossDangerCount = 0
         if not old then return end
         if old.healthConnection then old.healthConnection:Disconnect() end
         if old.spawnConnection then old.spawnConnection:Disconnect() end
