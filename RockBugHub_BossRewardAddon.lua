@@ -1,5 +1,5 @@
--- RockBugHub boss reward addon v0.1
--- Generic collector for the September 2026 Boss Battles reward flow.
+-- RockBugHub boss reward addon v0.2
+-- Safer collector: ignores its own toggle and update/changelog UI.
 local Players = game:GetService("Players")
 local VirtualInputManager = nil
 pcall(function() VirtualInputManager = game:GetService("VirtualInputManager") end)
@@ -35,7 +35,8 @@ if type(runtime) == "table" then
 end
 
 local bossWords = {"boss", "raid", "босс"}
-local rewardWords = {"reward", "claim", "collect", "chest", "prize", "take", "get", "open", "loot", "награ", "получ", "забра", "сундук", "приз"}
+local rewardWords = {"reward", "claim", "collect", "chest", "prize", "loot", "награ", "получ", "забра", "сундук", "приз"}
+local blockedGuiWords = {"update", "updates", "changelog", "patch", "news", "обнов", "новост"}
 
 local function lower(v)
     return string.lower(tostring(v or ""))
@@ -110,37 +111,71 @@ local function mark(kind, obj)
     state.last = kind .. ": " .. obj:GetFullName()
 end
 
-local function clickGui(btn)
-    if not state.enabled or not btn.Visible or not btn.Active then return false end
-    if not bossContext(btn) or not rewardContext(btn) then return false end
-    if not ready(btn, 0.75) then return false end
+-- Toggle is created before the scanner so it can be explicitly excluded.
+local old = pg:FindFirstChild("RockBugBossRewardToggle")
+if old then old:Destroy() end
+local gui = Instance.new("ScreenGui")
+gui.Name = "RockBugBossRewardToggle"
+gui.ResetOnSpawn = false
+gui.DisplayOrder = 999990
+gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+gui.Parent = pg
+
+local btn = Instance.new("TextButton")
+btn.Name = "Toggle"
+btn.AnchorPoint = Vector2.new(1, 0)
+btn.Position = UDim2.new(1, -12, 0, 86)
+btn.Size = UDim2.fromOffset(150, 34)
+btn.BackgroundColor3 = Color3.fromRGB(24, 26, 34)
+btn.BackgroundTransparency = 0.08
+btn.TextColor3 = Color3.fromRGB(235, 235, 245)
+btn.TextSize = 13
+btn.Font = Enum.Font.GothamBold
+btn.Text = "Boss reward: ON"
+btn.ZIndex = 1000
+btn.Parent = gui
+local corner = Instance.new("UICorner")
+corner.CornerRadius = UDim.new(0, 9)
+corner.Parent = btn
+
+local function refresh()
+    btn.Text = "Boss reward: " .. (state.enabled and "ON" or "OFF")
+    if type(runtime) == "table" then runtime.bossRewardEnabled = state.enabled end
+end
+
+local function clickGui(target)
+    if not state.enabled or not target.Visible or not target.Active then return false end
+    if target == btn or target:IsDescendantOf(gui) then return false end
+
+    local own = ownText(target)
+    local chain = chainText(target, 7)
+    local all = own .. " " .. chain
+
+    -- Never touch update/news/changelog controls.
+    if hasAny(all, blockedGuiWords) then return false end
+    -- Require the actual button itself to look like a reward action.
+    if not hasAny(own, rewardWords) then return false end
+    -- And require boss/raid context around it.
+    if not hasAny(chain, bossWords) then return false end
+    if not ready(target, 0.75) then return false end
 
     local fired = false
     if type(firesignal) == "function" then
         fired = pcall(function()
-            firesignal(btn.Activated)
-            if btn:IsA("TextButton") or btn:IsA("ImageButton") then
-                firesignal(btn.MouseButton1Click)
-            end
+            firesignal(target.Activated)
+            firesignal(target.MouseButton1Click)
         end)
     end
-
-    if not fired then
-        fired = pcall(function() btn:Activate() end)
-    end
-
+    if not fired then fired = pcall(function() target:Activate() end) end
     if not fired and VirtualInputManager then
         fired = pcall(function()
-            local pos = btn.AbsolutePosition
-            local size = btn.AbsoluteSize
-            local x = pos.X + math.max(2, size.X * 0.5)
-            local y = pos.Y + math.max(2, size.Y * 0.5)
+            local pos, size = target.AbsolutePosition, target.AbsoluteSize
+            local x, y = pos.X + size.X * 0.5, pos.Y + size.Y * 0.5
             VirtualInputManager:SendMouseButtonEvent(x, y, 0, true, game, 0)
             VirtualInputManager:SendMouseButtonEvent(x, y, 0, false, game, 0)
         end)
     end
-
-    if fired then mark("gui", btn) end
+    if fired then mark("gui", target) end
     return fired
 end
 
@@ -173,7 +208,8 @@ end
 local function scanGui()
     for _, obj in ipairs(pg:GetDescendants()) do
         if not state.enabled then break end
-        if (obj:IsA("TextButton") or obj:IsA("ImageButton")) and obj.Visible then
+        if obj ~= btn and not obj:IsDescendantOf(gui)
+            and (obj:IsA("TextButton") or obj:IsA("ImageButton")) and obj.Visible then
             pcall(clickGui, obj)
         end
     end
@@ -193,35 +229,6 @@ local function scanWorld()
     end
 end
 
--- Small toggle so the addon can be disabled without stopping the hub.
-local old = pg:FindFirstChild("RockBugBossRewardToggle")
-if old then old:Destroy() end
-local gui = Instance.new("ScreenGui")
-gui.Name = "RockBugBossRewardToggle"
-gui.ResetOnSpawn = false
-gui.DisplayOrder = 999990
-gui.Parent = pg
-
-local btn = Instance.new("TextButton")
-btn.Name = "Toggle"
-btn.AnchorPoint = Vector2.new(1, 1)
-btn.Position = UDim2.new(1, -12, 1, -12)
-btn.Size = UDim2.fromOffset(150, 34)
-btn.BackgroundColor3 = Color3.fromRGB(24, 26, 34)
-btn.BackgroundTransparency = 0.08
-btn.TextColor3 = Color3.fromRGB(235, 235, 245)
-btn.TextSize = 13
-btn.Font = Enum.Font.GothamBold
-btn.Text = "Boss reward: ON"
-btn.Parent = gui
-local corner = Instance.new("UICorner")
-corner.CornerRadius = UDim.new(0, 9)
-corner.Parent = btn
-
-local function refresh()
-    btn.Text = "Boss reward: " .. (state.enabled and "ON" or "OFF")
-    if type(runtime) == "table" then runtime.bossRewardEnabled = state.enabled end
-end
 btn.MouseButton1Click:Connect(function()
     state.enabled = not state.enabled
     refresh()
@@ -237,7 +244,8 @@ pg.DescendantAdded:Connect(function(obj)
     if not state.alive or not state.enabled then return end
     task.defer(function()
         task.wait(0.05)
-        if obj and obj.Parent and (obj:IsA("TextButton") or obj:IsA("ImageButton")) then
+        if obj and obj.Parent and obj ~= btn and not obj:IsDescendantOf(gui)
+            and (obj:IsA("TextButton") or obj:IsA("ImageButton")) then
             pcall(clickGui, obj)
         end
     end)
@@ -268,5 +276,5 @@ task.spawn(function()
 end)
 
 refresh()
-print("[RockBugHub] Boss reward auto-collector loaded (ON)")
+print("[RockBugHub] Boss reward auto-collector v0.2 loaded (ON)")
 return state
