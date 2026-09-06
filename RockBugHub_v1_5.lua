@@ -4,7 +4,7 @@ pcall(function()i=game:GetService("NetworkClient")end)if not game:IsLoaded()then
 local j=a.LocalPlayer;
 while not j do task.wait()j=a.LocalPlayer end;
 local k=j:WaitForChild("PlayerGui",60)if not k then warn("[RockBugHub] PlayerGui was not created")pcall(function()g:SetCore("SendNotification",{Title="RockBugHub",Text="Ошибка запуска: PlayerGui не найден",Duration=8})end)return end;
-local l="RockBugHub_TEST_v4_25_BOSS_T12"local m="4.25BOSS-T12"local n=type(getgenv)=="function"and getgenv()or _G;
+local l="RockBugHub_TEST_v4_25_BOSS_T14"local m="4.25BOSS-T14"local n=type(getgenv)=="function"and getgenv()or _G;
 do
     -- Retire the old experimental windows and their listeners on hot reload.
     for _, key in ipairs({"RockBugTradeDiagnostics", "RockBugMiniTransfer"}) do
@@ -2028,7 +2028,7 @@ B(function()e:CaptureController()e:ClickButton2(Vector2.new())end)end))q.bossFac
 return function(runtime, api)
     local state = {
         enabled = false, generation = 0, target = nil,
-        height = 18, interval = 0.01, status = "Выключено", candidates = {},
+        height = 7, interval = 0.01, status = "Выключено", candidates = {},
         nextScan = 0, nextAttack = 0, nextUI = 0, retryAt = 0, noProgress = 0,
         lastTargetHealth = nil, lastOwnHealth = nil, lastBossDamage = nil, damageStart = nil, lastTick = nil,
         attempts = 0, observations = 0, damageEvents = 0, busy = false,
@@ -2070,6 +2070,7 @@ return function(runtime, api)
         self.attempts = 0
         self.observations = 0
         self.damageEvents = 0
+        self.height = 7
         self.lastBossDamage = nil
         self.damageStart = nil
         show(health and health > 0 and "Запущено — ищу текущего босса…" or "Запущено — жду персонажа и текущего босса…")
@@ -2079,7 +2080,8 @@ return function(runtime, api)
         if not self.enabled then return end
         if self.lastOwnHealth and health < self.lastOwnHealth then
             self.damageEvents += 1
-            show("Получен урон • меняю сектор уклонения")
+            self.height = math.min(18, self.height + 2)
+            show(("Получен урон • опускаюсь глубже: %d"):format(self.height))
         end
         self.lastOwnHealth = health
     end
@@ -2152,7 +2154,7 @@ return function(runtime, api)
             state.nextAttack = now
             api.claim(function(health) state:Damage(health) end)
             if not state.enabled then return end
-            show(info.name .. " найден — вхожу в радиус и отслеживаю зоны атак")
+            show(info.name .. " найден — фиксируюсь под ареной")
         end
         local progressed = info.healthKnown and state.lastTargetHealth and info.health < state.lastTargetHealth
         local bossDamage = readBossDamage()
@@ -2199,8 +2201,8 @@ return function(runtime, api)
         if now >= state.nextUI then
             state.nextUI = now + 0.4
             local damageText = bossDamage and state.damageStart and (" • Boss Damage +%s"):format(tostring(math.max(0, bossDamage - state.damageStart))) or ""
-            local dodgeText = (runtime.bossDangerCount or 0) > 0 and (" • зон атак: %d"):format(runtime.bossDangerCount) or ""
-            show(("%s • %s%s%s • %s"):format(info.name, info.modelName or info.model.Name, damageText, dodgeText,
+            local depthText = (" • глубина: %d"):format(state.height)
+            show(("%s • %s%s%s • %s"):format(info.name, info.modelName or info.model.Name, damageText, depthText,
                 state.observations > 0 and "урон подтверждён" or "проверяю урон…"))
         end
     end
@@ -2349,6 +2351,15 @@ do
         end
         return false
     end
+    local function dangerSignature(part)
+        local names, node = {}, part
+        for _ = 1, 5 do
+            if not node or node == World then break end
+            table.insert(names, 1, normalized(node.Name))
+            node = node.Parent
+        end
+        return table.concat(names, "/") .. ":" .. part.ClassName
+    end
     local function horizontalBox(part, position, padding)
         local point = part.CFrame:PointToObjectSpace(Vector3.new(position.X, part.Position.Y, position.Z))
         return math.abs(point.X) <= part.Size.X * 0.5 + padding
@@ -2369,20 +2380,35 @@ do
                     local spawned = saved and saved.spawnedParts and saved.spawnedParts[part]
                     local insideBoss = part:IsDescendantOf(target.model)
                     local flat = part.Size.Y <= math.max(part.Size.X, part.Size.Z) * 0.30
-                    local currentRed = part.Transparency < 0.98 and looksRed(part)
+                    local visible = part.Transparency < 0.97
+                    local currentRed = visible and looksRed(part)
                     local old = saved and saved.partState and saved.partState[part]
-                    local changed = old and ((part.CanTouch and not old.canTouch) or (currentRed and not old.red)
-                        or part.Size.Magnitude > old.size * 1.30 or part.Transparency < old.transparency - 0.20)
+                    local moved = old and broad and ((part.Position - old.position).Magnitude > 1.5
+                        or math.abs(part.CFrame.LookVector:Dot(old.lookVector)) < 0.985)
+                    local changed = old and ((part.CanTouch and not old.canTouch)
+                        or (visible and old.transparency >= 0.97)
+                        or (currentRed and not old.red)
+                        or part.Size.Magnitude > old.size * 1.20
+                        or part.Transparency < old.transparency - 0.12
+                        or (moved and (currentRed or dangerName(part))))
                     if saved and not old then
                         if saved.baselineReady then saved.dynamicParts[part] = true else saved.baselineParts[part] = true end
                     end
+                    if saved and changed then saved.dynamicParts[part] = true end
                     local dynamic = spawned or (saved and saved.dynamicParts and saved.dynamicParts[part]) or changed
-                    local red = part.Transparency < 0.98 and looksRed(part) and broad and (not insideBoss or spawned or flat)
-                    local named = dangerName(part) and broad and (spawned or not insideBoss)
-                    local liveHitbox = dynamic and broad and part.CanTouch and (not insideBoss or spawned or flat or dangerName(part))
-                    if red or named or liveHitbox then table.insert(result, part) end
+                    local signature = dangerSignature(part)
+                    local confirmed = saved and saved.confirmedHazards and saved.confirmedHazards[signature]
+                    local canBeAttack = not insideBoss or spawned or (flat and dynamic)
+                    local confirmedActive = confirmed and visible and broad and canBeAttack
+                    local redTelegraph = dynamic and currentRed and broad and canBeAttack
+                    local named = dynamic and visible and dangerName(part) and broad and canBeAttack
+                    local liveHitbox = dynamic and visible and broad and part.CanTouch and canBeAttack
+                    if confirmedActive or redTelegraph or named or liveHitbox then
+                        table.insert(result, part)
+                    end
                     if saved then saved.partState[part] = {canTouch = part.CanTouch, red = currentRed,
-                        size = part.Size.Magnitude, transparency = part.Transparency} end
+                        size = part.Size.Magnitude, transparency = part.Transparency,
+                        position = part.Position, lookVector = part.CFrame.LookVector} end
                 end
             end
         end
@@ -2392,6 +2418,29 @@ do
             saved.nextDangerScan = os.clock() + 0.035
         end
         return result
+    end
+    local function confirmDamageHazards(target)
+        if not saved or not target or not target.root or not target.root.Parent then return end
+        local overlap = OverlapParams.new()
+        overlap.FilterType = Enum.RaycastFilterType.Exclude
+        overlap.FilterDescendantsInstances = {saved.character, target.model}
+        overlap.MaxParts = 120
+        local ok, nearby = pcall(function() return World:GetPartBoundsInRadius(saved.root.Position, 14, overlap) end)
+        if not ok then return end
+        for _, part in ipairs(nearby) do
+            if part:IsA("BasePart") and part.Parent and part.Transparency < 0.97 then
+                local broad = math.max(part.Size.X, part.Size.Z) >= 2
+                local flat = part.Size.Y <= math.max(part.Size.X, part.Size.Z) * 0.35
+                local dynamic = saved.spawnedParts[part] or saved.dynamicParts[part]
+                local translucentRed = looksRed(part) and part.Transparency > 0.04
+                if broad and horizontalBox(part, saved.root.Position, 2.8)
+                    and (dynamic or dangerName(part) or (flat and translucentRed)) then
+                    saved.confirmedHazards[dangerSignature(part)] = true
+                    saved.dynamicParts[part] = true
+                end
+            end
+        end
+        saved.nextDangerScan = 0
     end
     local function standingPoint(position, target)
         local root, humanoid = saved.root, saved.humanoid
@@ -2545,11 +2594,20 @@ do
             local root, humanoid = aO(), aN()
             assert(root and humanoid, "Персонаж ещё не готов")
             saved = { character = aM(), root = root, humanoid = humanoid, origin = root.CFrame,
+                rotation = root.CFrame - root.CFrame.Position,
                 autoRotate = humanoid.AutoRotate, anchored = root.Anchored, spawnedParts = setmetatable({}, {__mode = "k"}),
                 baselineParts = setmetatable({}, {__mode = "k"}), dynamicParts = setmetatable({}, {__mode = "k"}),
                 partState = setmetatable({}, {__mode = "k"}), baselineReady = false,
+                confirmedHazards = {}, lastHealth = humanoid.Health,
                 dangerParts = {}, nextDangerScan = 0, dodgeDirection = 1, damageRevision = 0, nextMoveAt = 0 }
-            saved.healthConnection = humanoid.HealthChanged:Connect(onHealth)
+            saved.healthConnection = humanoid.HealthChanged:Connect(function(health)
+                if saved and saved.lastHealth and health < saved.lastHealth then
+                    local current = q.boss and q.boss.target and info(q.boss.target)
+                    if current then confirmDamageHazards(current) end
+                end
+                if saved then saved.lastHealth = health end
+                onHealth(health)
+            end)
             saved.spawnConnection = World.DescendantAdded:Connect(function(node)
                 if saved and node:IsA("BasePart") then saved.spawnedParts[node] = true saved.nextDangerScan = 0 end
             end)
@@ -2559,12 +2617,29 @@ do
             assert(saved and saved.character == aM() and saved.root.Parent, "Персонаж сменился")
             assert(target.root and target.root.Parent, "Босс исчез")
             saved.humanoid.AutoRotate = false
-            saved.root.Anchored = false
-            local point, dangerCount = chooseDodgePoint(target, tonumber(damageRevision) or 0)
-            q.bossDangerCount = dangerCount
-            if point and os.clock() >= (saved.nextMoveAt or 0) then
-                saved.nextMoveAt = os.clock() + 0.015
-                saved.root.CFrame = CFrame.lookAt(point, Vector3.new(target.root.Position.X, point.Y, target.root.Position.Z))
+            local depth = math.clamp(tonumber(height) or 7, 3, 18)
+            if not saved.arenaY then
+                local ray = RaycastParams.new()
+                ray.FilterType = Enum.RaycastFilterType.Exclude
+                local exclusions = {target.model}
+                for _, player in ipairs(Players:GetPlayers()) do
+                    if player.Character then table.insert(exclusions, player.Character) end
+                end
+                ray.FilterDescendantsInstances = exclusions
+                pcall(function() ray.RespectCanCollide = true end)
+                local hit = World:Raycast(target.root.Position + Vector3.new(0, 12, 0), Vector3.new(0, -140, 0), ray)
+                saved.arenaY = hit and hit.Position.Y or (target.root.Position.Y - math.max(5, target.root.Size.Y * 0.5))
+            end
+            if saved.depth ~= depth or not saved.underY then
+                saved.depth = depth
+                saved.underY = saved.arenaY - depth
+            end
+            local point = Vector3.new(target.root.Position.X, saved.underY, target.root.Position.Z)
+            q.bossDangerCount = 0
+            saved.root.Anchored = true
+            if (saved.root.Position - point).Magnitude > 0.18 and os.clock() >= (saved.nextMoveAt or 0) then
+                saved.nextMoveAt = os.clock() + 0.03
+                saved.root.CFrame = CFrame.new(point) * saved.rotation
                 saved.root.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
                 saved.root.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
             end
@@ -3512,7 +3587,7 @@ do
     targetLabel.TextWrapped = true
     targetLabel.TextXAlignment = Enum.TextXAlignment.Left
     targetLabel.LayoutOrder = 1
-    local rangeLabel = mt(body, "РЕЖИМ: HITBOX-DODGE • БЫСТРЫЙ УДАР", 10, Enum.Font.GothamBold, lw.Success)
+    local rangeLabel = mt(body, "РЕЖИМ: ПОД АРЕНОЙ • БЕЗ ВРАЩЕНИЯ", 10, Enum.Font.GothamBold, lw.Success)
     rangeLabel.Size = UDim2.new(1, -4, 0, 28)
     rangeLabel.TextWrapped = true
     rangeLabel.TextXAlignment = Enum.TextXAlignment.Left
@@ -3522,7 +3597,7 @@ do
     status.TextWrapped = true
     status.TextXAlignment = Enum.TextXAlignment.Left
     status.LayoutOrder = 3
-    local hint = mt(body, "Стоит в радиусе удара. При появлении новой attack/hitbox-зоны мгновенно переносится в свободный сектор; потеря HP включает запасное уклонение.", 9, Enum.Font.Gotham, lw.Muted)
+    local hint = mt(body, "Следит за живым боссом по X/Z и держит персонажа примерно на 7 studs ниже пола арены. Поворот зафиксирован; при уроне опускается лишь на 2.", 9, Enum.Font.Gotham, lw.Muted)
     hint.Size = UDim2.new(1, -4, 0, 40)
     hint.TextWrapped = true
     hint.LayoutOrder = 4
