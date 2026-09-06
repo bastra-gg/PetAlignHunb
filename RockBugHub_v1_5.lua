@@ -4,7 +4,7 @@ pcall(function()i=game:GetService("NetworkClient")end)if not game:IsLoaded()then
 local j=a.LocalPlayer;
 while not j do task.wait()j=a.LocalPlayer end;
 local k=j:WaitForChild("PlayerGui",60)if not k then warn("[RockBugHub] PlayerGui was not created")pcall(function()g:SetCore("SendNotification",{Title="RockBugHub",Text="Ошибка запуска: PlayerGui не найден",Duration=8})end)return end;
-local l="RockBugHub_TEST_v4_23_BOSS_T10"local m="4.23BOSS-T10"local n=type(getgenv)=="function"and getgenv()or _G;
+local l="RockBugHub_TEST_v4_24_BOSS_T11"local m="4.24BOSS-T11"local n=type(getgenv)=="function"and getgenv()or _G;
 do
     -- Retire the old experimental windows and their listeners on hot reload.
     for _, key in ipairs({"RockBugTradeDiagnostics", "RockBugMiniTransfer"}) do
@@ -2400,21 +2400,29 @@ do
             if horizontalBox(part, root.Position, 1.8) then currentUnsafe = true break end
         end
         local damaged = damageRevision ~= (saved.damageRevision or 0)
+        local now = os.clock()
+        if saved.orbitAngle == nil then
+            local delta = root.Position - target.root.Position
+            saved.orbitAngle = math.atan2(delta.Z, delta.X)
+        end
+        saved.orbitDirection = saved.orbitDirection or 1
         if damaged then
             saved.damageRevision = damageRevision
-            saved.dodgeIndex = ((saved.dodgeIndex or 0) + 5) % 16
+            saved.orbitDirection = -saved.orbitDirection
+            saved.orbitAngle += saved.orbitDirection * math.pi * 0.60
         end
-        local distance = (Vector3.new(root.Position.X, target.root.Position.Y, root.Position.Z) - target.root.Position).Magnitude
-        if not currentUnsafe and not damaged and distance <= radius + 2 and distance >= math.max(2.5, radius - 2.5) then
-            return nil, #dangers, false
+        if currentUnsafe then
+            saved.orbitAngle += saved.orbitDirection * math.pi * 0.48
         end
-        local best, bestScore, bestIndex = nil, -math.huge, nil
-        local start = saved.dodgeIndex or 0
-        for offset = 0, 15 do
-            local index = (start + offset) % 16
-            local angle = index * math.pi * 2 / 16
+        local dt = math.clamp(now - (saved.lastOrbitAt or now), 0, 0.08)
+        saved.lastOrbitAt = now
+        local orbitSpeed = (#dangers > 0 or currentUnsafe or damaged) and 4.6 or 2.35
+        saved.orbitAngle += saved.orbitDirection * orbitSpeed * dt
+        local best, bestScore, bestAngle = nil, -math.huge, nil
+        for offset = 0, 31 do
+            local angle = saved.orbitAngle + saved.orbitDirection * offset * math.pi * 2 / 32
             local flat = target.root.Position + Vector3.new(math.cos(angle) * radius, 0, math.sin(angle) * radius)
-            local candidate = standingPoint(flat, target)
+            local candidate = Vector3.new(flat.X, root.Position.Y, flat.Z)
             local blocked, clearance = false, math.huge
             for _, part in ipairs(dangers) do
                 if horizontalBox(part, candidate, 2.1) then blocked = true break end
@@ -2425,17 +2433,16 @@ do
             end
             if not blocked then
                 local moveCost = (candidate - root.Position).Magnitude
-                local score = (clearance == math.huge and 40 or math.min(40, clearance * 3)) - moveCost * 0.16 - offset * 0.05
-                if score > bestScore then best, bestScore, bestIndex = candidate, score, index end
+                local score = (clearance == math.huge and 40 or math.min(40, clearance * 3)) - moveCost * 0.04 - offset * 2.5
+                if score > bestScore then best, bestScore, bestAngle = candidate, score, angle end
             end
         end
         if not best then
-            local index = ((saved.dodgeIndex or 0) + 4) % 16
-            local angle = index * math.pi * 2 / 16
-            best = standingPoint(target.root.Position + Vector3.new(math.cos(angle) * radius, 0, math.sin(angle) * radius), target)
-            bestIndex = index
+            bestAngle = saved.orbitAngle + saved.orbitDirection * math.pi * 0.75
+            best = target.root.Position + Vector3.new(math.cos(bestAngle) * radius * 1.8, 0, math.sin(bestAngle) * radius * 1.8)
         end
-        saved.dodgeIndex = bestIndex
+        saved.orbitAngle = bestAngle
+        best = standingPoint(best, target)
         return best, #dangers, currentUnsafe or damaged
     end
     local function release(retreat)
@@ -2530,7 +2537,8 @@ do
             assert(root and humanoid, "Персонаж ещё не готов")
             saved = { character = aM(), root = root, humanoid = humanoid, origin = root.CFrame,
                 autoRotate = humanoid.AutoRotate, anchored = root.Anchored, spawnedParts = setmetatable({}, {__mode = "k"}),
-                dangerParts = {}, nextDangerScan = 0, dodgeIndex = 0, damageRevision = 0, nextMoveAt = 0 }
+                dangerParts = {}, nextDangerScan = 0, orbitAngle = nil, orbitDirection = 1,
+                lastOrbitAt = nil, damageRevision = 0, nextMoveAt = 0 }
             saved.healthConnection = humanoid.HealthChanged:Connect(onHealth)
             saved.spawnConnection = World.DescendantAdded:Connect(function(node)
                 if saved and node:IsA("BasePart") then saved.spawnedParts[node] = true end
@@ -2545,7 +2553,7 @@ do
             local point, dangerCount = chooseDodgePoint(target, tonumber(damageRevision) or 0)
             q.bossDangerCount = dangerCount
             if point and os.clock() >= (saved.nextMoveAt or 0) then
-                saved.nextMoveAt = os.clock() + 0.06
+                saved.nextMoveAt = os.clock() + 0.03
                 saved.root.CFrame = CFrame.lookAt(point, Vector3.new(target.root.Position.X, point.Y, target.root.Position.Z))
                 saved.root.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
                 saved.root.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
@@ -3504,7 +3512,7 @@ do
     status.TextWrapped = true
     status.TextXAlignment = Enum.TextXAlignment.Left
     status.LayoutOrder = 3
-    local hint = mt(body, "Скрипт входит в радиус босса, обходит красные и временные attack/hitbox-зоны и меняет сторону при потере HP.", 9, Enum.Font.Gotham, lw.Muted)
+    local hint = mt(body, "Скрипт непрерывно движется вокруг босса в радиусе удара, пропускает красные attack/hitbox-зоны и разворачивается при потере HP.", 9, Enum.Font.Gotham, lw.Muted)
     hint.Size = UDim2.new(1, -4, 0, 40)
     hint.TextWrapped = true
     hint.LayoutOrder = 4
@@ -4187,7 +4195,7 @@ q.layoutUI.auraSelection=sI;
 q.refreshExtraUI=function()local sJ=q.language=="en"and" players"or" игроков"sj.Set(fC(q.killWhitelist)..sJ)sk.Set(fC(q.killBlacklist)..sJ)sA.Set(q.layoutUI.officialName(q.selectedCrystal,q.layoutUI.gameObjectContext(q.selectedCrystal)))sE()sx.Set(sy())sH.Set(q.selectedPet and q.layoutUI.officialName(q.selectedPet,q.layoutUI.gameObjectContext(q.selectedPet))or q.layoutUI.staticText("ВЫБРАТЬ"))sI.Set(q.selectedAura and q.layoutUI.officialName(q.selectedAura,q.layoutUI.gameObjectContext(q.selectedAura))or q.layoutUI.staticText("ВЫБРАТЬ"))end;
 fG()local sK="bug"local sL=false;
 local sM=n7.Size;
-q.layoutUI.sectionInfo={boss={title="БОСС • ТЕСТ",hint="Ближняя автоатака с уклонением от зон босса."},bug={title="КАМНИ",hint="Выбери камень и включи автоудар."},farm={title="ТРЕНАЖЁРЫ",hint="Выбери локацию и нужный тренажёр."},train={title="ТРЕНИРОВКА",hint="Настрой темп и выбери упражнение."},reb={title="РЕБИРТЫ",hint="Установи цель или запусти ребирты."},crystal={title="МАГАЗИН",hint="Выбери товар и включи покупку."},kill={title="АВТОКИЛ",hint="Выбери игроков и режим атаки."},egg={title="ПРОТЕИНОВЫЕ ЯЙЦА",hint="Только Protein Egg: ×2 к силе."},teleport={title="ТЕЛЕПОРТЫ",hint="Выбери остров и переместись."},quest={title="АВТОКВЕСТЫ",hint="Выбери NPC и запусти автоквест."},system={title="НАСТРОЙКИ",hint="Питомцы, графика, сеть и защита клиента."},interface={title="ИНТЕРФЕЙС",hint="Настрой цвета, неон и прозрачность."}}local function sN()local sO=n7.AbsoluteSize.X<420;
+q.layoutUI.sectionInfo={boss={title="БОСС • ТЕСТ",hint="Круговое движение в радиусе удара с автоуклонением."},bug={title="КАМНИ",hint="Выбери камень и включи автоудар."},farm={title="ТРЕНАЖЁРЫ",hint="Выбери локацию и нужный тренажёр."},train={title="ТРЕНИРОВКА",hint="Настрой темп и выбери упражнение."},reb={title="РЕБИРТЫ",hint="Установи цель или запусти ребирты."},crystal={title="МАГАЗИН",hint="Выбери товар и включи покупку."},kill={title="АВТОКИЛ",hint="Выбери игроков и режим атаки."},egg={title="ПРОТЕИНОВЫЕ ЯЙЦА",hint="Только Protein Egg: ×2 к силе."},teleport={title="ТЕЛЕПОРТЫ",hint="Выбери остров и переместись."},quest={title="АВТОКВЕСТЫ",hint="Выбери NPC и запусти автоквест."},system={title="НАСТРОЙКИ",hint="Питомцы, графика, сеть и защита клиента."},interface={title="ИНТЕРФЕЙС",hint="Настрой цвета, неон и прозрачность."}}local function sN()local sO=n7.AbsoluteSize.X<420;
 local sP=n7.AbsoluteSize.Y<440;
 nh.Size=UDim2.new(1,-16,0,sP and 34 or 38)nh.Position=UDim2.fromOffset(8,52)nI.Size=UDim2.new(1,-12,1,sP and-92 or-96)nI.Position=UDim2.fromOffset(6,sP and 90 or 94)do local count=#q.layoutUI.navigationTabs;local gap=3;local width=math.max(49,math.floor((ni.AbsoluteSize.X-(count-1)*gap)/count));q.layoutUI.navigationGrid.FillDirectionMaxCells=count;q.layoutUI.navigationGrid.CellSize=UDim2.new(0,width,1,-3);q.layoutUI.navigationGrid.CellPadding=UDim2.fromOffset(gap,0);ni.CanvasSize=UDim2.fromOffset(count*(width+gap)-gap,0);ni.ScrollBarThickness=2 end;
 nc.TextSize=sO and 12 or 14;
