@@ -4,7 +4,7 @@ pcall(function()i=game:GetService("NetworkClient")end)if not game:IsLoaded()then
 local j=a.LocalPlayer;
 while not j do task.wait()j=a.LocalPlayer end;
 local k=j:WaitForChild("PlayerGui",60)if not k then warn("[RockBugHub] PlayerGui was not created")pcall(function()g:SetCore("SendNotification",{Title="RockBugHub",Text="Ошибка запуска: PlayerGui не найден",Duration=8})end)return end;
-local l="RockBugHub_TEST_v4_25_BOSS_T23"local m="4.25BOSS-T23"local n=type(getgenv)=="function"and getgenv()or _G;
+local l="RockBugHub_TEST_v4_25_BOSS_T24"local m="4.25BOSS-T24"local n=type(getgenv)=="function"and getgenv()or _G;
 do
     -- Retire the old experimental windows and their listeners on hot reload.
     for _, key in ipairs({"RockBugTradeDiagnostics", "RockBugMiniTransfer"}) do
@@ -2022,7 +2022,24 @@ d4(q.activeTool)end;
 local l4=q.bugActive or q.trainActive or q.machineActive or q.networkPaused or q.lockRock or q.lockPosition or q.kingLock;
 task.wait(l4 and 0.005 or 0.08)end end;
 aJ(j.Idled:Connect(function()if not q.antiAfkEnabled then return end;
-B(function()e:CaptureController()e:ClickButton2(Vector2.new())end)end))q.bossFactory=(function()
+B(function()e:CaptureController()e:ClickButton2(Vector2.new())end)end))function q.serverHop()if q.serverHopBusy then return false,"переход уже запущен"end;
+q.serverHopBusy=true;
+local http=game:GetService("HttpService")local teleport=game:GetService("TeleportService")local visited=n.RockBugVisitedServers;
+if type(visited)~="table"then visited={}n.RockBugVisitedServers=visited end;
+visited[game.JobId]=true;
+local choices={}local fallback={}local cursor=nil;
+for page=1,5 do local url="https://games.roblox.com/v1/games/"..tostring(game.PlaceId).."/servers/Public?sortOrder=Asc&excludeFullGames=true&limit=100";
+if cursor and cursor~=""then url=url.."&cursor="..http:UrlEncode(cursor)end;
+local ok,body=pcall(function()return game:HttpGet(url,true)end)if not ok then q.serverHopBusy=false;return false,"список серверов недоступен"end;
+local decodedOk,data=pcall(function()return http:JSONDecode(body)end)if not decodedOk or type(data)~="table"then q.serverHopBusy=false;return false,"ошибка списка серверов"end;
+for _,server in ipairs(data.data or{})do local id=tostring(server.id or"")if id~=""and id~=game.JobId and tonumber(server.playing or 0)<tonumber(server.maxPlayers or 0)then table.insert(fallback,id)if not visited[id]then table.insert(choices,id)end end end;
+cursor=data.nextPageCursor;if#choices>0 or not cursor then break end end;
+if#choices==0 and#fallback>0 then for id in pairs(visited)do if id~=game.JobId then visited[id]=nil end end;choices=fallback end;
+if#choices==0 then q.serverHopBusy=false;return false,"другой свободный сервер не найден"end;
+local destination=choices[math.random(1,#choices)]visited[destination]=true;
+local ok,problem=pcall(function()teleport:TeleportToPlaceInstance(game.PlaceId,destination,j)end)if not ok then visited[destination]=nil;q.serverHopBusy=false;return false,tostring(problem)end;
+return true,nil end;
+q.bossFactory=(function()
 -- TEST ONLY: ordinary Punch/touch adapter, not a verified new-boss protocol.
 -- This module never changes the boss, another player, or server health values.
 return function(runtime, api)
@@ -3906,6 +3923,9 @@ do local qH,qI=oj(q.layoutUI.systemPage,"ПИТОМЦЫ",92,1)qH.LayoutOrder=2;
 q.leverRefs.petFullEquip=oC(qI,"F","ЛУЧШИЕ ПЕТЫ","только полный комплект",false,function(jH,ox)if jH then local e4,h7=q.startAutoEquipBestPets()if not e4 then ox.Set(false,true)aP("ЛУЧШИЕ ПЕТЫ: "..tostring(h7))end else q.stopAutoEquipBestPets("ЛУЧШИЕ ПЕТЫ: выключено")end end)end;
 q.layoutUI.systemVisualPanel,q.layoutUI.systemVisualBody=oj(q.layoutUI.systemPage,"ПРОИЗВОДИТЕЛЬНОСТЬ",106,2)q.layoutUI.systemVisualPanel.LayoutOrder=3;
 q.layoutUI.systemNetworkPanel,q.layoutUI.systemNetworkBody=oj(q.layoutUI.systemPage,"СЕТЬ",106,2)q.layoutUI.systemNetworkPanel.LayoutOrder=4;
+do local panel,body=oq(q.layoutUI.systemPage,"СЕРВЕР",74)panel.LayoutOrder=5;
+local hop=kr(body,"↻  СЕРВЕР-ХОП",lw.Accent)hop.Size=UDim2.new(1,0,0,32)hop.Position=UDim2.fromOffset(0,1)hop.TextSize=10;
+aJ(hop.MouseButton1Click:Connect(function()aP("СЕРВЕР-ХОП: ищу другой сервер…")task.spawn(function()local ok,problem=q.serverHop()if not ok then aP("СЕРВЕР-ХОП: "..tostring(problem))end end)end))end;
 do local qp,qq=oq(q.layoutUI.questPage,"ВЫБОР NPC",80)qp.LayoutOrder=1;
 local qy,qz=oj(q.layoutUI.questPage,"АВТОКВЕСТЫ",92,1)qy.LayoutOrder=2;
 q.layoutUI.questSelection=oY(qq,"NPC","ВЫБРАТЬ",function()local hj,h7=q.scanQuestNpcs()if not hj then aP("КВЕСТЫ: "..tostring(h7))return end;
