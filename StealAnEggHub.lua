@@ -1,6 +1,6 @@
 -- EggHub portable loader
-local VERSION = "1.0.1"
-local URL = "https://raw.githubusercontent.com/bastra-gg/PetAlignHunb/main/StealAnEggHub_core.lua"
+local VERSION = "1.1.0-safe"
+local URL = "https://raw.githubusercontent.com/bastra-gg/PetAlignHunb/main/StealAnEggHub_safe_core.lua"
 local CONTRACT = "-- EggHub core startup contract: 1"
 
 local env = _G
@@ -35,11 +35,6 @@ end
 local compiler = loadstring or env.loadstring
 if type(compiler) ~= "function" then error("EggHub: executor has no loadstring",0) end
 local source = httpGet(URL.."?v="..VERSION.."&t="..tostring(os.time()))
-
--- v1.0.1 hotfix for the first public core build. Kept here so the loader remains
--- usable even while the large core file is being iterated independently.
-source = source:gsub("b%.Activated:Connect%(cb%)", "if cb then b.Activated:Connect(cb) end", 1)
-
 local chunk, compileError = compiler(source)
 if type(chunk) ~= "function" then error("EggHub compile: "..tostring(compileError),0) end
 local runtime = chunk()
