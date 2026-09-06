@@ -4,7 +4,7 @@ pcall(function()i=game:GetService("NetworkClient")end)if not game:IsLoaded()then
 local j=a.LocalPlayer;
 while not j do task.wait()j=a.LocalPlayer end;
 local k=j:WaitForChild("PlayerGui",60)if not k then warn("[RockBugHub] PlayerGui was not created")pcall(function()g:SetCore("SendNotification",{Title="RockBugHub",Text="Ошибка запуска: PlayerGui не найден",Duration=8})end)return end;
-local l="RockBugHub_TEST_v4_25_BOSS_T14"local m="4.25BOSS-T14"local n=type(getgenv)=="function"and getgenv()or _G;
+local l="RockBugHub_TEST_v4_25_BOSS_T15"local m="4.25BOSS-T15"local n=type(getgenv)=="function"and getgenv()or _G;
 do
     -- Retire the old experimental windows and their listeners on hot reload.
     for _, key in ipairs({"RockBugTradeDiagnostics", "RockBugMiniTransfer"}) do
@@ -2028,7 +2028,7 @@ B(function()e:CaptureController()e:ClickButton2(Vector2.new())end)end))q.bossFac
 return function(runtime, api)
     local state = {
         enabled = false, generation = 0, target = nil,
-        height = 7, interval = 0.01, status = "Выключено", candidates = {},
+        height = 3, interval = 0.01, status = "Выключено", candidates = {},
         nextScan = 0, nextAttack = 0, nextUI = 0, retryAt = 0, noProgress = 0,
         lastTargetHealth = nil, lastOwnHealth = nil, lastBossDamage = nil, damageStart = nil, lastTick = nil,
         attempts = 0, observations = 0, damageEvents = 0, busy = false,
@@ -2070,7 +2070,7 @@ return function(runtime, api)
         self.attempts = 0
         self.observations = 0
         self.damageEvents = 0
-        self.height = 7
+        self.height = 3
         self.lastBossDamage = nil
         self.damageStart = nil
         show(health and health > 0 and "Запущено — ищу текущего босса…" or "Запущено — жду персонажа и текущего босса…")
@@ -2080,8 +2080,8 @@ return function(runtime, api)
         if not self.enabled then return end
         if self.lastOwnHealth and health < self.lastOwnHealth then
             self.damageEvents += 1
-            self.height = math.min(18, self.height + 2)
-            show(("Получен урон • опускаюсь глубже: %d"):format(self.height))
+            self.height = math.min(6, self.height + 0.75)
+            show(("Получен урон • опускаюсь чуть глубже: %.2f"):format(self.height))
         end
         self.lastOwnHealth = health
     end
@@ -2113,7 +2113,7 @@ return function(runtime, api)
         local dt = state.lastTick and math.clamp(now - state.lastTick, 0, 0.25) or 0
         state.lastTick = now
         if runtime.networkPaused then
-            api.release(true)
+            api.release(false)
             state.target = nil
             state.nextScan = 0
             state.nextAttack = now + state.interval
@@ -2154,7 +2154,7 @@ return function(runtime, api)
             state.nextAttack = now
             api.claim(function(health) state:Damage(health) end)
             if not state.enabled then return end
-            show(info.name .. " найден — фиксируюсь под ареной")
+            show(info.name .. " найден — физически занимаю точку под ареной")
         end
         local progressed = info.healthKnown and state.lastTargetHealth and info.health < state.lastTargetHealth
         local bossDamage = readBossDamage()
@@ -2168,14 +2168,11 @@ return function(runtime, api)
         state.lastTargetHealth = info.health
         state.lastBossDamage = bossDamage
         -- A decrease is only an observation: other players may also attack.
-        if (info.healthKnown or bossDamage ~= nil) and state.noProgress >= 10 and state.attempts > 0 then
-            api.release(true)
-            state.target = nil
-            state.retryAt = now + 4
-            state.nextScan = state.retryAt
-            state.lastTick = nil
-            show("Урон не подтверждён — новый захват цели через 4 секунды")
-            return
+        if (info.healthKnown or bossDamage ~= nil) and state.noProgress >= 2.5 and state.attempts > 0 then
+            state.height = math.max(1.25, state.height - 0.35)
+            state.noProgress = 0
+            state.nextAttack = now
+            show(("Урон не виден • поднимаюсь ближе к хитбоксу: %.2f"):format(state.height))
         end
         api.hold(info, state.height, state.damageEvents)
         if now >= state.nextAttack then
@@ -2188,7 +2185,7 @@ return function(runtime, api)
             end)
             if state.generation ~= generation or not state.enabled then return end
             if ok == false then
-                api.release(true)
+                api.release(false)
                 state.target = nil
                 state.retryAt = now + 3
                 state.nextScan = state.retryAt
@@ -2201,7 +2198,7 @@ return function(runtime, api)
         if now >= state.nextUI then
             state.nextUI = now + 0.4
             local damageText = bossDamage and state.damageStart and (" • Boss Damage +%s"):format(tostring(math.max(0, bossDamage - state.damageStart))) or ""
-            local depthText = (" • глубина: %d"):format(state.height)
+            local depthText = (" • глубина: %.2f"):format(state.height)
             show(("%s • %s%s%s • %s"):format(info.name, info.modelName or info.model.Name, damageText, depthText,
                 state.observations > 0 and "урон подтверждён" or "проверяю урон…"))
         end
@@ -2510,6 +2507,10 @@ do
         if not old then return end
         if old.healthConnection then old.healthConnection:Disconnect() end
         if old.spawnConnection then old.spawnConnection:Disconnect() end
+        if old.holdPosition and old.holdPosition.Parent then old.holdPosition:Destroy() end
+        for part, canCollide in pairs(old.collisionState or {}) do
+            if part and part.Parent then part.CanCollide = canCollide end
+        end
         if old.humanoid.Parent then old.humanoid.AutoRotate = old.autoRotate end
         if old.root.Parent and old.character == aM() and old.humanoid.Health > 0 then
             old.root.Anchored = old.anchored
@@ -2599,7 +2600,14 @@ do
                 baselineParts = setmetatable({}, {__mode = "k"}), dynamicParts = setmetatable({}, {__mode = "k"}),
                 partState = setmetatable({}, {__mode = "k"}), baselineReady = false,
                 confirmedHazards = {}, lastHealth = humanoid.Health,
+                collisionState = setmetatable({}, {__mode = "k"}), touchIndex = 0,
                 dangerParts = {}, nextDangerScan = 0, dodgeDirection = 1, damageRevision = 0, nextMoveAt = 0 }
+            for _, part in ipairs(saved.character:GetDescendants()) do
+                if part:IsA("BasePart") then
+                    saved.collisionState[part] = part.CanCollide
+                    part.CanCollide = false
+                end
+            end
             saved.healthConnection = humanoid.HealthChanged:Connect(function(health)
                 if saved and saved.lastHealth and health < saved.lastHealth then
                     local current = q.boss and q.boss.target and info(q.boss.target)
@@ -2617,7 +2625,7 @@ do
             assert(saved and saved.character == aM() and saved.root.Parent, "Персонаж сменился")
             assert(target.root and target.root.Parent, "Босс исчез")
             saved.humanoid.AutoRotate = false
-            local depth = math.clamp(tonumber(height) or 7, 3, 18)
+            local depth = math.clamp(tonumber(height) or 3, 1.25, 6)
             if not saved.arenaY then
                 local ray = RaycastParams.new()
                 ray.FilterType = Enum.RaycastFilterType.Exclude
@@ -2636,13 +2644,23 @@ do
             end
             local point = Vector3.new(target.root.Position.X, saved.underY, target.root.Position.Z)
             q.bossDangerCount = 0
-            saved.root.Anchored = true
-            if (saved.root.Position - point).Magnitude > 0.18 and os.clock() >= (saved.nextMoveAt or 0) then
-                saved.nextMoveAt = os.clock() + 0.03
-                saved.root.CFrame = CFrame.new(point) * saved.rotation
-                saved.root.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
-                saved.root.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+            saved.root.Anchored = false
+            if not saved.holdPosition or not saved.holdPosition.Parent then
+                local hold = Instance.new("BodyPosition")
+                hold.Name = "RockBugBossPhysicalHold"
+                hold.MaxForce = Vector3.new(1e9, 1e9, 1e9)
+                hold.P = 60000
+                hold.D = 2200
+                hold.Position = point
+                hold.Parent = saved.root
+                saved.holdPosition = hold
             end
+            saved.holdPosition.Position = point
+            if not saved.positioned then
+                saved.positioned = true
+                saved.root.CFrame = CFrame.new(point) * saved.rotation
+            end
+            saved.root.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
         end,
         punch = function(target, stillActive)
             if not stillActive() then return true end
@@ -2652,24 +2670,44 @@ do
             local character = aM()
             if not character or not info(target.model) then return false, "Цель или персонаж исчезли" end
             if not stillActive() then return true end
+            local contacts, touched = {}, {}
+            q.punchCycle += 1
+            local useRight = q.punchCycle % 2 == 0
+            local handName = useRight and "RightHand" or "LeftHand"
+            local hand = character:FindFirstChild(handName, true)
+                or character:FindFirstChild(handName == "RightHand" and "Right Arm" or "Left Arm", true)
+            local handle = tool:FindFirstChild("Handle")
+            if hand and hand:IsA("BasePart") then table.insert(contacts, hand) end
+            if handle and handle:IsA("BasePart") and handle ~= hand then table.insert(contacts, handle) end
+            if #contacts == 0 and saved and saved.root then table.insert(contacts, saved.root) end
+            local parts = attackParts(target)
+            saved.touchIndex = (saved.touchIndex or 0) + 1
+            local hitPart = #parts > 0 and parts[(saved.touchIndex - 1) % #parts + 1] or target.root
+            if type(firetouchinterest) == "function" and hitPart and hitPart.Parent then
+                for _, contact in ipairs(contacts) do
+                    if contact and contact.Parent and pcall(firetouchinterest, contact, hitPart, 0) then
+                        table.insert(touched, contact)
+                    end
+                end
+            end
             d4(tool)
             tool:Activate()
-            if not stillActive() then return true end
-            ek()
-            if type(firetouchinterest) == "function" then
-                local parts = attackParts(target)
-                for _, name in ipairs({"RightHand", "LeftHand", "Right Arm", "Left Arm"}) do
-                    if not stillActive() then return true end
-                    local hand = character:FindFirstChild(name, true)
-                    if hand and hand:IsA("BasePart") then
-                        for _, part in ipairs(parts) do
-                            if not stillActive() then return true end
-                            if part.Parent then
-                                firetouchinterest(hand, part, 0)
-                                firetouchinterest(hand, part, 1)
-                            end
-                        end
+            if not stillActive() then
+                if type(firetouchinterest) == "function" and hitPart and hitPart.Parent then
+                    for _, contact in ipairs(touched) do
+                        if contact and contact.Parent then pcall(firetouchinterest, contact, hitPart, 1) end
                     end
+                end
+                return true
+            end
+            local remote = eg()
+            local sent = remote and q.directRemoteEnabled and pcall(function()
+                remote:FireServer("punch", useRight and "rightHand" or "leftHand")
+            end)
+            if sent then q.remoteSentWindow += 1 ei() else ek() end
+            if type(firetouchinterest) == "function" and hitPart and hitPart.Parent then
+                for _, contact in ipairs(touched) do
+                    if contact and contact.Parent then pcall(firetouchinterest, contact, hitPart, 1) end
                 end
             end
             return true
@@ -3587,7 +3625,7 @@ do
     targetLabel.TextWrapped = true
     targetLabel.TextXAlignment = Enum.TextXAlignment.Left
     targetLabel.LayoutOrder = 1
-    local rangeLabel = mt(body, "РЕЖИМ: ПОД АРЕНОЙ • БЕЗ ВРАЩЕНИЯ", 10, Enum.Font.GothamBold, lw.Success)
+    local rangeLabel = mt(body, "РЕЖИМ: ФИЗИЧЕСКИ ПОД АРЕНОЙ • БЕЗ ВРАЩЕНИЯ", 10, Enum.Font.GothamBold, lw.Success)
     rangeLabel.Size = UDim2.new(1, -4, 0, 28)
     rangeLabel.TextWrapped = true
     rangeLabel.TextXAlignment = Enum.TextXAlignment.Left
@@ -3597,7 +3635,7 @@ do
     status.TextWrapped = true
     status.TextXAlignment = Enum.TextXAlignment.Left
     status.LayoutOrder = 3
-    local hint = mt(body, "Следит за живым боссом по X/Z и держит персонажа примерно на 7 studs ниже пола арены. Поворот зафиксирован; при уроне опускается лишь на 2.", 9, Enum.Font.Gotham, lw.Muted)
+    local hint = mt(body, "Держит персонажа совсем близко под полом физикой, без Anchored. Контакт хитбокса создаётся до Punch; при уроне позиция чуть опускается.", 9, Enum.Font.Gotham, lw.Muted)
     hint.Size = UDim2.new(1, -4, 0, 40)
     hint.TextWrapped = true
     hint.LayoutOrder = 4
