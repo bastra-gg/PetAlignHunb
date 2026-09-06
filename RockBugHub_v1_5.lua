@@ -4,7 +4,7 @@ pcall(function()i=game:GetService("NetworkClient")end)if not game:IsLoaded()then
 local j=a.LocalPlayer;
 while not j do task.wait()j=a.LocalPlayer end;
 local k=j:WaitForChild("PlayerGui",60)if not k then warn("[RockBugHub] PlayerGui was not created")pcall(function()g:SetCore("SendNotification",{Title="RockBugHub",Text="Ошибка запуска: PlayerGui не найден",Duration=8})end)return end;
-local l="RockBugHub_TEST_v4_25_BOSS_T22"local m="4.25BOSS-T22"local n=type(getgenv)=="function"and getgenv()or _G;
+local l="RockBugHub_TEST_v4_25_BOSS_T23"local m="4.25BOSS-T23"local n=type(getgenv)=="function"and getgenv()or _G;
 do
     -- Retire the old experimental windows and their listeners on hot reload.
     for _, key in ipairs({"RockBugTradeDiagnostics", "RockBugMiniTransfer"}) do
@@ -2271,16 +2271,19 @@ do
         return false
     end
     function q.bossMovingRootOf(model, fallback)
-        local anchor = q.bossAnchorCache[model]
-        if anchor and anchor.Parent then
-            if anchor:IsA("Attachment") and anchor.Parent:IsA("BasePart") then return anchor.Parent, nil end
-            if anchor:IsA("BasePart") then return anchor, nil end
-        end
         local cached = q.bossFollowCache[model]
         if cached and cached.part and cached.part.Parent and cached.untilAt > os.clock() then
             return cached.part, cached.humanoid
         end
-        local best, bestHumanoid, bestScore = fallback, nil, fallback and 50 or -math.huge
+        -- The arena title can be attached to a stationary centre marker.  Prefer the
+        -- living boss body; use the title anchor only when no moving body exists.
+        local anchor, anchorPart = q.bossAnchorCache[model], nil
+        if anchor and anchor.Parent then
+            if anchor:IsA("Attachment") and anchor.Parent:IsA("BasePart") then anchorPart = anchor.Parent
+            elseif anchor:IsA("BasePart") then anchorPart = anchor end
+        end
+        local best = fallback or anchorPart
+        local bestHumanoid, bestScore = nil, best and 50 or -math.huge
         for _, node in ipairs(model:GetDescendants()) do
             if node:IsA("Humanoid") and node.Health > 0 and node.Parent
                 and not Players:GetPlayerFromCharacter(node.Parent) then
