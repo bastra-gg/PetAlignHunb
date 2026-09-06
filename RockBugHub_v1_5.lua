@@ -4,7 +4,7 @@ pcall(function()i=game:GetService("NetworkClient")end)if not game:IsLoaded()then
 local j=a.LocalPlayer;
 while not j do task.wait()j=a.LocalPlayer end;
 local k=j:WaitForChild("PlayerGui",60)if not k then warn("[RockBugHub] PlayerGui was not created")pcall(function()g:SetCore("SendNotification",{Title="RockBugHub",Text="Ошибка запуска: PlayerGui не найден",Duration=8})end)return end;
-local l="RockBugHub_TEST_v4_22_BOSS_T9"local m="4.22BOSS-T9"local n=type(getgenv)=="function"and getgenv()or _G;
+local l="RockBugHub_TEST_v4_23_BOSS_T10"local m="4.23BOSS-T10"local n=type(getgenv)=="function"and getgenv()or _G;
 do
     -- Retire the old experimental windows and their listeners on hot reload.
     for _, key in ipairs({"RockBugTradeDiagnostics", "RockBugMiniTransfer"}) do
@@ -1842,6 +1842,15 @@ if k_>=kX then q.eggGiftStatus="готово • передано ×"..tostring(
 if type(q.refreshEggGiftUI)=="function"then q.refreshEggGiftUI()end;
 if k_>0 then aP("ПЕРЕДАЧА ЯИЦ: ×"..tostring(k_).." → "..tostring(kQ.Name))else aP("ПЕРЕДАЧА ЯИЦ: "..tostring(l0 or"не сработало"))end;
 return k_>0,k_,l0 end;
+q.fastPunchRate=math.clamp(tonumber(q.fastPunchRate)or 120,5,120);
+q.fastPunchEffectiveRate=0;
+q.fastPunchTokens=0;
+q.fastPunchLastLoop=os.clock();
+q.fastPunchNextToolPulse=0;
+q.fastPunchAdaptiveRate=20;
+q.fastPunchLastControl=os.clock();
+q.fastPunchLastStrength=nil;
+q.fastPunchStalls=0;
 q.turboRepEnabled=true;
 q.turboRepRate=200;
 q.turboRepEffectiveRate=0;
@@ -1901,7 +1910,33 @@ local D,hg=pcall(function()for o=1,l5 do if kX then eh:FireServer("rep",kX)else 
 l6=l6+1 end end)if D then q.turboRepTokens=q.turboRepTokens-l6;
 q.remoteSentWindow=q.remoteSentWindow+l6;
 ei()else q.turboRepTokens=0;
-dN("turbo rep remote error")end end;
+ dN("turbo rep remote error")end end;
+function q.runFastPunch(b6)if not q.directRemoteEnabled or q.networkPaused or q.toolTransition then q.fastPunchTokens=0;
+ q.fastPunchEffectiveRate=0;
+ q.fastPunchLastLoop=b6;
+ return end;
+ local l7=q.bugActive or(q.trainActive and q.activeTrains and q.activeTrains.Punch)if not l7 then q.fastPunchTokens=0;
+ q.fastPunchEffectiveRate=0;
+ q.fastPunchLastLoop=b6;
+ return end;
+ local l8=math.clamp(tonumber(q.fastPunchRate)or 120,5,120)local lc=tonumber(q.sessionStrengthCurrent);
+ if b6-(q.fastPunchLastControl or b6)>=0.5 then local ld=q.fastPunchLastStrength==nil or(lc~=nil and lc>q.fastPunchLastStrength)if lc==nil then q.fastPunchAdaptiveRate=math.min(l8,20)q.fastPunchStalls=0 elseif ld then q.fastPunchStalls=0;
+ q.fastPunchAdaptiveRate=math.min(l8,math.max(10,(q.fastPunchAdaptiveRate or 20)*1.25))else q.fastPunchStalls=(q.fastPunchStalls or 0)+1;
+ if q.fastPunchStalls>=2 then q.fastPunchAdaptiveRate=math.max(5,(q.fastPunchAdaptiveRate or 20)*0.60)q.fastPunchTokens=0 end end;
+ q.fastPunchLastStrength=lc;
+ q.fastPunchLastControl=b6 end;
+ l8=math.min(l8,tonumber(q.fastPunchAdaptiveRate)or 20)local dD=tonumber(q.pingMs)or 0;
+ if q.pingAvailable then if dD>=700 then l8=math.min(l8,10)elseif dD>=450 then l8=math.min(l8,20)elseif dD>=300 then l8=math.min(l8,40)elseif dD>=200 then l8=math.min(l8,60)end end;
+ q.fastPunchEffectiveRate=l8;
+ local l9=math.min(0.1,math.max(0,b6-(q.fastPunchLastLoop or b6)))q.fastPunchLastLoop=b6;
+ q.fastPunchTokens=math.min(6,(q.fastPunchTokens or 0)+l8*l9)local la=math.min(4,math.floor(q.fastPunchTokens))if la<1 then return end;
+ local eh=eg()if not eh then return end;
+ local lb=0;
+ local D=pcall(function()for o=1,la do q.punchCycle=q.punchCycle+1;
+ local el=q.punchCycle%2==0 and"rightHand"or"leftHand"eh:FireServer("punch",el)lb=lb+1 end end)if D then q.fastPunchTokens=q.fastPunchTokens-lb;
+ q.remoteSentWindow=q.remoteSentWindow+lb;
+ ei()else q.fastPunchTokens=0;
+ dN("fast punch remote error")end end;
 local function kP()while q.alive do local b6=os.clock()q.lastSchedulerTick=b6;
 if b6>=q.nextNetUpdate then q.nextNetUpdate=b6+0.5;
 dO(b6)ei()q.updateSessionStats(b6)b2()end;
@@ -1982,7 +2017,7 @@ q.trainRetryAt[l3]=0;
 B(function()cO:Activate()end)em()elseif jV then q.trainRetryAt[l3]=b6+1.25;
 q.hybridSwitchAt=0;
 aP(tostring(hR.label)..": ожидаю предмет • остальные функции работают")end end end;
-q.runTurboRep(b6)if not q.networkPaused and(q.bugActive or q.trainActive)and b6>=q.nextCooldownSweep then q.nextCooldownSweep=b6+2;
+ q.runFastPunch(b6)q.runTurboRep(b6)if not q.networkPaused and(q.bugActive or q.trainActive)and b6>=q.nextCooldownSweep then q.nextCooldownSweep=b6+2;
 d4(q.activeTool)end;
 local l4=q.bugActive or q.trainActive or q.machineActive or q.networkPaused or q.lockRock or q.lockPosition or q.kingLock;
 task.wait(l4 and 0.005 or 0.08)end end;
@@ -2044,7 +2079,7 @@ return function(runtime, api)
         if not self.enabled then return end
         if self.lastOwnHealth and health < self.lastOwnHealth then
             self.damageEvents += 1
-            show("Получен урон • дальний режим остаётся включён")
+            show("Получен урон • меняю сектор уклонения")
         end
         self.lastOwnHealth = health
     end
@@ -2117,7 +2152,7 @@ return function(runtime, api)
             state.nextAttack = now
             api.claim(function(health) state:Damage(health) end)
             if not state.enabled then return end
-            show(info.name .. " найден — дальняя атака с текущей позиции")
+            show(info.name .. " найден — вхожу в радиус и отслеживаю зоны атак")
         end
         local progressed = info.healthKnown and state.lastTargetHealth and info.health < state.lastTargetHealth
         local bossDamage = readBossDamage()
@@ -2140,7 +2175,7 @@ return function(runtime, api)
             show("Урон не подтверждён — новый захват цели через 4 секунды")
             return
         end
-        api.hold(info, state.height)
+        api.hold(info, state.height, state.damageEvents)
         if now >= state.nextAttack then
             state.nextAttack = now + state.interval -- no catch-up bursts after lag
             local generation = state.generation
@@ -2164,7 +2199,8 @@ return function(runtime, api)
         if now >= state.nextUI then
             state.nextUI = now + 0.4
             local damageText = bossDamage and state.damageStart and (" • Boss Damage +%s"):format(tostring(math.max(0, bossDamage - state.damageStart))) or ""
-            show(("%s • %s%s • %s"):format(info.name, info.modelName or info.model.Name, damageText,
+            local dodgeText = (runtime.bossDangerCount or 0) > 0 and (" • зон атак: %d"):format(runtime.bossDangerCount) or ""
+            show(("%s • %s%s%s • %s"):format(info.name, info.modelName or info.model.Name, damageText, dodgeText,
                 state.observations > 0 and "урон подтверждён" or "проверяю урон…"))
         end
     end
@@ -2301,14 +2337,119 @@ do
         end
         return nil
     end
+    local dangerTokens = {"attack", "damage", "hitbox", "warning", "telegraph", "danger", "hazard", "aoe", "slam", "strike", "laser", "beam"}
+    local function looksRed(part)
+        local color = part.Color
+        return color.R >= 0.62 and color.R >= color.G * 1.45 and color.R >= color.B * 1.18
+    end
+    local function dangerName(part)
+        local key = normalized(part.Name)
+        for _, token in ipairs(dangerTokens) do
+            if key:find(token, 1, true) then return true end
+        end
+        return false
+    end
+    local function horizontalBox(part, position, padding)
+        local point = part.CFrame:PointToObjectSpace(Vector3.new(position.X, part.Position.Y, position.Z))
+        return math.abs(point.X) <= part.Size.X * 0.5 + padding
+            and math.abs(point.Z) <= part.Size.Z * 0.5 + padding
+    end
+    local function dangerParts(target)
+        if saved and saved.dangerParts and os.clock() < (saved.nextDangerScan or 0) then return saved.dangerParts end
+        local result, character = {}, saved and saved.character
+        local overlap = OverlapParams.new()
+        overlap.FilterType = Enum.RaycastFilterType.Exclude
+        overlap.FilterDescendantsInstances = character and {character} or {}
+        overlap.MaxParts = 350
+        local ok, nearby = pcall(function() return World:GetPartBoundsInRadius(target.root.Position, 85, overlap) end)
+        if ok then
+            for _, part in ipairs(nearby) do
+                if part:IsA("BasePart") and part.Parent then
+                    local broad = math.max(part.Size.X, part.Size.Z) >= 5
+                    local red = part.Transparency < 0.98 and looksRed(part) and broad
+                    local spawned = saved and saved.spawnedParts and saved.spawnedParts[part]
+                    local named = dangerName(part) and broad and (spawned or not part:IsDescendantOf(target.model))
+                    if red or named then table.insert(result, part) end
+                end
+            end
+        end
+        if saved then
+            saved.dangerParts = result
+            saved.nextDangerScan = os.clock() + 0.08
+        end
+        return result
+    end
+    local function standingPoint(position, target)
+        local root, humanoid = saved.root, saved.humanoid
+        local ray = RaycastParams.new()
+        ray.FilterType = Enum.RaycastFilterType.Exclude
+        ray.FilterDescendantsInstances = {saved.character, target.model}
+        local hit = World:Raycast(position + Vector3.new(0, 45, 0), Vector3.new(0, -130, 0), ray)
+        local y = hit and (hit.Position.Y + humanoid.HipHeight + root.Size.Y * 0.5 + 0.08) or root.Position.Y
+        return Vector3.new(position.X, y, position.Z)
+    end
+    local function chooseDodgePoint(target, damageRevision)
+        local root = saved.root
+        local ok, size = pcall(function() return target.model:GetExtentsSize() end)
+        local radius = ok and math.clamp(math.max(size.X, size.Z) * 0.20, 4.5, 10) or 6
+        local dangers = dangerParts(target)
+        local currentUnsafe = false
+        for _, part in ipairs(dangers) do
+            if horizontalBox(part, root.Position, 1.8) then currentUnsafe = true break end
+        end
+        local damaged = damageRevision ~= (saved.damageRevision or 0)
+        if damaged then
+            saved.damageRevision = damageRevision
+            saved.dodgeIndex = ((saved.dodgeIndex or 0) + 5) % 16
+        end
+        local distance = (Vector3.new(root.Position.X, target.root.Position.Y, root.Position.Z) - target.root.Position).Magnitude
+        if not currentUnsafe and not damaged and distance <= radius + 2 and distance >= math.max(2.5, radius - 2.5) then
+            return nil, #dangers, false
+        end
+        local best, bestScore, bestIndex = nil, -math.huge, nil
+        local start = saved.dodgeIndex or 0
+        for offset = 0, 15 do
+            local index = (start + offset) % 16
+            local angle = index * math.pi * 2 / 16
+            local flat = target.root.Position + Vector3.new(math.cos(angle) * radius, 0, math.sin(angle) * radius)
+            local candidate = standingPoint(flat, target)
+            local blocked, clearance = false, math.huge
+            for _, part in ipairs(dangers) do
+                if horizontalBox(part, candidate, 2.1) then blocked = true break end
+                local localPoint = part.CFrame:PointToObjectSpace(Vector3.new(candidate.X, part.Position.Y, candidate.Z))
+                local dx = math.max(0, math.abs(localPoint.X) - part.Size.X * 0.5)
+                local dz = math.max(0, math.abs(localPoint.Z) - part.Size.Z * 0.5)
+                clearance = math.min(clearance, math.sqrt(dx * dx + dz * dz))
+            end
+            if not blocked then
+                local moveCost = (candidate - root.Position).Magnitude
+                local score = (clearance == math.huge and 40 or math.min(40, clearance * 3)) - moveCost * 0.16 - offset * 0.05
+                if score > bestScore then best, bestScore, bestIndex = candidate, score, index end
+            end
+        end
+        if not best then
+            local index = ((saved.dodgeIndex or 0) + 4) % 16
+            local angle = index * math.pi * 2 / 16
+            best = standingPoint(target.root.Position + Vector3.new(math.cos(angle) * radius, 0, math.sin(angle) * radius), target)
+            bestIndex = index
+        end
+        saved.dodgeIndex = bestIndex
+        return best, #dangers, currentUnsafe or damaged
+    end
     local function release(retreat)
         local old = saved
         saved = nil
         if not old then return end
         if old.healthConnection then old.healthConnection:Disconnect() end
+        if old.spawnConnection then old.spawnConnection:Disconnect() end
         if old.humanoid.Parent then old.humanoid.AutoRotate = old.autoRotate end
         if old.root.Parent and old.character == aM() and old.humanoid.Health > 0 then
             old.root.Anchored = old.anchored
+            if retreat and old.origin then
+                old.root.CFrame = old.origin
+                old.root.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+                old.root.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+            end
         end
     end
     q.boss = q.bossFactory(q, {
@@ -2385,14 +2526,27 @@ do
             local root, humanoid = aO(), aN()
             assert(root and humanoid, "Персонаж ещё не готов")
             saved = { character = aM(), root = root, humanoid = humanoid, origin = root.CFrame,
-                autoRotate = humanoid.AutoRotate, anchored = root.Anchored }
+                autoRotate = humanoid.AutoRotate, anchored = root.Anchored, spawnedParts = setmetatable({}, {__mode = "k"}),
+                dangerParts = {}, nextDangerScan = 0, dodgeIndex = 0, damageRevision = 0, nextMoveAt = 0 }
             saved.healthConnection = humanoid.HealthChanged:Connect(onHealth)
+            saved.spawnConnection = World.DescendantAdded:Connect(function(node)
+                if saved and node:IsA("BasePart") then saved.spawnedParts[node] = true end
+            end)
         end,
         release = release,
-        hold = function(target, height)
+        hold = function(target, height, damageRevision)
             assert(saved and saved.character == aM() and saved.root.Parent, "Персонаж сменился")
             assert(target.root and target.root.Parent, "Босс исчез")
-            -- Long-range mode: the character never moves; synthetic hand touches target hitboxes.
+            saved.humanoid.AutoRotate = false
+            saved.root.Anchored = false
+            local point, dangerCount = chooseDodgePoint(target, tonumber(damageRevision) or 0)
+            q.bossDangerCount = dangerCount
+            if point and os.clock() >= (saved.nextMoveAt or 0) then
+                saved.nextMoveAt = os.clock() + 0.06
+                saved.root.CFrame = CFrame.lookAt(point, Vector3.new(target.root.Position.X, point.Y, target.root.Position.Z))
+                saved.root.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+                saved.root.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+            end
         end,
         punch = function(target, stillActive)
             if not stillActive() then return true end
@@ -2456,6 +2610,7 @@ q.uiRoot=l7;
 q.layoutUI={}q.layoutUI.localizationNodes={}q.layoutUI.englishText={["КАМНИ"]="ROCKS",["ФАРМ"]="FARM",["КАЧ"]="TRAIN",["РЕБ"]="REB",["ШОП"]="SHOP",["ЯЙЦА"]="EGGS",["ТП"]="TP",["КВЕСТЫ"]="QUESTS",["ЕЩЁ"]="MORE",["КИЛЛ"]="KILL",["ФАРМ КАМНЕЙ"]="ROCK FARM",["ТРЕНАЖЁРЫ"]="MACHINES",["ТРЕНИРОВКА"]="TRAINING",["РЕБИРТЫ"]="REBIRTHS",["МАГАЗИН"]="SHOP",["АВТОКИЛ"]="AUTO KILL",["ПРОТЕИНОВЫЕ ЯЙЦА"]="PROTEIN EGGS",["ТЕЛЕПОРТ"]="TELEPORT",["ТЕЛЕПОРТЫ"]="TELEPORTS",["АВТОКВЕСТЫ"]="AUTO QUESTS",["ИНТЕРФЕЙС"]="INTERFACE",["НАСТРОЙКИ"]="SETTINGS",["Выбери камень и включи автоудар."]="Select a rock and enable auto punch.",["Выбери камень, затем включи автоудар."]="Select a rock, then enable auto punch.",["Выбери локацию и нужный тренажёр."]="Choose a location and machine.",["Выбери упражнение для автокачалки."]="Choose exercises for automatic training.",["Установи цель или запусти ребирты."]="Set a target or start auto rebirth.",["Выбери товар и включи покупку."]="Choose an item and enable purchase.",["Выбери игроков и режим атаки."]="Choose players and an attack mode.",["Только Protein Egg: ×2 к силе."]="Protein Egg only: ×2 strength.",["Выбери остров и переместись."]="Choose an island and teleport.",["Выбери NPC и запусти автоквест."]="Choose an NPC and start auto quest.",["Настрой цвета, неон и прозрачность."]="Customize colors, neon and transparency.",["Графика, сеть и защита клиента."]="Graphics, network and client protection.",["Питомцы, графика, сеть и защита клиента."]="Pets, graphics, network and client protection.",["⌁  СТАТУС"]="⌁  STATUS",["ГОТОВО"]="DONE",["АВТОФАРМ"]="AUTO FARM",["ВЫБОР КАМНЯ"]="SELECT ROCK",["АВТОПОДБОР ПО РЕБЁРТАМ"]="AUTO ROCK BY REBIRTHS",["АВТО"]="AUTO",["ВЫБРАТЬ"]="SELECT",["РУЧНАЯ НАСТРОЙКА"]="MANUAL SELECTION",["камень не выбран"]="no rock selected",["У КАМНЯ"]="AT ROCK",["только фиксация позиции"]="position lock only",["АВТОУДАР"]="AUTO PUNCH",["бьёт с любой точки"]="hits from anywhere",["БЫСТРЫЙ УДАР"]="FAST PUNCH",["ускоряет фарм"]="speeds up farming",["ЛОКАЦИЯ И ТРЕНАЖЁР"]="LOCATION AND MACHINE",["ЛОКАЦИЯ"]="LOCATION",["ОСТРОВА И ЛОКАЦИИ"]="ISLANDS AND LOCATIONS",["БЫСТРЫЕ ТЕЛЕПОРТЫ"]="QUICK TELEPORTS",["ОСТРОВА"]="ISLANDS",["ТРЕНАЖЁРНЫЕ ЗАЛЫ"]="GYMS",["Нажми на нужное место — телепорт сработает сразу."]="Tap a destination to teleport immediately.",["ТЕКУЩАЯ ЛОКАЦИЯ"]="CURRENT LOCATION",["ПЕРЕМЕСТИТЬСЯ"]="TELEPORT NOW",["ТРЕНАЖЁР"]="MACHINE",["АВТОТРЕНИРОВКА"]="AUTO TRAINING",["АВТОТРЕНАЖЁР"]="AUTO MACHINE",["телепорт и повторения"]="teleport and repetitions",["Поиск доступных тренажёров..."]="Finding available machines...",["УПРАЖНЕНИЯ"]="EXERCISES",["ПОЛОЖЕНИЕ ИГРОКА"]="PLAYER POSITION",["ЗАКРЕПИТЬСЯ"]="LOCK POSITION",["не сдвигаться"]="stay in place",["УДАРЫ"]="PUNCH",["ГАНТЕЛИ"]="WEIGHT",["ОТЖИМАНИЯ"]="PUSHUPS",["ПРЕСС"]="SITUPS",["СТОЙКА"]="HANDSTANDS",["БЕГ"]="TREADMILL",["сила"]="strength",["гантели и штанга"]="weights and barbells",["обычные отжимания"]="standard pushups",["упражнение на пресс"]="situp exercise",["стойка на руках"]="handstand exercise",["скорость и ловкость"]="speed and agility",["БЕЗ ОГРАНИЧЕНИЯ"]="NO LIMIT",["РАЗМЕР ПЕРСОНАЖА"]="CHARACTER SIZE",["KING И РАЗМЕР"]="KING AND SIZE",["ЦЕЛЬ РЕБИРТОВ"]="REBIRTH TARGET",["Лимит выключен • цель: 100"]="Limit off • target: 100",["АВТОРЕБИРТ"]="AUTO REBIRTH",["работает без лимита"]="runs without a limit",["значение от 0.1 до 1000"]="value from 0.1 to 1000",["ФИКС. РАЗМЕР"]="LOCK SIZE",["держит нужный размер"]="keeps selected size",["остаётся в King"]="stays inside King",["АВТОАТАКА"]="AUTO ATTACK",["КОГО АТАКОВАТЬ"]="ATTACK TARGETS",["ВСЕ ИГРОКИ"]="ALL PLAYERS",["без исключений"]="no exceptions",["КРОМЕ ДРУЗЕЙ"]="EXCEPT FRIENDS",["пропускает список"]="skips protected players",["ТОЛЬКО ЦЕЛИ"]="TARGETS ONLY",["чёрный список"]="target list",["ЗАЩИЩЕНЫ"]="PROTECTED",["ЦЕЛИ"]="TARGETS",["0 игроков"]="0 players",["Защищённых скрипт пропускает. Цели — отдельный режим атаки."]="Protected players are skipped. Targets use a separate attack mode.",["ОТКРЫТИЕ / ПОКУПКА"]="OPEN / PURCHASE",["ВЫБОР ТОВАРА"]="ITEM SELECTION",["АВТОКРИСТАЛЛ"]="AUTO CRYSTAL",["режимы ×1 / ×3 / ×10"]="modes ×1 / ×3 / ×10",["АВТОУДАЛЕНИЕ"]="AUTO DELETE",["только отмеченные питомцы"]="selected pets only",["КУПИТЬ ПЕТА"]="BUY PET",["КУПИТЬ АУРУ"]="BUY AURA",["покупка за гемы"]="purchase with gems",["АВТОЭВОЛЮЦИЯ"]="AUTO EVOLVE",["5 одинаковых купленных петов"]="5 matching purchased pets",["ПИТОМЦЫ"]="PETS",["ЛУЧШИЕ ПЕТЫ"]="BEST PETS",["только полный комплект"]="full set only",["ВЫБОР NPC"]="NPC SELECTION",["АВТОКВЕСТ"]="AUTO QUEST",["берёт и сдаёт квесты"]="accepts and collects quests",["КД ПОКУПКИ"]="PURCHASE DELAY",["от 0.05 до 5 секунд"]="0.05 to 5 seconds",["КРИСТАЛЛ"]="CRYSTAL",["ОТКРЫТЬ"]="OPEN",["УДАЛЯТЬ"]="DELETE",["ПИТОМЕЦ"]="PET",["АУРА"]="AURA",["PROTEIN EGG • ×2 СИЛА"]="PROTEIN EGG • ×2 STRENGTH",["ИСПОЛЬЗ."]="USE",["КАЖДЫЕ"]="EVERY",["В инвентаре: —"]="In inventory: —",["АВТОИСПОЛЬЗОВАНИЕ"]="AUTO USE",["только яйцо ×2 к силе"]="×2 strength egg only",["ПРОИЗВОДИТЕЛЬНОСТЬ"]="PERFORMANCE",["ЦВЕТА ИНТЕРФЕЙСА"]="INTERFACE COLORS",["ВНЕШНИЙ ВИД"]="APPEARANCE",["ЦВЕТ ИКОНОК"]="ICON COLOR",["ЦВЕТ ФОНА"]="BACKGROUND COLOR",["ЦВЕТ НЕОНА"]="NEON COLOR",["ЦВЕТ ТЕКСТА"]="TEXT COLOR",["ЦВЕТА"]="COLORS",["ВИД"]="STYLE",["ЭФФЕКТЫ"]="EFFECTS",["ПАМЯТЬ"]="MEMORY",["КОНФИГ"]="CONFIG",["ВКЛАДКИ"]="TABS",["ПРОЗРАЧНОСТЬ"]="TRANSPARENCY",["ЯРКОСТЬ НЕОНА"]="NEON INTENSITY",["СКРУГЛЕНИЕ"]="ROUNDING",["КОНТРАСТ ПАНЕЛЕЙ"]="PANEL CONTRAST",["РАЗМЕР ТЕКСТА"]="TEXT SIZE",["ТОЛЩИНА РАМОК"]="BORDER WEIGHT",["ГРАДИЕНТ"]="GRADIENT",["ТЕНЬ ОКНА"]="WINDOW SHADOW",["СДВИГ ВКЛАДОК"]="PAGE MOTION",["АНИМАЦИЯ ОКНА"]="WINDOW ANIMATION",["ПЕРЕТАСКИВАНИЕ"]="DRAG TO REORDER",["зажми вкладку и перемести"]="hold a tab and move it",["ПОСЛЕДНЯЯ ВКЛАДКА"]="REMEMBER LAST TAB",["открывать прежний раздел"]="reopen your last section",["СБРОСИТЬ ПОРЯДОК"]="RESET TAB ORDER",["КЛЮЧ КОНФИГА"]="CONFIGURATION KEY",["КОД КОНФИГУРАЦИИ"]="CONFIGURATION CODE",["КОПИРОВАТЬ"]="COPY",["ВСТАВИТЬ"]="PASTE",["ПРИМЕНИТЬ"]="APPLY",["Вставь код с другого устройства"]="Paste a code from another device",["Код переносит настройки и порядок вкладок между устройствами."]="Your code transfers settings and tab order between devices.",["СКОПИРОВАТЬ КЛЮЧ"]="COPY KEY",["ИМПОРТ КЛЮЧА"]="IMPORT KEY",["Вставь зашифрованный ключ с другого устройства"]="Paste an encrypted key from another device",["Память и ключ защищены. Ключ переносит профиль между устройствами."]="Memory and keys are encrypted. Use a key to move your profile between devices.",["Зажми вкладку сверху и передвинь её в нужное место."]="Hold a top tab and drag it to the position you want.",["АНИМАЦИЯ И ЭФФЕКТЫ"]="ANIMATION AND EFFECTS",["СКОРОСТЬ АНИМАЦИИ"]="ANIMATION SPEED",["МОУШЕН БЛЮР"]="MOTION BLUR",["КОНФИГИ"]="CONFIGS",["ПРОФИЛЬ"]="PROFILE",["ПРОФИЛЬ 1"]="PROFILE 1",["ПРОФИЛЬ 2"]="PROFILE 2",["ПРОФИЛЬ 3"]="PROFILE 3",["ПРОФИЛЬ 4"]="PROFILE 4",["ПРОФИЛЬ 5"]="PROFILE 5",["СОХРАНИТЬ"]="SAVE",["ВОЗОБНОВИТЬ"]="RESUME",["ЗАГРУЗИТЬ"]="LOAD",["УДАЛИТЬ"]="DELETE",["Выбери профиль и сохрани свои настройки."]="Choose a profile and save your settings.",["ВЫБОР ПРОФИЛЯ"]="SELECT PROFILE",["СБРОСИТЬ ОФОРМЛЕНИЕ"]="RESET APPEARANCE",["СЕТЬ"]="NETWORK",["ЛЁГКАЯ ГРАФИКА"]="LOW GRAPHICS",["меньше нагрузки"]="reduces client load",["АНТИ-AFK"]="ANTI-AFK",["ЗАЩИТА СЕТИ"]="NETWORK GUARD",["автопауза при плохой сети"]="auto pause on poor network",["ПАУЗА СЕТИ"]="NETWORK PAUSE",["удерживает клиент"]="holds the client",["ЯЗЫК / LANGUAGE"]="LANGUAGE / ЯЗЫК",["ЯЗЫК"]="LANGUAGE",["ВЫБОР"]="SELECT",["ОТМЕНА"]="CANCEL",["ПОДТВЕРДИТЬ"]="CONFIRM",["ВНИМАНИЕ: УДАЛЕНИЕ"]="WARNING: DELETION",["НИЧЕГО НЕ НАЙДЕНО"]="NOTHING FOUND",["ЗАЩ"]="SAFE",["ЗАКРЫТЬ"]="CLOSE",["ВЫБОР ЛОКАЦИИ"]="SELECT LOCATION",["ВЫБОР ОСТРОВА"]="SELECT ISLAND",["ВЫБОР ЦВЕТА"]="SELECT COLOR",["НАСТРОЙКА ПРОЗРАЧНОСТИ"]="SET TRANSPARENCY",["НАСТРОЙКА НЕОНА"]="SET NEON",["НАСТРОЙКА СКРУГЛЕНИЯ"]="SET ROUNDING",["КРИСТАЛЛЫ ИЗ ИГРЫ"]="GAME CRYSTALS",["ЗАЩИЩЁННЫЕ ИГРОКИ"]="PROTECTED PLAYERS",["ЦЕЛИ АВТОКИЛА"]="AUTO KILL TARGETS",["ПЕТ ЗА ГЕМЫ • БЕЗ РУЛЕТКИ"]="PET FOR GEMS • NO RNG",["АУРА ЗА ГЕМЫ • БЕЗ РУЛЕТКИ"]="AURA FOR GEMS • NO RNG",["ПЕРИОД • PROTEIN EGG"]="INTERVAL • PROTEIN EGG"}function q.layoutUI.staticText(aF)local bA=tostring(aF or"")if q.language=="en"then return q.layoutUI.englishText[bA]or bA end;
 return bA end;
 q.layoutUI.englishText["КОЛЕСО УДАЧИ"]="FORTUNE WHEEL"q.layoutUI.englishText["АВТОПРОКРУТКА"]="AUTO SPIN"q.layoutUI.englishText["крутит при доступной попытке"]="spins when a try is available"q.layoutUI.englishText["УЛЬТРА-РЕЖИМ"]="ULTRA MODE"q.layoutUI.englishText["чёрный экран и отключение 3D"]="black screen and disabled 3D"q.layoutUI.englishText["ВЕРНУТЬ ЭКРАН"]="RESTORE SCREEN";
+q.layoutUI.englishText["ТЕМП УДАРОВ"]="PUNCH RATE"q.layoutUI.englishText["ускорение с защитой от перегрузки"]="acceleration with overload protection";
 q.layoutUI.englishText["ПЕРЕДАЧА ЯИЦ"]="EGG GIFTING"q.layoutUI.englishText["ИГРОК"]="PLAYER"q.layoutUI.englishText["ВЫБОР ИГРОКА"]="SELECT PLAYER"q.layoutUI.englishText["КОЛИЧЕСТВО"]="AMOUNT"q.layoutUI.englishText["ПЕРЕДАТЬ"]="GIFT";
 function q.layoutUI.registerText(k9,aF)local bA=tostring(aF or"")if bA~=""then table.insert(q.layoutUI.localizationNodes,{node=k9,source=bA})end;
 k9.Text=q.layoutUI.staticText(bA)end;
@@ -2614,7 +2769,7 @@ task.delay(0.45,function()if q.alive and q.layoutUI and q.layoutUI.memoryWriteTo
 function q.layoutUI.captureLastSession()local m9={}for e7,ma in pairs(q.activeTrains or{})do if ma then m9[e7]=true end end;
 local mb={}for u,fF in pairs(q.petCleanupTargets or{})do if fF then mb[u]=true end end;
 local f2=q.selectedMachine;
-return{language=q.language=="en"and"en"or"ru",autoRockSelection=q.autoRockSelection~=false,rockId=q.selectedRock and q.selectedRock.id or nil,petGradeIndex=math.clamp(math.floor(tonumber(q.petGradeIndex)or 5),1,5),bugActive=q.bugActive==true,lockRock=q.lockRock==true,activeTrains=m9,machineActive=q.machineActive==true,machineZone=f2 and f2.zone or q.machineZone,machineName=f2 and f2.name or nil,machineKind=f2 and f2.kind or nil,machineVariant=f2 and f2.variant or nil,kingLock=q.kingLock==true,eggEnabled=q.eggEnabled==true,eggAmount=q.eggAmount,eggIntervalMultiplier=q.eggIntervalMultiplier,autoRebirth=q.autoRebirth==true,rebirthGoalEnabled=q.rebirthGoalEnabled==true,rebirthGoal=q.rebirthGoal,autoSize=q.autoSize==true,sizeTarget=q.sizeTarget,crystalMode=q.crystalMode,crystalAmount=q.crystalAmount,purchaseDelay=q.purchaseDelay,selectedCrystal=q.selectedCrystal,selectedPet=q.selectedPet,selectedAura=q.selectedAura,petCleanupEnabled=q.petCleanupEnabled==true,petCleanupTargets=mb,autoEvolvePurchasedPets=q.autoEvolvePurchasedPets~=false,autoEquipBestPets=q.autoEquipBestPets==true,autoQuest=q.autoQuest==true,autoWheel=q.autoWheel==true,selectedQuestNpc=q.selectedQuestNpc,selectedTeleport=q.selectedTeleport,antiAfkEnabled=q.antiAfkEnabled~=false,netGuardEnabled=q.netGuardEnabled~=false,directRemoteEnabled=q.directRemoteEnabled~=false,visualLow=q.visualLow==true,savedAt=os.time()}end;
+return{language=q.language=="en"and"en"or"ru",autoRockSelection=q.autoRockSelection~=false,rockId=q.selectedRock and q.selectedRock.id or nil,petGradeIndex=math.clamp(math.floor(tonumber(q.petGradeIndex)or 5),1,5),bugActive=q.bugActive==true,lockRock=q.lockRock==true,activeTrains=m9,machineActive=q.machineActive==true,machineZone=f2 and f2.zone or q.machineZone,machineName=f2 and f2.name or nil,machineKind=f2 and f2.kind or nil,machineVariant=f2 and f2.variant or nil,kingLock=q.kingLock==true,eggEnabled=q.eggEnabled==true,eggAmount=q.eggAmount,eggIntervalMultiplier=q.eggIntervalMultiplier,autoRebirth=q.autoRebirth==true,rebirthGoalEnabled=q.rebirthGoalEnabled==true,rebirthGoal=q.rebirthGoal,autoSize=q.autoSize==true,sizeTarget=q.sizeTarget,crystalMode=q.crystalMode,crystalAmount=q.crystalAmount,purchaseDelay=q.purchaseDelay,selectedCrystal=q.selectedCrystal,selectedPet=q.selectedPet,selectedAura=q.selectedAura,petCleanupEnabled=q.petCleanupEnabled==true,petCleanupTargets=mb,autoEvolvePurchasedPets=q.autoEvolvePurchasedPets~=false,autoEquipBestPets=q.autoEquipBestPets==true,autoQuest=q.autoQuest==true,autoWheel=q.autoWheel==true,selectedQuestNpc=q.selectedQuestNpc,selectedTeleport=q.selectedTeleport,antiAfkEnabled=q.antiAfkEnabled~=false,netGuardEnabled=q.netGuardEnabled~=false,directRemoteEnabled=q.directRemoteEnabled~=false,fastPunchRate=math.clamp(tonumber(q.fastPunchRate)or 60,5,120),visualLow=q.visualLow==true,savedAt=os.time()}end;
 function q.layoutUI.saveLastSession()q.layoutUI.lastSavedSession=q.layoutUI.captureLastSession()n.RockBugLastSession=q.layoutUI.copyProfile(q.layoutUI.lastSavedSession)local m7=q.layoutUI.writeConfigs()aP(q.language=="en"and(m7 and"SETTINGS: SAVED"or"SETTINGS: FILE SAVE IS UNAVAILABLE")or(m7 and"НАСТРОЙКИ: сохранены"or"НАСТРОЙКИ: запись файла недоступна"))return m7 end;
 function q.layoutUI.resumeLastSession()if q.sessionResumeInFlight then aP(q.language=="en"and"SETTINGS: RESUME IN PROGRESS"or"НАСТРОЙКИ: уже восстанавливаются")return false end;
 local mc=q.layoutUI.lastSavedSession;
@@ -2638,6 +2793,7 @@ q.autoEvolvePurchasedPets=mc.autoEvolvePurchasedPets~=false;
 q.antiAfkEnabled=mc.antiAfkEnabled~=false;
 q.netGuardEnabled=mc.netGuardEnabled~=false;
 q.directRemoteEnabled=mc.directRemoteEnabled~=false;
+q.fastPunchRate=math.clamp(tonumber(mc.fastPunchRate)or q.fastPunchRate or 60,5,120);
 q.autoRockSelection=mc.autoRockSelection~=false;
 local rockRestored=false;
 if type(mc.rockId)=="string"then for o,bu in ipairs(bb)do if bu.id==mc.rockId then q.selectedRock=bu;
@@ -2654,6 +2810,7 @@ if q.ui and q.ui.rebirthGoalInput then q.ui.rebirthGoalInput.Text=("%.0f"):forma
 if q.leverRefs.antiAfk then q.leverRefs.antiAfk.Set(q.antiAfkEnabled,true)end;
 if q.leverRefs.netGuard then q.leverRefs.netGuard.Set(q.netGuardEnabled,true)end;
 if q.leverRefs.directRemote then q.leverRefs.directRemote.Set(q.directRemoteEnabled,true)end;
+if q.layoutUI.fastPunchSlider then q.layoutUI.fastPunchSlider.Set(q.fastPunchRate,true)q.layoutUI.fastPunchSlider.ValueLabel.Text=tostring(math.floor(q.fastPunchRate+0.5)).."/с"end;
 if q.leverRefs.petEvolve then q.leverRefs.petEvolve.Set(q.autoEvolvePurchasedPets,true)end;
 jG(mc.visualLow==true)if q.leverRefs.visualLow then q.leverRefs.visualLow.Set(q.visualLow,true)end;
 if mc.machineActive and q.selectedMachine then jZ(q.selectedMachine)elseif mc.kingLock then local fF=ji()if fF and q.leverRefs.kingLock then q.leverRefs.kingLock.Set(true,true)end elseif mc.lockRock then jR()end;
@@ -3334,7 +3491,7 @@ do
     targetLabel.TextWrapped = true
     targetLabel.TextXAlignment = Enum.TextXAlignment.Left
     targetLabel.LayoutOrder = 1
-    local rangeLabel = mt(body, "РЕЖИМ: ДАЛЬНИЙ УДАР • персонаж остаётся на месте", 10, Enum.Font.GothamBold, lw.Success)
+    local rangeLabel = mt(body, "РЕЖИМ: БЛИЖНИЙ БОЙ • АВТОУКЛОНЕНИЕ", 10, Enum.Font.GothamBold, lw.Success)
     rangeLabel.Size = UDim2.new(1, -4, 0, 28)
     rangeLabel.TextWrapped = true
     rangeLabel.TextXAlignment = Enum.TextXAlignment.Left
@@ -3344,7 +3501,7 @@ do
     status.TextWrapped = true
     status.TextXAlignment = Enum.TextXAlignment.Left
     status.LayoutOrder = 3
-    local hint = mt(body, "Игрок не телепортируется к боссу. Дальний touch идёт по найденным hitbox-деталям; рост Boss Damage подтверждает попадание.", 9, Enum.Font.Gotham, lw.Muted)
+    local hint = mt(body, "Скрипт входит в радиус босса, обходит красные и временные attack/hitbox-зоны и меняет сторону при потере HP.", 9, Enum.Font.Gotham, lw.Muted)
     hint.Size = UDim2.new(1, -4, 0, 40)
     hint.TextWrapped = true
     hint.LayoutOrder = 4
@@ -3429,8 +3586,6 @@ pG("ВЫБОР КАМНЯ",pH,{selected={[tostring(q0())]=true},onDone=function(
 local qc;
 qb=oC(pK,"◇","У КАМНЯ","только фиксация позиции",false,function(jH,ox)if jH then if not jR()then ox.Set(false,true)end else jQ("ФИКСАЦИЯ: выключена")end end)qc=oC(pK,"▷","АВТОУДАР","бьёт с любой точки",false,function(jH,ox)if jH then if not jU()then ox.Set(false,true)end else jP("АВТОУДАР: выключен")end end)q.leverRefs.lockRock=qb;
 q.leverRefs.bug=qc;
-local qd=oC(pK,"◎","БЫСТРЫЙ УДАР","ускоряет фарм",true,function(jH)q.directRemoteEnabled=jH;
-aP("УСКОРЕНИЕ: "..(jH and"включено"or"выключено"))end)q.leverRefs.directRemote=qd;
 do local qe,qf=oq(nU,"ЛОКАЦИЯ И ТРЕНАЖЁР",130)qe.LayoutOrder=1;
 local qg;
 local qh;
@@ -3852,8 +4007,17 @@ local rM=oC(q.layoutUI.systemNetworkBody,"◌","ПАУЗА СЕТИ","удерж
 if jH then q.netGuardEnabled=true;
 if q.leverRefs.netGuard then q.leverRefs.netGuard.Set(true,true)end;
 dK("manual WiFi hold",os.clock())q.networkState="MANUAL HOLD"aP("ПАУЗА СЕТИ: включена")else dL(os.clock(),"MANUAL RELEASE")aP("ПАУЗА СЕТИ: выключена")end end)q.leverRefs.wifiHold=rM;
-q.leverRefs.train={}local rN={Punch="▷",Weight="▣",Push="▽",Sit="⌁",Hand="♢",Tread="↗"}local rO={Punch="УДАРЫ",Weight="ГАНТЕЛИ",Push="ОТЖИМАНИЯ",Sit="ПРЕСС",Hand="СТОЙКА",Tread="БЕГ"}local rP={Punch="сила",Weight="гантели и штанга",Push="обычные отжимания",Sit="упражнение на пресс",Hand="стойка на руках",Tread="скорость и ловкость"}for o,cX in ipairs(q.trainModes)do local qR;
-qR=oC(qB,rN[cX.id]or"◈",rO[cX.id]or cX.label,rP[cX.id]or cX.desc,false,function(jH,ox)if jH then if not jW(cX)then ox.Set(false,true)end else if q.activeTrains[cX.id]then jS(cX.id,cX.label..": OFF")end end end)q.leverRefs.train[cX.id]=qR end;
+q.leverRefs.train={}local qd,qe=oC(qB,"◎","БЫСТРЫЙ УДАР","ускорение с защитой от перегрузки",q.directRemoteEnabled,function(jH)q.directRemoteEnabled=jH;
+q.fastPunchTokens=0;
+aP("БЫСТРЫЙ УДАР: "..(jH and"включён"or"выключен"))end)qe.LayoutOrder=1;
+q.leverRefs.directRemote=qd;
+local qf,qg=q.layoutUI.makePercentSlider(qB,"ТЕМП УДАРОВ",q.fastPunchRate,5,120,5,function(N,ox)q.fastPunchRate=math.clamp(math.floor(N+0.5),5,120)q.fastPunchTokens=0;
+q.fastPunchAdaptiveRate=math.min(q.fastPunchRate,20)q.fastPunchLastStrength=nil;
+ox.ValueLabel.Text=tostring(q.fastPunchRate).."/с"end)qg.LayoutOrder=2;
+qf.ValueLabel.Text=tostring(q.fastPunchRate).."/с"q.layoutUI.fastPunchSlider=qf;
+local rN={Punch="▷",Weight="▣",Push="▽",Sit="⌁",Hand="♢",Tread="↗"}local rO={Punch="УДАРЫ",Weight="ГАНТЕЛИ",Push="ОТЖИМАНИЯ",Sit="ПРЕСС",Hand="СТОЙКА",Tread="БЕГ"}local rP={Punch="сила",Weight="гантели и штанга",Push="обычные отжимания",Sit="упражнение на пресс",Hand="стойка на руках",Tread="скорость и ловкость"}for o,cX in ipairs(q.trainModes)do local qR,qS;
+qR,qS=oC(qB,rN[cX.id]or"◈",rO[cX.id]or cX.label,rP[cX.id]or cX.desc,false,function(jH,ox)if jH then if not jW(cX)then ox.Set(false,true)end else if q.activeTrains[cX.id]then jS(cX.id,cX.label..": OFF")end end end)qS.LayoutOrder=o+2;
+q.leverRefs.train[cX.id]=qR end;
 local rQ,rR=oj(nW,"БЕЗ ОГРАНИЧЕНИЯ",106,2)rQ.LayoutOrder=2;
 local rS,rT=oq(nW,"РАЗМЕР ПЕРСОНАЖА",80)rS.LayoutOrder=3;
 q.layoutUI.rebSupportPanel,q.layoutUI.rebSupportBody=oj(nW,"KING И РАЗМЕР",106,2)q.layoutUI.rebSupportPanel.LayoutOrder=4;
@@ -4020,7 +4184,7 @@ q.layoutUI.auraSelection=sI;
 q.refreshExtraUI=function()local sJ=q.language=="en"and" players"or" игроков"sj.Set(fC(q.killWhitelist)..sJ)sk.Set(fC(q.killBlacklist)..sJ)sA.Set(q.layoutUI.officialName(q.selectedCrystal,q.layoutUI.gameObjectContext(q.selectedCrystal)))sE()sx.Set(sy())sH.Set(q.selectedPet and q.layoutUI.officialName(q.selectedPet,q.layoutUI.gameObjectContext(q.selectedPet))or q.layoutUI.staticText("ВЫБРАТЬ"))sI.Set(q.selectedAura and q.layoutUI.officialName(q.selectedAura,q.layoutUI.gameObjectContext(q.selectedAura))or q.layoutUI.staticText("ВЫБРАТЬ"))end;
 fG()local sK="bug"local sL=false;
 local sM=n7.Size;
-q.layoutUI.sectionInfo={boss={title="БОСС • ТЕСТ",hint="Автоатака с дистанции. При уроне — отход и стоп."},bug={title="КАМНИ",hint="Выбери камень и включи автоудар."},farm={title="ТРЕНАЖЁРЫ",hint="Выбери локацию и нужный тренажёр."},train={title="ТРЕНИРОВКА",hint="Выбери упражнение для автокачалки."},reb={title="РЕБИРТЫ",hint="Установи цель или запусти ребирты."},crystal={title="МАГАЗИН",hint="Выбери товар и включи покупку."},kill={title="АВТОКИЛ",hint="Выбери игроков и режим атаки."},egg={title="ПРОТЕИНОВЫЕ ЯЙЦА",hint="Только Protein Egg: ×2 к силе."},teleport={title="ТЕЛЕПОРТЫ",hint="Выбери остров и переместись."},quest={title="АВТОКВЕСТЫ",hint="Выбери NPC и запусти автоквест."},system={title="НАСТРОЙКИ",hint="Питомцы, графика, сеть и защита клиента."},interface={title="ИНТЕРФЕЙС",hint="Настрой цвета, неон и прозрачность."}}local function sN()local sO=n7.AbsoluteSize.X<420;
+q.layoutUI.sectionInfo={boss={title="БОСС • ТЕСТ",hint="Ближняя автоатака с уклонением от зон босса."},bug={title="КАМНИ",hint="Выбери камень и включи автоудар."},farm={title="ТРЕНАЖЁРЫ",hint="Выбери локацию и нужный тренажёр."},train={title="ТРЕНИРОВКА",hint="Настрой темп и выбери упражнение."},reb={title="РЕБИРТЫ",hint="Установи цель или запусти ребирты."},crystal={title="МАГАЗИН",hint="Выбери товар и включи покупку."},kill={title="АВТОКИЛ",hint="Выбери игроков и режим атаки."},egg={title="ПРОТЕИНОВЫЕ ЯЙЦА",hint="Только Protein Egg: ×2 к силе."},teleport={title="ТЕЛЕПОРТЫ",hint="Выбери остров и переместись."},quest={title="АВТОКВЕСТЫ",hint="Выбери NPC и запусти автоквест."},system={title="НАСТРОЙКИ",hint="Питомцы, графика, сеть и защита клиента."},interface={title="ИНТЕРФЕЙС",hint="Настрой цвета, неон и прозрачность."}}local function sN()local sO=n7.AbsoluteSize.X<420;
 local sP=n7.AbsoluteSize.Y<440;
 nh.Size=UDim2.new(1,-16,0,sP and 34 or 38)nh.Position=UDim2.fromOffset(8,52)nI.Size=UDim2.new(1,-12,1,sP and-92 or-96)nI.Position=UDim2.fromOffset(6,sP and 90 or 94)do local count=#q.layoutUI.navigationTabs;local gap=3;local width=math.max(49,math.floor((ni.AbsoluteSize.X-(count-1)*gap)/count));q.layoutUI.navigationGrid.FillDirectionMaxCells=count;q.layoutUI.navigationGrid.CellSize=UDim2.new(0,width,1,-3);q.layoutUI.navigationGrid.CellPadding=UDim2.fromOffset(gap,0);ni.CanvasSize=UDim2.fromOffset(count*(width+gap)-gap,0);ni.ScrollBarThickness=2 end;
 nc.TextSize=sO and 12 or 14;
