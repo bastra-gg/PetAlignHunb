@@ -4,7 +4,7 @@ pcall(function()i=game:GetService("NetworkClient")end)if not game:IsLoaded()then
 local j=a.LocalPlayer;
 while not j do task.wait()j=a.LocalPlayer end;
 local k=j:WaitForChild("PlayerGui",60)if not k then warn("[RockBugHub] PlayerGui was not created")pcall(function()g:SetCore("SendNotification",{Title="RockBugHub",Text="Ошибка запуска: PlayerGui не найден",Duration=8})end)return end;
-local l="RockBugHub_TEST_v4_25_BOSS_T25"local m="4.25BOSS-T25"local n=type(getgenv)=="function"and getgenv()or _G;
+local l="RockBugHub_TEST_v4_25_BOSS_T26"local m="4.25BOSS-T26"local n=type(getgenv)=="function"and getgenv()or _G;
 do
     -- Retire the old experimental windows and their listeners on hot reload.
     for _, key in ipairs({"RockBugTradeDiagnostics", "RockBugMiniTransfer"}) do
@@ -2049,7 +2049,56 @@ return function(runtime, api)
         nextScan = 0, nextAttack = 0, nextUI = 0, retryAt = 0, noProgress = 0,
         lastTargetHealth = nil, lastOwnHealth = nil, lastBossDamage = nil, damageStart = nil, lastTick = nil,
         attempts = 0, observations = 0, damageEvents = 0, busy = false,
+        personalDamage = {total = 0, samples = {}, available = false},
     }
+    -- Read-only telemetry. Neither HP loss nor sent punch requests count as personal damage.
+    function state:ObservePersonalDamage(value, source, now, target)
+        local meter = self.personalDamage
+        if type(value) ~= "number" or value ~= value or value < 0 or value == math.huge then
+            meter.available = false
+            meter.previous = nil
+            return
+        end
+        source = source or "personal-boss-damage"
+        local changed = meter.target ~= target or meter.source ~= source
+        if changed then
+            meter.previous = nil
+            meter.samples = {}
+            meter.lastHitAt, meter.lastDelta = nil, nil
+        end
+        meter.available, meter.source, meter.target = true, source, target
+        if meter.previous == nil or value < meter.previous then
+            meter.previous = value
+            meter.since = now
+            meter.samples = {}
+            meter.lastHitAt, meter.lastDelta = nil, nil
+            return
+        end
+        local delta = value - meter.previous
+        meter.previous = value
+        if delta > 0 then
+            meter.total += delta
+            meter.lastHitAt, meter.lastDelta = now, delta
+            table.insert(meter.samples, {at = now, amount = delta})
+        end
+        while meter.samples[1] and now - meter.samples[1].at >= 5 do table.remove(meter.samples, 1) end
+    end
+    function state:PersonalDamageReadout(now)
+        local meter = self.personalDamage
+        local recent = 0
+        for _, bucket in ipairs(meter.samples) do
+            if now - bucket.at < 5 then recent += bucket.amount end
+        end
+        local age = meter.lastHitAt and math.max(0, now - meter.lastHitAt) or nil
+        local status = not self.enabled and "stopped"
+            or runtime.networkPaused and "paused"
+            or not self.target and "waiting"
+            or not meter.available and "unavailable"
+            or age and age < 3 and "confirmed"
+            or (now - (meter.lastHitAt or meter.since or now) >= 3) and "stale" or "checking"
+        return {total = meter.total, recent = recent, available = meter.available,
+            age = age, lastDelta = meter.lastDelta, status = status}
+    end
     local function show(message)
         state.status = message
         if runtime.refreshBossUI then runtime.refreshBossUI() end
@@ -2090,6 +2139,7 @@ return function(runtime, api)
         self.height = 8
         self.lastBossDamage = nil
         self.damageStart = nil
+        self.personalDamage = {total = 0, samples = {}, available = false}
         show(health and health > 0 and "Запущено — ищу текущего босса…" or "Запущено — жду персонажа и текущего босса…")
         return true
     end
@@ -2104,8 +2154,8 @@ return function(runtime, api)
     end
     local function readBossDamage()
         if not api.damage then return nil end
-        local ok, value = pcall(api.damage)
-        return ok and type(value) == "number" and value or nil
+        local ok, value, source = pcall(api.damage)
+        return ok and type(value) == "number" and value or nil, source
     end
     local function step(now)
         if not state.enabled then return end
@@ -2174,7 +2224,8 @@ return function(runtime, api)
             show(info.name .. " найден — физически занимаю точку под ареной")
         end
         local progressed = info.healthKnown and state.lastTargetHealth and info.health < state.lastTargetHealth
-        local bossDamage = readBossDamage()
+        local bossDamage, damageSource = readBossDamage()
+        state:ObservePersonalDamage(bossDamage, damageSource, now, state.target)
         if bossDamage and state.lastBossDamage and bossDamage > state.lastBossDamage then progressed = true end
         if progressed then
             state.observations += 1
@@ -2218,10 +2269,12 @@ return function(runtime, api)
         end
         if now >= state.nextUI then
             state.nextUI = now + 0.4
-            local damageText = bossDamage and state.damageStart and (" • Boss Damage +%s"):format(tostring(math.max(0, bossDamage - state.damageStart))) or ""
+            local damageText = state.personalDamage.available and (" • мой урон +%s"):format(tostring(state.personalDamage.total)) or ""
             local depthText = (" • глубина: %.2f"):format(state.height)
             show(("%s • %s%s%s • %s"):format(info.name, info.modelName or info.model.Name, damageText, depthText,
-                state.observations > 0 and "урон подтверждён" or "проверяю урон…"))
+                state.personalDamage.available and state.personalDamage.lastHitAt
+                    and now - state.personalDamage.lastHitAt < 3 and "личный урон засчитывается"
+                    or state.observations > 0 and "HP падает; мой урон не подтверждён" or "проверяю урон…"))
         end
     end
     function state:Tick(now)
@@ -2235,6 +2288,7 @@ return function(runtime, api)
     end
     return state
 end
+
 
 end)()
 -- Embedded after the core helpers; no new long-lived outer locals.
@@ -2418,19 +2472,19 @@ do
     local function bossDamage()
         if bossDamageNode and bossDamageNode.Parent
             and (bossDamageNode:IsA("NumberValue") or bossDamageNode:IsA("IntValue")) then
-            return bossDamageNode.Value
+            return bossDamageNode.Value, bossDamageNode
         end
         bossDamageNode = nil
         for _, node in ipairs(j:GetDescendants()) do
             if normalized(node.Name) == "bossdamage"
                 and (node:IsA("NumberValue") or node:IsA("IntValue")) then
                 bossDamageNode = node
-                return node.Value
+                return node.Value, node
             end
         end
         for _, key in ipairs({"BossDamage", "Boss Damage"}) do
             local value = j:GetAttribute(key)
-            if type(value) == "number" then return value end
+            if type(value) == "number" then return value, "Player.Attribute." .. key end
         end
         return nil
     end
@@ -3765,18 +3819,50 @@ do
     status.Size = UDim2.new(1, -4, 0, 44)
     status.TextWrapped = true
     status.TextXAlignment = Enum.TextXAlignment.Left
-    status.LayoutOrder = 3
+    status.LayoutOrder = 5
+    local damageCount = mt(body, "МОЙ УРОН: —", 12, Enum.Font.GothamBold, lw.Accent2)
+    damageCount.Name = "BossPersonalDamageCount"
+    damageCount.Size = UDim2.new(1, -4, 0, 26)
+    damageCount.TextWrapped = true
+    damageCount.LayoutOrder = 3
+    local damageSignal = mt(body, "Ожидаю личный счётчик урона", 10, Enum.Font.Gotham, lw.Muted)
+    damageSignal.Name = "BossPersonalDamageSignal"
+    damageSignal.Size = UDim2.new(1, -4, 0, 40)
+    damageSignal.TextWrapped = true
+    damageSignal.LayoutOrder = 4
     local hint = mt(body, "Прямо под телом босса: X/Z обновляются каждый кадр, глубина — 8 под полом (до 12 при уроне). Направление персонажа фиксировано.", 9, Enum.Font.Gotham, lw.Muted)
     hint.Size = UDim2.new(1, -4, 0, 40)
     hint.TextWrapped = true
-    hint.LayoutOrder = 4
+    hint.LayoutOrder = 6
     q.refreshBossUI = function()
         if not q.alive or not status.Parent then return end
         status.Text = q.boss.status
+        local meter = q.boss:PersonalDamageReadout(os.clock())
+        local function number(value)
+            return value == math.floor(value) and string.format("%.0f", value) or string.format("%.1f", value)
+        end
+        damageCount.Text = "МОЙ УРОН: " .. ((meter.available or meter.total > 0) and ("+" .. number(meter.total)) or "—")
+            .. "  •  за 5 с: " .. (meter.available and ("+" .. number(meter.recent)) or "—")
+        local labels = {stopped = "Остановлено • итог за запуск", paused = "Пауза сети • ожидаю обновления",
+            waiting = "Ожидаю босса", unavailable = "Личный счётчик недоступен • мой урон не подтверждён",
+            checking = "Ожидаю подтверждения моего урона", confirmed = "УРОН ПРОХОДИТ", stale = "Нет свежего подтверждения моего урона"}
+        damageSignal.Text = labels[meter.status]
+        if meter.age and meter.available then
+            damageSignal.Text ..= (" • последнее +%s (%s с назад)"):format(number(meter.lastDelta), string.format("%.1f", meter.age))
+        end
+        damageSignal.TextColor3 = meter.status == "confirmed" and lw.Success
+            or meter.status == "stale" and lw.Accent2 or lw.Muted
         local cached = q.boss.target and q.bossFollowCache[q.boss.target]
         targetLabel.Text = cached and cached.part and ("ЦЕЛЬ: " .. cached.part:GetFullName()) or "ЦЕЛЬ: ожидаю живое тело босса"
         paintLaunch()
     end
+    local nextMeterPaint = 0
+    aJ(c.Heartbeat:Connect(function()
+        if q.alive and q.layoutUI.bossPage.Visible and os.clock() >= nextMeterPaint then
+            nextMeterPaint = os.clock() + 0.25
+            q.refreshBossUI()
+        end
+    end))
     local function resize()
         if card.Parent then card.Size = UDim2.new(1, 0, 0, body.UIListLayout.AbsoluteContentSize.Y + 36) oc() end
     end
