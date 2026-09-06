@@ -4,7 +4,7 @@ pcall(function()i=game:GetService("NetworkClient")end)if not game:IsLoaded()then
 local j=a.LocalPlayer;
 while not j do task.wait()j=a.LocalPlayer end;
 local k=j:WaitForChild("PlayerGui",60)if not k then warn("[RockBugHub] PlayerGui was not created")pcall(function()g:SetCore("SendNotification",{Title="RockBugHub",Text="Ошибка запуска: PlayerGui не найден",Duration=8})end)return end;
-local l="RockBugHub_TEST_v4_22_BOSS_T8"local m="4.22BOSS-T8"local n=type(getgenv)=="function"and getgenv()or _G;
+local l="RockBugHub_TEST_v4_22_BOSS_T9"local m="4.22BOSS-T9"local n=type(getgenv)=="function"and getgenv()or _G;
 do
     -- Retire the old experimental windows and their listeners on hot reload.
     for _, key in ipairs({"RockBugTradeDiagnostics", "RockBugMiniTransfer"}) do
@@ -2044,8 +2044,7 @@ return function(runtime, api)
         if not self.enabled then return end
         if self.lastOwnHealth and health < self.lastOwnHealth then
             self.damageEvents += 1
-            self.height = math.min(100, self.height + 8)
-            show(("Получен урон — безопасная высота поднята до %d"):format(self.height))
+            show("Получен урон • дальний режим остаётся включён")
         end
         self.lastOwnHealth = health
     end
@@ -2118,7 +2117,7 @@ return function(runtime, api)
             state.nextAttack = now
             api.claim(function(health) state:Damage(health) end)
             if not state.enabled then return end
-            show(info.name .. " найден — начинаю атаку")
+            show(info.name .. " найден — дальняя атака с текущей позиции")
         end
         local progressed = info.healthKnown and state.lastTargetHealth and info.health < state.lastTargetHealth
         local bossDamage = readBossDamage()
@@ -2309,9 +2308,6 @@ do
         if old.healthConnection then old.healthConnection:Disconnect() end
         if old.humanoid.Parent then old.humanoid.AutoRotate = old.autoRotate end
         if old.root.Parent and old.character == aM() and old.humanoid.Health > 0 then
-            if retreat then old.root.CFrame = old.origin end
-            old.root.AssemblyLinearVelocity = Vector3.zero
-            old.root.AssemblyAngularVelocity = Vector3.zero
             old.root.Anchored = old.anchored
         end
     end
@@ -2390,19 +2386,13 @@ do
             assert(root and humanoid, "Персонаж ещё не готов")
             saved = { character = aM(), root = root, humanoid = humanoid, origin = root.CFrame,
                 autoRotate = humanoid.AutoRotate, anchored = root.Anchored }
-            root.Anchored = false
-            humanoid.Sit = false
-            humanoid.AutoRotate = false
             saved.healthConnection = humanoid.HealthChanged:Connect(onHealth)
         end,
         release = release,
         hold = function(target, height)
             assert(saved and saved.character == aM() and saved.root.Parent, "Персонаж сменился")
-            local size = target.model:GetExtentsSize()
-            local position = target.root.Position + Vector3.new(0, math.clamp(size.Y * 0.5, 3, 40) + height, 0)
-            saved.root.CFrame = CFrame.lookAt(position, target.root.Position)
-            saved.root.AssemblyLinearVelocity = Vector3.zero
-            saved.root.AssemblyAngularVelocity = Vector3.zero
+            assert(target.root and target.root.Parent, "Босс исчез")
+            -- Long-range mode: the character never moves; synthetic hand touches target hitboxes.
         end,
         punch = function(target, stillActive)
             if not stillActive() then return true end
@@ -3344,15 +3334,17 @@ do
     targetLabel.TextWrapped = true
     targetLabel.TextXAlignment = Enum.TextXAlignment.Left
     targetLabel.LayoutOrder = 1
-    local height, heightNode = oI(body, "ВЫСОТА", "Studs над боссом; не гарантирует защиту", q.boss.height,
-        function(value) q.boss.height = value end, 8, 100)
-    heightNode.LayoutOrder = 2
+    local rangeLabel = mt(body, "РЕЖИМ: ДАЛЬНИЙ УДАР • персонаж остаётся на месте", 10, Enum.Font.GothamBold, lw.Success)
+    rangeLabel.Size = UDim2.new(1, -4, 0, 28)
+    rangeLabel.TextWrapped = true
+    rangeLabel.TextXAlignment = Enum.TextXAlignment.Left
+    rangeLabel.LayoutOrder = 2
     local status = mt(body, q.boss.status, 10, Enum.Font.Gotham, lw.Text)
     status.Size = UDim2.new(1, -4, 0, 44)
     status.TextWrapped = true
     status.TextXAlignment = Enum.TextXAlignment.Left
     status.LayoutOrder = 3
-    local hint = mt(body, "Поиск: точная надпись босса → её Adornee → живая модель с HP. Удары идут по реальным hitbox-деталям; рост Boss Damage подтверждает попадание.", 9, Enum.Font.Gotham, lw.Muted)
+    local hint = mt(body, "Игрок не телепортируется к боссу. Дальний touch идёт по найденным hitbox-деталям; рост Boss Damage подтверждает попадание.", 9, Enum.Font.Gotham, lw.Muted)
     hint.Size = UDim2.new(1, -4, 0, 40)
     hint.TextWrapped = true
     hint.LayoutOrder = 4
