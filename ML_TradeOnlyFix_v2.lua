@@ -1,5 +1,5 @@
 -- RockBugHub portable bootstrap. The game features remain in the core.
-local VERSION = "4.19.1"
+local VERSION = "4.25.0"
 local BASE_URL = "https://raw.githubusercontent.com/bastra-gg/PetAlignHunb/main/ML_TradeOnlyFix_v2_core.lua"
 local CONTRACT = "-- RockBugHub core startup contract: 1"
 local environment = _G

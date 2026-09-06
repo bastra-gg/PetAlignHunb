@@ -5,13 +5,20 @@ pcall(function()i=game:GetService("NetworkClient")end)if not game:IsLoaded()then
 local j=a.LocalPlayer;
 while not j do task.wait()j=a.LocalPlayer end;
 local k=j:WaitForChild("PlayerGui",60)if not k then warn("[RockBugHub] PlayerGui was not created")pcall(function()g:SetCore("SendNotification",{Title="RockBugHub",Text="Ошибка запуска: PlayerGui не найден",Duration=8})end)error("RockBugHub: PlayerGui was not created",0)end;
-local l="RockBugHub_v4_19_1"local m="4.19.1"local n=_G;
+local l="RockBugHub_v4_25_0"local m="4.25.0"local n=_G;
 if type(getgenv)=="function"then local ok,env=pcall(getgenv)if ok and type(env)=="table"then n=env end end;
+do
+    -- Retire the old experimental windows and their listeners on hot reload.
+    for _, key in ipairs({"RockBugTradeDiagnostics", "RockBugMiniTransfer"}) do
+        local old = n[key]
+        if old and type(old.Destroy) == "function" then pcall(function() old:Destroy() end) end
+    end
+end
 pcall(function()if n.RockBugRuntime and type(n.RockBugRuntime.Stop)=="function"then n.RockBugRuntime:Stop("replaced")end end)pcall(function()for o,p in ipairs(k:GetChildren())do if p:IsA("ScreenGui")and tostring(p.Name):find("RockBugHub",1,true)then p:Destroy()end end end)local q={alive=true,language=n.RockBugLanguage=="en"and"en"or"ru",gameTranslators={},gameLocalizedNames={},gameLocalizationContexts={},gameLocalizationObjects={},gameLocalizationKeys={},gameLocalizationTables={},gameLocalizationLoading=false,gameLocalizationReady=false,translationToken=0,mode=nil,modeToken=0,bugActive=false,trainActive=false,activeTrains={},trainOrder={},trainRetryAt={},trainCursor=0,machineCatalog={},machineZones={},machineZone=nil,selectedMachine=nil,selectedTeleport="Starter Island",teleportDestinations={},machineActive=false,machineAttached=false,machineAttachInFlight=false,machineScanInFlight=false,machineScanned=false,machineToken=0,machineNextAttach=0,machineNextRep=0,machineCharacterBefore=nil,machineAnimationsBefore=nil,fuseSession=nil,fuseNextOpenAt=0,eggEnabled=false,eggAmount=1,eggIntervalMultiplier=1,eggNextUseAt=0,eggInFlight=false,eggToken=0,eggLastUsed=0,eggConfirmationError=nil,hybridRole=nil,hybridSwitchAt=0,nextBackgroundPunch=0,nextPunchEquip=0,nextTrainGuiRetry=0,toolTransition=false,equipInFlight=false,connections={},selectedTrain=nil,selectedRock=nil,autoRockSelection=true,petGradeIndex=5,lastAutoRockRebs=nil,autoRockReason=nil,autoRebirth=false,rebirthInFlight=false,rebirthToken=0,rebirthGoalEnabled=false,rebirthGoal=100,rebirthGoalCurrent=nil,rebirthGoalCompleted=false,rebirthGoalAwaitingFrom=nil,rebirthGoalAwaitingSince=0,rebirthGoalAwaitingUntil=0,rebirthGoalReadFailures=0,rebirthGoalStatusAt=0,rebirthCounter=nil,rebirthCounterSource=nil,rebirthCounterExact=false,rebirthCounterWatched=nil,rebirthCounterConn=nil,autoSize=false,sizeTarget=1,sizeInFlight=false,kingLock=false,kingCF=nil,kingRoot=nil,kingSavedAnchored=nil,kingPresenceInFlight=false,kingPresenceToken=0,kingTriggerPart=nil,kingTouchTrigger=nil,kingTouchContacts={},kingHoldPosition=nil,kingHoldGyro=nil,nextKingTouchPulse=0,lockRock=false,lockPosition=false,lockCF=nil,positionCF=nil,activeTool=nil,nextAction=0,nextEquip=0,nextNearCheck=0,nextPosTick=0,nextRebirth=0,nextSize=0,nextKingTick=0,nextNetUpdate=0,nextCooldownSweep=0,punchCycle=0,pingMs=0,pingAvailable=false,netGuardEnabled=true,networkPaused=false,manualNetworkHold=false,networkState="HEALTHY",networkBadSamples=0,networkGoodSamples=0,networkHoldSince=0,networkLastGoodAt=os.clock(),networkProbeDeadline=os.clock()+5,networkProbeUnsupported=false,networkReason=nil,networkRecoveries=0,networkHoldRoot=nil,networkHoldCF=nil,networkHoldSavedAnchored=nil,nextNetworkHoldTick=0,networkReplicatorSeen=false,networkReplicatorMissingSince=nil,networkTrafficLastSeen=os.clock(),networkRecoveryProofRequired=false,transientFailures={},respawnGeneration=0,autoResumeAfterRespawn=true,schedulerRestarts=0,remoteTokens=0,remoteLastRefill=os.clock(),remoteSentWindow=0,remoteWindowStart=os.clock(),remotePps=0,sessionStatsStartedAt=os.clock(),sessionStatsPage=0,sessionStatsNextPageAt=os.clock()+3,sessionStatsNextRebirthSample=0,sessionStrengthCounter=nil,sessionStrengthCurrent=nil,sessionStrengthLast=nil,sessionStrengthGained=0,sessionRebirthCurrent=nil,sessionRebirthStart=nil,sessionRebirthLast=nil,sessionRebirthGained=0,directRemoteEnabled=true,antiAfkEnabled=true,visualLow=false,visualSaved={},killMode="off",killToken=0,killWhitelist={},killBlacklist={},crystalMode="off",crystalToken=0,crystalCatalog={},crystalNames={},crystalCatalogAt=nil,crystalPetCache={},shopCatalogCache={},crystalAmount=1,purchaseDelay=0.5,autoEvolvePurchasedPets=true,petEvolvePending={},petEvolveSent=0,petEvolveLastError=nil,petPurchaseCounts={},petCleanupEnabled=false,petCleanupTargets={["Core Pup"]=true,["Volt Talon"]=true},petCleanupPending={},petCleanupSold=0,petCleanupToken=0,autoEquipBestPets=false,petEquipToken=0,petEquipLastMessage=nil,petStableOrder=setmetatable({},{__mode="k"}),petStableNext=0,autoQuest=false,questToken=0,selectedQuestNpc=nil,questAcceptCooldown={},questLastMessage=nil,purchaseAttempts=0,selectedCrystal="Blue Crystal",selectedPet=nil,selectedAura=nil,characterCollisionSaved={},characterLockSaved=nil,lastSchedulerTick=0,lastError=nil,status="ready",ui=nil,leverRefs={}}n.RockBugRuntime=q;
-local r={"Orange Hedgehog","Blue Birdie","Red Kitty","Blue Bunny","Dark Vampy","Silver Dog","Dark Golem","Green Butterfly","Crimson Falcon","Yellow Butterfly","Purple Dragon","Orange Pegasus","Blue Pheonix","Red Dragon","Purple Falcon","Blue Firecaster","Golden Pheonix","Red Firecaster","White Pegasus","Infernal Dragon","Green Firecaster","White Pheonix","Magic Butterfly","Ultra Birdie","Frostwave Legends Penguin","Phantom Genesis Dragon","Dark Legends Manticore","Ultimate Supernova Pegasus","Aether Spirit Bunny","Cybernetic Showdown Dragon","Eternal Strike Leviathan","Lighting Strike Phantom","Darkstar Hunter","Golden Viking","Muscle Sensei","Neon Guardian","Core Pup","Volt Talon","Reactor Beast","Plasma Ravager","Titan Reactor","Apex Overlord"}local s={"Core Pup","Volt Talon","Reactor Beast","Plasma Ravager","Titan Reactor","Apex Overlord"}local t={}for o,u in ipairs(s)do t[string.lower(u)]=true end;
-local v={"Astral Electro","Azure Tundra","Blue Aura","Dark Electro","Dark Lightning","Dark Storm","Electro","Enchanted Mirage","Entropic Blast","Eternal Megastrike","Grand Supernova","Green Aura","Inferno","Lightning","Muscle King","Power Lightning","Purple Aura","Purple Nova","Red Aura","Supernova","Ultra Inferno","Ultra Mirage","Unstable Mirage","Yellow Aura"}local w={}for o,u in ipairs(v)do w[string.lower(u)]=true end;
-local x={}for o,u in ipairs(r)do local y=string.lower(u)if not t[y]then x[y]=true end end;
-local z={"Blue Crystal","Green Crystal","Frost Crystal","Mythical Crystal","Inferno Crystal","Legends Crystal","Muscle Elite Crystal","Galaxy Oracle Crystal","Dark Nebula Crystal","Sky Eclipse Crystal","Jungle Crystal","Industrial Crystal"}local A={["bluecrystal"]={"Orange Hedgehog","Blue Birdie","Red Kitty","Blue Bunny","Dark Vampy"},["greencrystal"]={"Silver Dog","Dark Golem","Green Butterfly","Crimson Falcon"},["frostcrystal"]={"Yellow Butterfly","Purple Dragon","Orange Pegasus","Blue Pheonix"},["frozencrystal"]={"Yellow Butterfly","Purple Dragon","Orange Pegasus","Blue Pheonix"},["mythicalcrystal"]={"Red Dragon","Purple Falcon","Blue Firecaster","Golden Pheonix"},["infernocrystal"]={"Red Firecaster","White Pegasus","Golden Pheonix","Infernal Dragon"},["legendscrystal"]={"Green Firecaster","White Pheonix","Magic Butterfly","Ultra Birdie"},["muscleelitecrystal"]={"Frostwave Legends Penguin","Phantom Genesis Dragon","Dark Legends Manticore","Ultimate Supernova Pegasus","Aether Spirit Bunny","Cybernetic Showdown Dragon"},["galaxyoraclecrystal"]={"Eternal Strike Leviathan","Lighting Strike Phantom","Darkstar Hunter"},["junglecrystal"]={"Golden Viking","Muscle Sensei","Neon Guardian"},["industrialcrystal"]={"Core Pup","Volt Talon","Reactor Beast","Plasma Ravager","Titan Reactor","Apex Overlord"}}q.selectedPet="Muscle King"q.selectedAura="Muscle King"local function B(C)local D,E=pcall(C)return D,E end;
+q.petNames={"Orange Hedgehog","Blue Birdie","Red Kitty","Blue Bunny","Dark Vampy","Silver Dog","Dark Golem","Green Butterfly","Crimson Falcon","Yellow Butterfly","Purple Dragon","Orange Pegasus","Blue Pheonix","Red Dragon","Purple Falcon","Blue Firecaster","Golden Pheonix","Red Firecaster","White Pegasus","Infernal Dragon","Green Firecaster","White Pheonix","Magic Butterfly","Ultra Birdie","Frostwave Legends Penguin","Phantom Genesis Dragon","Dark Legends Manticore","Ultimate Supernova Pegasus","Aether Spirit Bunny","Cybernetic Showdown Dragon","Eternal Strike Leviathan","Lighting Strike Phantom","Darkstar Hunter","Golden Viking","Muscle Sensei","Neon Guardian","Core Pup","Volt Talon","Reactor Beast","Plasma Ravager","Titan Reactor","Apex Overlord"}q.shopPetNames={"Core Pup","Volt Talon","Reactor Beast","Plasma Ravager","Titan Reactor","Apex Overlord"}q.shopPetSet={}for o,u in ipairs(q.shopPetNames)do q.shopPetSet[string.lower(u)]=true end;
+q.auraNames={"Astral Electro","Azure Tundra","Blue Aura","Dark Electro","Dark Lightning","Dark Storm","Electro","Enchanted Mirage","Entropic Blast","Eternal Megastrike","Grand Supernova","Green Aura","Inferno","Lightning","Muscle King","Power Lightning","Purple Aura","Purple Nova","Red Aura","Supernova","Ultra Inferno","Ultra Mirage","Unstable Mirage","Yellow Aura"}q.auraNameSet={}for o,u in ipairs(q.auraNames)do q.auraNameSet[string.lower(u)]=true end;
+q.legacyPetSet={}for o,u in ipairs(q.petNames)do local y=string.lower(u)if not q.shopPetSet[y]then q.legacyPetSet[y]=true end end;
+q.crystalDefaults={"Blue Crystal","Green Crystal","Frost Crystal","Mythical Crystal","Inferno Crystal","Legends Crystal","Muscle Elite Crystal","Galaxy Oracle Crystal","Dark Nebula Crystal","Sky Eclipse Crystal","Jungle Crystal","Industrial Crystal"}q.crystalPetPools={["bluecrystal"]={"Orange Hedgehog","Blue Birdie","Red Kitty","Blue Bunny","Dark Vampy"},["greencrystal"]={"Silver Dog","Dark Golem","Green Butterfly","Crimson Falcon"},["frostcrystal"]={"Yellow Butterfly","Purple Dragon","Orange Pegasus","Blue Pheonix"},["frozencrystal"]={"Yellow Butterfly","Purple Dragon","Orange Pegasus","Blue Pheonix"},["mythicalcrystal"]={"Red Dragon","Purple Falcon","Blue Firecaster","Golden Pheonix"},["infernocrystal"]={"Red Firecaster","White Pegasus","Golden Pheonix","Infernal Dragon"},["legendscrystal"]={"Green Firecaster","White Pheonix","Magic Butterfly","Ultra Birdie"},["muscleelitecrystal"]={"Frostwave Legends Penguin","Phantom Genesis Dragon","Dark Legends Manticore","Ultimate Supernova Pegasus","Aether Spirit Bunny","Cybernetic Showdown Dragon"},["galaxyoraclecrystal"]={"Eternal Strike Leviathan","Lighting Strike Phantom","Darkstar Hunter"},["junglecrystal"]={"Golden Viking","Muscle Sensei","Neon Guardian"},["industrialcrystal"]={"Core Pup","Volt Talon","Reactor Beast","Plasma Ravager","Titan Reactor","Apex Overlord"}}q.selectedPet="Muscle King"q.selectedAura="Muscle King"local function B(C)local D,E=pcall(C)return D,E end;
 function q.resolvePetShopFolder()local F=b:FindFirstChild("shared")local G=F and F:FindFirstChild("runtime")local H=G and G:FindFirstChild("cPetShopFolder")if H then return H end;
 return b:FindFirstChild("cPetShopFolder")end;
 function q.resolvePetShopRemote()local I=b:FindFirstChild("rEvents")local H=I and I:FindFirstChild("cPetShopRemote")if H and H:IsA("RemoteFunction")then return H end;
@@ -43,7 +50,7 @@ local o,a3=q.shopItemNameAliases(L,S)if a3[a2]then return true end;
 a1=a1 or q.shopLocalizedAliasMap()for y in pairs(a3)do if a1[y]==a2 then return true end end;
 return false end;
 local function a4(L)if not L then return false end;
-local u=string.lower(tostring(Q(L)or L.Name))if w[u]then return true end;
+local u=string.lower(tostring(Q(L)or L.Name))if q.auraNameSet[u]then return true end;
 if L:FindFirstChild("isPowerUp",true)then return true end;
 if string.find(u,"aura",1,true)or string.find(u,"trail",1,true)then return true end;
 if L:IsA("Trail")or L:FindFirstChildWhichIsA("Trail",true)then return true end;
@@ -60,7 +67,7 @@ aa(b,1)return W end;
 local function af(L)if not L then return false end;
 local u=string.lower(tostring(L.Name))if u=="pets"or u=="pet"or u=="auras"or u=="aura"or u=="trails"or u=="items"or u=="shop"or u=="catalog"or u=="basic"or u=="advanced"or u=="rare"or u=="epic"or u=="unique"or u=="legendary"or u=="mythical"or u=="mythic"or u=="secret"or u=="limited"or u=="new"or u=="apex"or u=="eggs"or u=="crystals"or u=="chances"then return true end;
 if not L:IsA("Folder")and not L:IsA("Configuration")then return false end;
-local ag=string.lower(tostring(Q(L)or u))if x[ag]or w[ag]or t[ag]or ag~=u then return false end;
+local ag=string.lower(tostring(Q(L)or u))if q.legacyPetSet[ag]or q.auraNameSet[ag]or q.shopPetSet[ag]or ag~=u then return false end;
 for o,M in ipairs({"priceValue","Price","price","Cost","cost","GemPrice","gemPrice","gemsCost"})do if L:FindFirstChild(M)then return false end;
 local D,N=B(function()return L:GetAttribute(M)end)if D and N~=nil then return false end end;
 for o,R in ipairs(L:GetChildren())do if K(R)~=nil or R:IsA("Folder")or R:IsA("Model")then return true end end;
@@ -69,15 +76,15 @@ local function ah(ai)local aj=q.resolvePetShopFolder()local ak=aj and aj.Parent 
 local al=q.shopCatalogCache and q.shopCatalogCache[ai]if al and al.folder==aj and os.clock()-(al.at or 0)<4 then return al.items end;
 local W={}local U={}local function V(u,L,O)u=tostring(u or""):gsub("^%s+",""):gsub("%s+$","")local y=P(u)if u==""or y==""or U[y]then return end;
 U[y]=true;
-table.insert(W,{name=u,price=O,item=L,id=L and tostring(L.Name)or nil,isNew=ai=="pet"and not x[string.lower(u)]})end;
+table.insert(W,{name=u,price=O,item=L,id=L and tostring(L.Name)or nil,isNew=ai=="pet"and not q.legacyPetSet[string.lower(u)]})end;
 local function am(an,ac,ao)if not an or ac>6 then return end;
 for o,L in ipairs(an:GetChildren())do if not L:IsA("RemoteFunction")and not L:IsA("RemoteEvent")and not L:IsA("LocalScript")and not L:IsA("ModuleScript")and not L:IsA("IntValue")and not L:IsA("NumberValue")and not L:IsA("BoolValue")then if af(L)then local a6=string.lower(tostring(L.Name))local ap=(a6:find("aura",1,true)or a6:find("trail",1,true))and"aura"or((a6:find("pet",1,true)or a6=="apex")and"pet"or ao)am(L,ac+1,ap)else local aq=L;
 if L:IsA("ObjectValue")then local D,N=B(function()return L.Value end)if D and N then aq=N end end;
 local u=Q(aq)local ar=ao=="aura"or ao~="pet"and a4(aq)if ai=="aura"and ar or ai=="pet"and not ar then V(u,aq,K(aq)or K(L))end end end end end;
 if ak then am(aj,1,nil)end;
-local as=ai=="aura"and v or r;
+local as=ai=="aura"and q.auraNames or q.petNames;
 for o,u in ipairs(as)do V(u,nil,nil)end;
-if ai=="pet"then for o,u in ipairs(s)do V(u,nil,nil)end end;
+if ai=="pet"then for o,u in ipairs(q.shopPetNames)do V(u,nil,nil)end end;
 if ak then local at={}local au={}for o,av in ipairs(W)do local L=av.item;
 if L and L.Parent and not au[L]then au[L]=true;
 table.insert(at,L)end end;
@@ -252,7 +259,7 @@ local ck=q.ui and q.ui.rebirthGoalProgress;
 if not ck or not ck.Parent then return end;
 local cl=math.max(1,math.floor(tonumber(q.rebirthGoal)or 1))local br=q.rebirthGoalCurrent;
 if cj then ck.Text=cj elseif q.rebirthGoalCompleted then ck.Text=(q.language=="en"and"TARGET REACHED • %s / %s"or"ЦЕЛЬ ДОСТИГНУТА • %s / %s"):format(ch(br or cl),ch(cl))elseif q.rebirthGoalEnabled then if br~=nil then ck.Text=(q.language=="en"and"Current: %s • target: %s • remaining: %s"or"Сейчас: %s • цель: %s • осталось: %s"):format(ch(br),ch(cl),ch(math.max(0,cl-br)))else ck.Text=(q.language=="en"and"Current: — • target: %s"or"Сейчас: — • цель: %s"):format(ch(cl))end else ck.Text=(q.language=="en"and"Limit off • target: %s"or"Лимит выключен • цель: %s"):format(ch(cl))end end;
-local cm={{name="BASIC",base=250},{name="UNCOMMON",base=500},{name="RARE",base=750},{name="EPIC",base=1000},{name="UNIQUE",base=1250}}local function cn()return cm[math.clamp(tonumber(q.petGradeIndex)or 5,1,#cm)]end;
+q.petGrades={{name="BASIC",base=250},{name="UNCOMMON",base=500},{name="RARE",base=750},{name="EPIC",base=1000},{name="UNIQUE",base=1250}}local function cn()return q.petGrades[math.clamp(tonumber(q.petGradeIndex)or 5,1,#q.petGrades)]end;
 local function co(cp)local N=cp/40;
 if N==math.floor(N)then return tostring(math.floor(N))end;
 local aF=("%.3f"):format(N):gsub("0+$","")return aF:gsub("%.$","")end;
@@ -288,13 +295,13 @@ return true end;
 local function cN(cO)return tostring(cO and cO.Name or""):lower()end;
 local function cP(bP,cQ)bP=tostring(bP or""):lower()for o,cR in ipairs(cQ)do if bP:find(tostring(cR):lower(),1,true)then return true end end;
 return false end;
-local cS={"punch","fist","combat","кулак","удар"}local cT={"weight","dumb","barbell","bench","push","sit","handstand","tread","гант","гир","штанг","отжим","пресс","бег"}local function cU(cO)if not cO or not cO:IsA("Tool")then return false end;
-local bS=cN(cO)if cP(bS,cT)then return false end;
-if cP(bS,cS)then return true end;
-for o,bn in ipairs(cO:GetDescendants())do if cP(bn.Name,cT)then return false end;
-if cP(bn.Name,cS)then return true end end;
+q.punchWords={"punch","fist","combat","кулак","удар"}q.trainWords={"weight","dumb","barbell","bench","push","sit","handstand","tread","гант","гир","штанг","отжим","пресс","бег"}local function cU(cO)if not cO or not cO:IsA("Tool")then return false end;
+local bS=cN(cO)if cP(bS,q.trainWords)then return false end;
+if cP(bS,q.punchWords)then return true end;
+for o,bn in ipairs(cO:GetDescendants())do if cP(bn.Name,q.trainWords)then return false end;
+if cP(bn.Name,q.punchWords)then return true end end;
 return false end;
-local cV={{id="Punch",label="PUNCH",desc="удары / сила",words={"punch","fist","combat","кулак","удар"}},{id="Weight",label="WEIGHT",desc="вес / гантели / штанга",words={"weight","dumb","dumbbell","barbell","bench","вес","гант","штанг","гир"}},{id="Push",label="PUSH",desc="отжимания",words={"push","pushup","push-up","отжим"}},{id="Sit",label="SIT",desc="пресс / situps",words={"sit","situp","sit-up","abs","пресс"}},{id="Hand",label="HANDSTAND",desc="стойка на руках",words={"handstand","hand stand","стойк"}},{id="Tread",label="TREADMILL",desc="бег / agility",words={"tread","treadmill","agility","speed","бег","дорож","ловк","скор"}}}local function cW(cO,cX)if not cO or not cO:IsA("Tool")then return false end;
+q.trainModes={{id="Punch",label="PUNCH",desc="удары / сила",words={"punch","fist","combat","кулак","удар"}},{id="Weight",label="WEIGHT",desc="вес / гантели / штанга",words={"weight","dumb","dumbbell","barbell","bench","вес","гант","штанг","гир"}},{id="Push",label="PUSH",desc="отжимания",words={"push","pushup","push-up","отжим"}},{id="Sit",label="SIT",desc="пресс / situps",words={"sit","situp","sit-up","abs","пресс"}},{id="Hand",label="HANDSTAND",desc="стойка на руках",words={"handstand","hand stand","стойк"}},{id="Tread",label="TREADMILL",desc="бег / agility",words={"tread","treadmill","agility","speed","бег","дорож","ловк","скор"}}}local function cW(cO,cX)if not cO or not cO:IsA("Tool")then return false end;
 if cX.id=="Punch"then return cU(cO)end;
 local bS=cN(cO)if cP(bS,cX.words)then return true end;
 for o,bn in ipairs(cO:GetDescendants())do if cP(bn.Name,cX.words)then return true end end;
@@ -315,8 +322,8 @@ local D=B(function()d0:EquipTool(cO)if cO.Parent~=aK then task.wait(0.025)end;
 if cO.Parent~=aK then d0:UnequipTools()task.wait(0.015)d0:EquipTool(cO)if cO.Parent~=aK then task.wait(0.035)end end;
 d2=cO.Parent==aK end)q.equipInFlight=false;
 return D and d2 end;
-local d3={"Cooldown","cooldown","CD","cd","Delay","delay","AttackCooldown","attackCooldown","SwingCooldown","swingCooldown","AttackTime","attackTime","PunchCooldown","punchCooldown","LastUse","lastUse","LastSwing","lastSwing","LastAttack","lastAttack","CanUse","canUse","CanSwing","canSwing","Ready","ready"}local function d4(cO)if not cO then return end;
-B(function()cO.Enabled=true end)local function d5(bg)for o,u in ipairs(d3)do local R=bg:FindFirstChild(u)if R then B(function()if R:IsA("NumberValue")or R:IsA("IntValue")then R.Value=0 end;
+q.cooldownFields={"Cooldown","cooldown","CD","cd","Delay","delay","AttackCooldown","attackCooldown","SwingCooldown","swingCooldown","AttackTime","attackTime","PunchCooldown","punchCooldown","LastUse","lastUse","LastSwing","lastSwing","LastAttack","lastAttack","CanUse","canUse","CanSwing","canSwing","Ready","ready"}local function d4(cO)if not cO then return end;
+B(function()cO.Enabled=true end)local function d5(bg)for o,u in ipairs(q.cooldownFields)do local R=bg:FindFirstChild(u)if R then B(function()if R:IsA("NumberValue")or R:IsA("IntValue")then R.Value=0 end;
 if R:IsA("BoolValue")then R.Value=true end;
 if R:IsA("StringValue")then R.Value="0"end end)end;
 B(function()local be=bg:GetAttribute(u)if be~=nil then if type(be)=="number"then bg:SetAttribute(u,0)end;
@@ -351,14 +358,6 @@ local function dk(cX,dl)local cO,d2=d7(cX)if not cO and dl~=false then dg(cX)cO,
 if not cO then return nil,cX.label..": предмет не найден"end;
 if not d2 and not c_(cO)then return nil,cX.label..": не удалось надеть"end;
 return cO,cX.label..": "..cO.Name end;
-local dm=900;
-local dn=650;
-local dp=3;
-local dq=3;
-local dr=1.5;
-local ds=6;
-local dt=3.0;
-local du=4.0;
 local function dv()local D,N=B(function()return d.DataReceiveKbps end)if D and type(N)=="number"and N==N and N>=0 then return N end;
 return nil end;
 local function dw()if not i then return nil end;
@@ -416,7 +415,7 @@ aP("СЕТЬ ВОССТАНОВЛЕНА • режим продолжен")end e
 local function dN(cF)if not q.netGuardEnabled then return end;
 q.networkBadSamples=(q.networkBadSamples or 0)+1;
 q.networkGoodSamples=0;
-if q.networkBadSamples>=dp then dK(cF or"remote error",os.clock())else q.networkState="GRACE"end end;
+if q.networkBadSamples>=3 then dK(cF or"remote error",os.clock())else q.networkState="GRACE"end end;
 local function dO(b6)local dP=dz()local dQ=dv()local dR=dw()if dP then q.pingMs=dP;
 q.pingAvailable=true;
 q.networkProbeUnsupported=false end;
@@ -433,25 +432,25 @@ q.networkState="LIMITED"q.networkBadSamples=0;
 q.networkGoodSamples=0;
 return nil end;
 local dS=dP==nil;
-local dT=q.networkReplicatorSeen and q.networkReplicatorMissingSince~=nil and b6-q.networkReplicatorMissingSince>=dt;
+local dT=q.networkReplicatorSeen and q.networkReplicatorMissingSince~=nil and b6-q.networkReplicatorMissingSince>=3.0;
 if dT then q.networkRecoveryProofRequired=true end;
-local dU=b6-(q.networkTrafficLastSeen or 0)<=du;
+local dU=b6-(q.networkTrafficLastSeen or 0)<=4.0;
 local dV=not q.networkReplicatorSeen or dR==true;
 local dW=dR==true or dU and dV;
-local dX=b6>=(q.networkProbeDeadline or 0)local dY=dT or dS and not dW and dX or dP~=nil and dP>=dm;
-local dZ=(dP~=nil and dP<=dn or dS and dW)and not dT;
+local dX=b6>=(q.networkProbeDeadline or 0)local dY=dT or dS and not dW and dX or dP~=nil and dP>=900;
+local dZ=(dP~=nil and dP<=650 or dS and dW)and not dT;
 if dY then q.networkBadSamples=q.networkBadSamples+1;
 q.networkGoodSamples=0;
 local cF;
 if dT then cF="Roblox connection missing"else cF=dS and"ping unavailable"or"ping "..math.floor(dP).."ms"end;
-if dT or q.networkBadSamples>=dp then dK(cF,b6)elseif q.networkBadSamples>=2 then q.networkState="GRACE"end elseif dZ then q.networkBadSamples=0;
-q.networkGoodSamples=math.min(dq,q.networkGoodSamples+1)q.networkLastGoodAt=b6;
+if dT or q.networkBadSamples>=3 then dK(cF,b6)elseif q.networkBadSamples>=2 then q.networkState="GRACE"end elseif dZ then q.networkBadSamples=0;
+q.networkGoodSamples=math.min(3,q.networkGoodSamples+1)q.networkLastGoodAt=b6;
 if not q.networkPaused then q.networkState="HEALTHY"end else q.networkBadSamples=math.max(0,q.networkBadSamples-1)q.networkGoodSamples=0 end;
 if q.networkPaused then local b8=b6-q.networkHoldSince;
-if b8>=ds and q.networkState~="HEALTHY"then q.networkState="OFFLINE WAIT"end;
+if b8>=6 and q.networkState~="HEALTHY"then q.networkState="OFFLINE WAIT"end;
 local d_=q.networkTrafficLastSeen>=q.networkHoldSince or dR==true;
 local e0=not q.networkRecoveryProofRequired or d_ and dV;
-if dZ and e0 and q.networkGoodSamples>=dq and b8>=dr then dL(b6,"RECOVERED")end end;
+if dZ and e0 and q.networkGoodSamples>=3 and b8>=1.5 then dL(b6,"RECOVERED")end end;
 return dP end;
 local function e1(y)q.transientFailures[y]=nil end;
 local function e2(y,b6,e3)local e4=q.transientFailures[y]if not e4 then q.transientFailures[y]=b6;
@@ -689,12 +688,12 @@ local ex=string.lower(tostring(R.Name or""))local ae=g2 or ex:find("crystal",1,t
 for o,aO in ipairs(eV)do if fO>=320 then break end;
 am(aO,1,false)end;
 local g3=P("Industrial Crystal")if not aI[g3]then aI[g3]={name="Industrial Crystal",id="Industrial Crystal"}table.insert(eL,"Industrial Crystal")end;
-if#eL==1 and eL[1]=="Industrial Crystal"then for o,u in ipairs(z)do local y=P(u)if not aI[y]then aI[y]={name=u,id=u}table.insert(eL,u)end end end;
+if#eL==1 and eL[1]=="Industrial Crystal"then for o,u in ipairs(q.crystalDefaults)do local y=P(u)if not aI[y]then aI[y]={name=u,id=u}table.insert(eL,u)end end end;
 table.sort(eL,function(az,aA)return string.lower(az)<string.lower(aA)end)q.crystalCatalog=aI;
 q.crystalNames=eL;
 q.crystalCatalogAt=b6;
 return eL end;
-local function g4(g5)local g6=P(g5)local g7=A[g6]if g7 then local W={}for o,u in ipairs(g7)do table.insert(W,u)end;
+local function g4(g5)local g6=P(g5)local g7=q.crystalPetPools[g6]if g7 then local W={}for o,u in ipairs(g7)do table.insert(W,u)end;
 return W end;
 local al=q.crystalPetCache and q.crystalPetCache[g6]if al and os.clock()-(al.at or 0)<5 then local W={}for o,u in ipairs(al.names or{})do table.insert(W,u)end;
 return W end;
@@ -971,8 +970,34 @@ if not D and hg~="автоквест остановлен"then local gx=(q.langu
 aP(gx)end end end;
 for o=1,100 do if not q.alive or not q.autoQuest or q.questToken~=fd then return end;
 task.wait(0.1)end end end)return true,nil end;
--- Separate startup scopes keep unoptimized compilers below the 200-register limit.
-return (function()
+function q.findFortuneWheel()local I=b:FindFirstChild("rEvents")local eh=I and I:FindFirstChild("openFortuneWheelRemote")if not eh or not(eh:IsA("RemoteFunction")or eh:IsA("RemoteEvent"))then return nil,nil,"openFortuneWheelRemote не найден"end;
+local F=b:FindFirstChild("shared")local hD=F and F:FindFirstChild("catalogs")local hE=hD and hD:FindFirstChild("fortuneWheelChances")or b:FindFirstChild("fortuneWheelChances")local hq=hE and hE:FindFirstChild("Fortune Wheel")if not hq then return nil,nil,"fortuneWheelChances не найден"end;
+return eh,hq,nil end;
+function q.spinFortuneWheel()local eh,hq,h7=q.findFortuneWheel()if not eh then return false,h7 end;
+local D,gL=B(function()if eh:IsA("RemoteFunction")then return eh:InvokeServer("openFortuneWheel",hq)end;
+eh:FireServer("openFortuneWheel",hq)return true end)if not D then return false,tostring(gL)end;
+if gL==false then return false,q.language=="en"and"spin is not available"or"попытка недоступна"end;
+if type(gL)=="table"and(gL.success==false or gL.Success==false or gL.ok==false or gL.Ok==false)then return false,tostring(gL.message or gL.Message or gL.error or gL.Error or(q.language=="en"and"spin is not available"or"попытка недоступна"))end;
+q.wheelSpinAttempts=(q.wheelSpinAttempts or 0)+1;
+return true,nil end;
+function q.stopAutoWheel(gx)q.autoWheel=false;
+q.wheelToken=(q.wheelToken or 0)+1;
+q.wheelLastError=nil;
+q.wheelRetryDelay=5;
+if q.leverRefs.autoWheel then q.leverRefs.autoWheel.Set(false,true)end;
+if gx then aP(gx)end end;
+function q.startAutoWheel()local eh,hq,h7=q.findFortuneWheel()if not eh or not hq then return false,h7 end;
+q.wheelToken=(q.wheelToken or 0)+1;
+q.autoWheel=true;
+q.wheelLastError=nil;
+q.wheelRetryDelay=5;
+local fd=q.wheelToken;
+aP(q.language=="en"and"FORTUNE WHEEL: auto spin enabled"or"КОЛЕСО УДАЧИ: автопрокрутка включена")task.spawn(function()while q.alive and q.autoWheel and q.wheelToken==fd do if not q.networkPaused then local D,hg=q.spinFortuneWheel()if q.wheelToken~=fd then return end;
+if hg and hg~=q.wheelLastError then q.wheelLastError=hg;
+aP((q.language=="en"and"FORTUNE WHEEL: waiting • "or"КОЛЕСО УДАЧИ: ожидание • ")..tostring(hg))elseif D then q.wheelLastError=nil end;
+q.wheelRetryDelay=D and 5 or math.min(60,math.max(5,tonumber(q.wheelRetryDelay)or 5)*1.6)end;
+local hI=q.networkPaused and 10 or math.max(10,math.floor((tonumber(q.wheelRetryDelay)or 5)*10))for o=1,hI do if not q.alive or not q.autoWheel or q.wheelToken~=fd then return end;
+task.wait(0.1)end end end)return true,nil end;
 local function hO(u)local y=P(u)return y:find("apex",1,true)~=nil end;
 local function hP(L)if not L or hO(L.Name)then return true end;
 if q.isPetCurrentlyEquipped(L)then return true end;
@@ -1086,12 +1111,12 @@ i6=i6+1;
 if i6>=2 then i4("КРИСТАЛЛ ОСТАНОВЛЕН: "..tostring(hg))return end;
 aP("ОШИБКА КРИСТАЛЛА: "..tostring(hg))i7=1.25 end end;
 task.wait(i7)end end)return true end;
-local function id(gx)gw(nil)i4(nil)q.stopAutoEquipBestPets(nil)q.stopAutoQuest(nil)q.petCleanupEnabled=false;
+local function id(gx)gw(nil)i4(nil)q.stopAutoEquipBestPets(nil)q.stopAutoQuest(nil)q.stopAutoWheel(nil)q.petCleanupEnabled=false;
 q.petCleanupToken=(q.petCleanupToken or 0)+1;
 if q.leverRefs.petCleanup then q.leverRefs.petCleanup.Set(false,true)end;
 if q.closeDeleteConfirmation then B(q.closeDeleteConfirmation)end;
 if gx then aP(gx)end end;
-local ie=CFrame.new(-8625.93262,17.2325287,-5730.47217,0.765763462,-1.84813775e-09,0.643122315,-1.32089262e-09,1,4.44647785e-09,-0.643122315,-4.25444568e-09,0.765763462)local function ig()local I=b:FindFirstChild("rEvents")local eh=I and I:FindFirstChild("rebirthRemote")if eh and(eh:IsA("RemoteFunction")or eh:IsA("RemoteEvent"))then return eh end;
+q.kingTarget=CFrame.new(-8625.93262,17.2325287,-5730.47217,0.765763462,-1.84813775e-09,0.643122315,-1.32089262e-09,1,4.44647785e-09,-0.643122315,-4.25444568e-09,0.765763462)local function ig()local I=b:FindFirstChild("rEvents")local eh=I and I:FindFirstChild("rebirthRemote")if eh and(eh:IsA("RemoteFunction")or eh:IsA("RemoteEvent"))then return eh end;
 return nil end;
 local function ih(eh)if q.networkPaused then return false,"network hold"end;
 eh=eh or ig()if not eh then return false,"rebirthRemote не найден"end;
@@ -1176,7 +1201,7 @@ local eD=tonumber(N)if not eD then return false,"неверный размер"e
 eD=math.clamp(eD,0.1,1000)local D,hg=B(function()if eh:IsA("RemoteFunction")then eh:InvokeServer("changeSize",eD)else eh:FireServer("changeSize",eD)end end)return D,hg end;
 local function iE()local iF=n.RockBugKingCF;
 if typeof(iF)=="CFrame"then return iF end;
-return ie end;
+return q.kingTarget end;
 local function iG()for o,M in ipairs({"kingHoldPosition","kingHoldGyro"})do local iH=q[M]if iH and iH.Parent then B(function()iH:Destroy()end)end;
 q[M]=nil end;
 local hv={q.kingRoot,aO()}local aK=aM()if aK then for o,L in ipairs(aK:GetDescendants())do if L.Name=="RockBugKingPhysicalHold"or L.Name=="RockBugKingPhysicalGyro"then B(function()L:Destroy()end)end end end;
@@ -1334,16 +1359,92 @@ return true end;
 local function jE(dH)local bw=bN(q.selectedRock)local eM=bw and(bw.body or bw.hit)if not dH or not eM or not eM:IsA("BasePart")then return false end;
 local iX=eM.CFrame:PointToObjectSpace(dH.Position)local iY=eM.Size*0.5;
 local jD=math.max(eM.Size.X,eM.Size.Y,eM.Size.Z)local jF=math.clamp(jD*0.18,8,22)return math.abs(iX.X)<=iY.X+jF and math.abs(iX.Y)<=iY.Y+jF and math.abs(iX.Z)<=iY.Z+jF end;
-local function jG(jH)if jH==q.visualLow then return end;
+local function jG(jH)jH=jH and true or false;
+if jH==q.visualLow then return end;
 q.visualLow=jH;
-if jH then q.visualSaved={}local c7=0;
-for o,bn in ipairs(workspace:GetDescendants())do c7=c7+1;
-if c7>6500 then break end;
-if bn:IsA("ParticleEmitter")or bn:IsA("Trail")or bn:IsA("Beam")or bn:IsA("Smoke")or bn:IsA("Fire")or bn:IsA("Sparkles")then q.visualSaved[bn]={Enabled=bn.Enabled}bn.Enabled=false elseif bn:IsA("BasePart")then q.visualSaved[bn]={CastShadow=bn.CastShadow}bn.CastShadow=false end;
-if c7%500==0 then task.wait()end end;
-aP("МЕНЬШЕ ЭФФЕКТОВ: включено")else for bg,jk in pairs(q.visualSaved)do if bg and bg.Parent then if jk.Enabled~=nil then B(function()bg.Enabled=jk.Enabled end)end;
-if jk.CastShadow~=nil then B(function()bg.CastShadow=jk.CastShadow end)end end end;
-q.visualSaved={}aP("МЕНЬШЕ ЭФФЕКТОВ: выключено")end end;
+q.visualToken=(q.visualToken or 0)+1;
+for o,gy in ipairs(q.visualConnections or{})do B(function()gy:Disconnect()end)end;
+q.visualConnections={}if jH then q.visualSaved={Enabled=setmetatable({},{__mode="k"}),Visible=setmetatable({},{__mode="k"}),Transparency=setmetatable({},{__mode="k"}),CastShadow=setmetatable({},{__mode="k"}),RenderFidelity=setmetatable({},{__mode="k"})}q.visualGlobals={}local fd=q.visualToken;
+local function gy(bn,lc,N)local jk=q.visualSaved[lc]if jk and jk[bn]==nil then jk[bn]=N end end;
+local function hA(bn)if not bn or not bn.Parent or not q.visualLow or q.visualToken~=fd then return end;
+if bn:IsA("ParticleEmitter")or bn:IsA("Trail")or bn:IsA("Beam")or bn:IsA("Smoke")or bn:IsA("Fire")or bn:IsA("Sparkles")or bn:IsA("PostEffect")or bn:IsA("Light")or bn:IsA("Highlight")then local D,N=B(function()return bn.Enabled end)if D and N then gy(bn,"Enabled",N)B(function()bn.Enabled=false end)end elseif bn:IsA("Explosion")then local D,N=B(function()return bn.Visible end)if D and N then gy(bn,"Visible",N)B(function()bn.Visible=false end)end elseif bn:IsA("Decal")or bn:IsA("Texture")then local D,N=B(function()return bn.Transparency end)if D and N<1 then gy(bn,"Transparency",N)B(function()bn.Transparency=1 end)end elseif bn:IsA("BasePart")then local D,N=B(function()return bn.CastShadow end)if D and N then gy(bn,"CastShadow",N)B(function()bn.CastShadow=false end)end;
+if bn:IsA("MeshPart")then D,N=B(function()return bn.RenderFidelity end)if D and N~=Enum.RenderFidelity.Performance then gy(bn,"RenderFidelity",N)B(function()bn.RenderFidelity=Enum.RenderFidelity.Performance end)end end end end;
+q.visualReducer=hA;
+local D,lD=B(function()return game:GetService("Lighting")end)if D and lD then for o,lc in ipairs({"GlobalShadows","EnvironmentDiffuseScale","EnvironmentSpecularScale"})do local c5,N=B(function()return lD[lc]end)if c5 then q.visualGlobals[lc]=N;
+B(function()lD[lc]=lc=="GlobalShadows"and false or 0 end)end end end;
+local dW=workspace:FindFirstChildOfClass("Terrain")if dW then q.visualGlobals.terrain=dW;
+for o,lc in ipairs({"Decoration","WaterWaveSize","WaterWaveSpeed","WaterReflectance"})do local c5,N=B(function()return dW[lc]end)if c5 then q.visualGlobals["terrain_"..lc]=N;
+B(function()dW[lc]=lc=="Decoration"and false or 0 end)end end end;
+local c5,eW=B(function()return settings().Rendering end)if c5 and eW then local Y,N=B(function()return eW.QualityLevel end)if Y then q.visualGlobals.rendering=eW;
+q.visualGlobals.QualityLevel=N;
+B(function()eW.QualityLevel=Enum.QualityLevel.Level01 end)end end;
+task.spawn(function()local c7=0;
+local W={workspace}if lD then table.insert(W,lD)end;
+while#W>0 do if not q.alive or not q.visualLow or q.visualToken~=fd then return end;
+local bn=table.remove(W)hA(bn)local Y,bF=B(function()return bn:GetChildren()end)if Y then for o=1,#bF do W[#W+1]=bF[o]end end;
+c7=c7+1;
+if c7%250==0 then task.wait()end end end)local function hB(bn)if q.alive and q.visualLow and q.visualToken==fd then B(function()hA(bn)end)end end;
+local Y,W=B(function()return workspace.DescendantAdded:Connect(hB)end)if Y and W then table.insert(q.visualConnections,W)end;
+if lD then Y,W=B(function()return lD.DescendantAdded:Connect(hB)end)if Y and W then table.insert(q.visualConnections,W)end end;
+aP(q.language=="en"and"LOW GRAPHICS: enabled"or"ЛЁГКАЯ ГРАФИКА: включена")else q.visualReducer=nil;
+for lc,jk in pairs(q.visualSaved or{})do for bg,N in pairs(jk)do if typeof(bg)=="Instance"and bg.Parent then B(function()bg[lc]=N end)end end end;
+local lD=game:GetService("Lighting")for o,lc in ipairs({"GlobalShadows","EnvironmentDiffuseScale","EnvironmentSpecularScale"})do if q.visualGlobals and q.visualGlobals[lc]~=nil then local N=q.visualGlobals[lc]B(function()lD[lc]=N end)end end;
+local dW=q.visualGlobals and q.visualGlobals.terrain;
+if dW and dW.Parent then for o,lc in ipairs({"Decoration","WaterWaveSize","WaterWaveSpeed","WaterReflectance"})do local N=q.visualGlobals["terrain_"..lc]if N~=nil then B(function()dW[lc]=N end)end end end;
+local eW=q.visualGlobals and q.visualGlobals.rendering;
+if eW and q.visualGlobals.QualityLevel~=nil then local N=q.visualGlobals.QualityLevel B(function()eW.QualityLevel=N end)end;
+q.visualSaved={}q.visualGlobals={}aP(q.language=="en"and"LOW GRAPHICS: disabled"or"ЛЁГКАЯ ГРАФИКА: выключена")end end;
+function q.setUltraBlack(jH,mC)jH=jH and true or false;
+if jH==q.ultraBlack and((jH and q.ultraGui and q.ultraGui.Parent)or(not jH and(not q.ultraGui or not q.ultraGui.Parent)))then return true end;
+if jH then local h8=q.ultraBlack==true;
+if q.ultraGuiConnection then B(function()q.ultraGuiConnection:Disconnect()end)q.ultraGuiConnection=nil end;
+if q.ultraGui and q.ultraGui.Parent then q.ultraGui:Destroy()end;
+local D,l7=B(function()local pR=Instance.new("ScreenGui")pR.Name="RockBugHubUltraBlack"pR.IgnoreGuiInset=true;
+pR.ResetOnSpawn=false;
+pR.DisplayOrder=1000000;
+pR.ZIndexBehavior=Enum.ZIndexBehavior.Global;
+local oe=Instance.new("Frame")oe.Parent=pR;
+oe.Size=UDim2.fromScale(1,1)oe.BackgroundColor3=Color3.new(0,0,0)oe.BorderSizePixel=0;
+oe.Active=true;
+oe.ZIndex=99;
+local bu=Instance.new("TextButton")bu.Name="RestoreScreen"bu.Parent=oe;
+bu.AnchorPoint=Vector2.new(0.5,1)bu.Position=UDim2.new(0.5,0,1,-24)bu.Size=UDim2.fromOffset(158,42)bu.BackgroundColor3=Color3.fromRGB(22,22,25)bu.BorderSizePixel=0;
+bu.AutoButtonColor=true;
+bu.Font=Enum.Font.GothamBold;
+bu.Text=q.language=="en"and"RESTORE SCREEN"or"ВЕРНУТЬ ЭКРАН"bu.TextColor3=Color3.fromRGB(238,239,244)bu.TextSize=11;
+bu.ZIndex=100;
+local mR=Instance.new("UICorner")mR.CornerRadius=UDim.new(0,10)mR.Parent=bu;
+local ms=Instance.new("UIStroke")ms.Color=Color3.fromRGB(142,118,255)ms.Thickness=1.4;
+ms.Transparency=0.18;
+ms.Parent=bu;
+bu.Activated:Connect(function()q.setUltraBlack(false,false)end)local pS=j:FindFirstChildOfClass("PlayerGui")or k;
+if not pS or not pS.Parent then error("PlayerGui недоступен")end;
+pR.Parent=pS;
+return pR end)if not D or not l7 then q.ultraBlack=false;
+if q.ultraRenderDisabled then B(function()c:Set3dRenderingEnabled(true)end)q.ultraRenderDisabled=false end;
+for ma,N in pairs(q.ultraCoreGuiSaved or{})do B(function()g:SetCoreGuiEnabled(ma,N)end)end;
+q.ultraCoreGuiSaved={}q.ultraGui=nil;
+if q.leverRefs.ultraBlack then q.leverRefs.ultraBlack.Set(false,true)end;
+return false,tostring(l7 or"не удалось создать кнопку возврата")end;
+q.ultraGui=l7;
+q.ultraBlack=true;
+q.refreshUltraButton=function()if q.ultraGui and q.ultraGui.Parent then local mf=q.ultraGui:FindFirstChild("RestoreScreen",true)if mf then mf.Text=q.language=="en"and"RESTORE SCREEN"or"ВЕРНУТЬ ЭКРАН"end end end;
+local Y,W=B(function()return l7.AncestryChanged:Connect(function(o,ab)if not ab and q.alive and q.ultraBlack and q.ultraGui==o then task.delay(0.1,function()if q.alive and q.ultraBlack and(not q.ultraGui or not q.ultraGui.Parent)then q.setUltraBlack(true,true)end end)end end)end)if Y then q.ultraGuiConnection=W end;
+local c5,hg=true,nil;
+if not h8 then q.ultraCoreGuiSaved={}for o,ma in ipairs(Enum.CoreGuiType:GetEnumItems())do if ma~=Enum.CoreGuiType.All then local D,N=B(function()return g:GetCoreGuiEnabled(ma)end)if D then q.ultraCoreGuiSaved[ma]=N;
+B(function()g:SetCoreGuiEnabled(ma,false)end)end end end;
+c5,hg=B(function()c:Set3dRenderingEnabled(false)end)q.ultraRenderDisabled=c5 end;
+if q.leverRefs.ultraBlack then q.leverRefs.ultraBlack.Set(true,true)end;
+if not mC then aP(c5 and(q.language=="en"and"ULTRA: 3D rendering disabled"or"УЛЬТРА: 3D-рендер отключён")or(q.language=="en"and"ULTRA: black screen only • rendering API unavailable"or"УЛЬТРА: только чёрный экран • отключение рендера недоступно"))end;
+return true,hg else q.ultraBlack=false;
+if q.ultraGuiConnection then B(function()q.ultraGuiConnection:Disconnect()end)q.ultraGuiConnection=nil end;
+if q.ultraRenderDisabled then B(function()c:Set3dRenderingEnabled(true)end)end q.ultraRenderDisabled=false;
+for ma,N in pairs(q.ultraCoreGuiSaved or{})do B(function()g:SetCoreGuiEnabled(ma,N)end)end;
+q.ultraCoreGuiSaved={}if q.ultraGui and q.ultraGui.Parent then q.ultraGui:Destroy()end;
+q.ultraGui=nil;
+if q.leverRefs.ultraBlack then q.leverRefs.ultraBlack.Set(false,true)end;
+if not mC then aP(q.language=="en"and"ULTRA: screen restored"or"УЛЬТРА: экран возвращён")end;
+return true end end;
 local function jI()local d0=aN()if d0 then B(function()d0:UnequipTools()end)end end;
 local function jJ()if q.leverRefs.bug then q.leverRefs.bug.Set(false,true)end;
 if q.leverRefs.lockRock then q.leverRefs.lockRock.Set(false,true)end;
@@ -1425,15 +1526,14 @@ q.trainCursor=0;
 if q.leverRefs.train and q.leverRefs.train[e7]then q.leverRefs.train[e7].Set(false,true)end;
 jK()if not q.bugActive and not q.trainActive and not q.machineActive then jI()end;
 if cF then aP(cF)end end;
-local function jT()jM("ВСЁ ОСТАНОВЛЕНО",true)if type(q.stopMachineFarm)=="function"then q.stopMachineFarm(nil)end;
+local function jT()if q.boss then q.boss:Stop("Остановлено",true)end;jM("ВСЁ ОСТАНОВЛЕНО",true)if type(q.stopMachineFarm)=="function"then q.stopMachineFarm(nil)end;
 if type(q.stopProteinEggAutomation)=="function"then q.stopProteinEggAutomation(nil)end;
 id(nil)q.lockPosition=false;
 q.positionCF=nil;
 ij(nil,false)q.autoSize=false;
 jc()if q.leverRefs.lockPosition then q.leverRefs.lockPosition.Set(false,true)end;
 if q.leverRefs.autoSize then q.leverRefs.autoSize.Set(false,true)end;
-if q.leverRefs.kingLock then q.leverRefs.kingLock.Set(false,true)end;
-jG(false)if q.leverRefs.visualLow then q.leverRefs.visualLow.Set(false,true)end end;
+if q.leverRefs.kingLock then q.leverRefs.kingLock.Set(false,true)end end;
 local function jU()gw(nil)if not q.selectedRock then aP("камень не выбран")return false end;
 if not jn()then aP("АВТОУДАР: выбранный камень не найден")return false end;
 if q.machineActive and type(er)=="function"then er()end;
@@ -1491,11 +1591,12 @@ q.machineNextAttach=0;
 q.machineNextRep=0;
 q.machineCharacterBefore=nil;
 q.machineAnimationsBefore=nil;
+local fc=aN()if fc and f2 and fc.SeatPart==f2.seat then B(function()fc.Sit=false end)task.wait(0.12)end;
 if q.leverRefs.machineFarm then q.leverRefs.machineFarm.Set(false,true)end;
-if f2 then eq(f2,fe,ff,true)end;
+if jY and f2 then eq(f2,fe,ff,true)end;
 if cF then aP(cF)end end;
 q.stopMachineFarm=jX;
-local function jZ(f2)f2=f2 or q.selectedMachine;
+local function jZ(f2,keepPosition)f2=f2 or q.selectedMachine;
 if not f2 or not f2.seat or not f2.seat.Parent then aP("ТРЕНАЖЁР: сначала выбери доступный тренажёр")return false end;
 local fB=aO()if not fB then aP("ТРЕНАЖЁР: персонаж ещё не загрузился")return false end;
 if not f2.homeSeatCF then B(function()f2.homeSeatCF=f2.seat.CFrame end)end;
@@ -1516,7 +1617,9 @@ q.machineNextAttach=os.clock()+1.5;
 q.machineNextRep=os.clock()+0.28;
 q.machineCharacterBefore={}q.machineAnimationsBefore={}local fi=aM()if fi then for o,L in ipairs(fi:GetDescendants())do q.machineCharacterBefore[L]=true end end;
 B(function()local fc=aN()local fy=fc:FindFirstChildOfClass("Animator")local fz=fy and fy:GetPlayingAnimationTracks()or fc:GetPlayingAnimationTracks()for o,fA in ipairs(fz)do q.machineAnimationsBefore[fA]=true end end)local j_,hg=B(function()fB.Anchored=false;
-fB.CFrame=f2.seat.CFrame*CFrame.new(0,3,0)fB.AssemblyLinearVelocity=Vector3.new(0,0,0)fB.AssemblyAngularVelocity=Vector3.new(0,0,0)end)if not j_ then jX(nil)aP("ТРЕНАЖЁР: "..tostring(hg):sub(1,85))return false end;
+if not keepPosition then fB.CFrame=f2.seat.CFrame*CFrame.new(0,3,0)end;
+fB.AssemblyLinearVelocity=Vector3.new(0,0,0)fB.AssemblyAngularVelocity=Vector3.new(0,0,0)end)if not j_ then jX(nil)aP("ТРЕНАЖЁР: "..tostring(hg):sub(1,85))return false end;
+task.wait(0.18);
 local o,ec=e5()q.remoteTokens=math.max(q.remoteTokens or 0,ec)if q.leverRefs.machineFarm then q.leverRefs.machineFarm.Set(true,true)end;
 ep(f2,q.machineToken)aP("ФАРМ: "..tostring(f2.zone).." • "..tostring(f2.name))return true end;
 do q.teleportDestinations={{id="Tiny Island",position={-34,7,1903},aliases={"tinyisland","tiny"}},{id="Starter Island",position={2,8,115},aliases={"starterisland","starter","mainisland"}},{id="Legend Beach",position={470,7,-321},aliases={"legendbeach","beach"}},{id="Frost Gym",position={-2600.00244,3.67686558,-403.884369},aliases={"frostgym","frozengym","frozenisland","frost","frozen"}},{id="Mythical Gym",position={2255,7,1071},aliases={"mythicalgym","mythicalisland","mythical","mystic"}},{id="Eternal Gym",position={-6768,7,-1287},aliases={"eternalgym","eternalisland","infernogym","eternal","inferno"}},{id="Legend Gym",position={4604,991,-3887},aliases={"legendsgym","legendgym","legendsisland","legendisland"}},{id="Muscle King Gym",position={-8646,17,-5738},aliases={"musclekinggym","muscleking","kinggym","kingisland","kingarena"}},{id="Jungle Gym",position={-8659,6,2384},aliases={"ancientjungle","junglegym","jungleisland","jungle"}},{id="Industrial Gym"}}q.teleportPortalCache=q.teleportPortalCache or{}local k0={}k0.metadataFields={"Destination","destination","TeleportDestination","teleportDestination","TeleportTo","teleportTo","Target","target","Location","location","Zone","zone","Gym","gym","Island","island","Spawn","spawn"}function k0.key(N)return string.lower(tostring(N or"")):gsub("[^%w]","")end;
@@ -1604,7 +1707,7 @@ fB.AssemblyLinearVelocity=Vector3.new(0,0,0)fB.AssemblyAngularVelocity=Vector3.n
 q.selectedTeleport=a2;
 if type(q.refreshTeleportUI)=="function"then q.refreshTeleportUI()end;
 aP("ТЕЛЕПОРТ: "..a2)return true end end;
-do local function kg(cd)if not cd then return nil end;
+(function()local function kg(cd)if not cd then return nil end;
 for o,L in ipairs(cd:GetChildren())do if L.Name=="Protein Egg"and L:IsA("Tool")then return L end end;
 return nil end;
 local function kh(cO)for o,u in ipairs({"Amount","amount","Count","count","Quantity","quantity"})do local R=cO:FindFirstChild(u)local fE=R and bd(R)or nil;
@@ -1694,7 +1797,148 @@ q.eggEnabled=false;
 q.eggNextUseAt=0;
 if q.leverRefs.proteinEgg then q.leverRefs.proteinEgg.Set(false,true)end;
 if type(q.refreshEggUI)=="function"then q.refreshEggUI()end;
-if cF then aP(cF)end end end;
+if cF then aP(cF)end end end)();
+q.eggGiftAmount=2;
+q.eggGiftTargetUserId=nil;
+q.eggGiftInFlight=false;
+q.eggGiftStatus="готово";
+q.eggGiftLastServerReply=nil;
+function q.giftProteinEggCount(kQ)local kR=kQ and kQ:FindFirstChild("consumablesFolder")if not kR then return 0 end;
+local kS=0;
+for o,kT in ipairs(kR:GetChildren())do if kT.Name=="Protein Egg"then local kU=1;
+for o,u in ipairs({"Amount","amount","Count","count","Quantity","quantity"})do local kV=kT:FindFirstChild(u)local kW=kV and bd(kV)or nil;
+if kW==nil then local D,N=pcall(function()return kT:GetAttribute(u)end)if D then kW=tonumber(N)end end;
+if kW~=nil then kU=math.max(0,math.floor(kW))break end end;
+kS=kS+kU end end;
+return kS end;
+function q.findGiftProteinEgg()local kR=j:FindFirstChild("consumablesFolder")if not kR then return nil,nil end;
+for o,kT in ipairs(kR:GetChildren())do if kT.Name=="Protein Egg"then return kT,kR end end;
+return nil,kR end;
+function q.resolveEggGiftTarget()local kQ=tonumber(q.eggGiftTargetUserId)and a:GetPlayerByUserId(tonumber(q.eggGiftTargetUserId))or nil;
+if kQ==j or not kQ or kQ.Parent~=a then return nil end;
+return kQ end;
+function q.giftProteinEggBatch(kX,kQ)if q.eggGiftInFlight then return false,0,"передача уже идёт"end;
+if q.eggEnabled or q.eggInFlight then return false,0,"сначала выключи автоиспользование"end;
+if q.networkPaused then return false,0,"сеть на паузе"end;
+kQ=kQ or q.resolveEggGiftTarget()if not kQ then return false,0,"игрок не выбран или вышел"end;
+local kY=b:FindFirstChild("rEvents")local kZ=kY and kY:FindFirstChild("giftRemote")if not kZ or not kZ:IsA("RemoteFunction")then return false,0,"giftRemote не найден"end;
+kX=math.clamp(math.floor(tonumber(kX)or 1),1,10)q.eggGiftInFlight=true;
+q.eggGiftStatus="передача 0/"..tostring(kX)if type(q.refreshEggGiftUI)=="function"then q.refreshEggGiftUI()end;
+local k_=0;
+local l0=nil;
+local D,hg=xpcall(function()for l1=1,kX do if not q.alive or kQ.Parent~=a then l0="игрок вышел"break end;
+local l2,l3=q.findGiftProteinEgg()if not l2 then l0="яйца закончились или не загрузились"break end;
+local l4=q.giftProteinEggCount(j)local l5=q.giftProteinEggCount(kQ)local l6,l7=pcall(function()return table.pack(kZ:InvokeServer("giftRequest",kQ,l2))end)if not l6 then l0="ошибка remote: "..tostring(l7):sub(1,90)break end;
+q.eggGiftLastServerReply=l7 and l7.n and l7.n>0 and tostring(l7[1])or"nil";
+if l7 and l7.n and l7.n>0 and l7[1]==false then l0="сервер запретил повторную передачу"break end;
+local l8=false;
+local l9=os.clock()+3;
+repeat local la,lb=pcall(function()return l2.Parent end)local lc=q.giftProteinEggCount(j)local ld=q.giftProteinEggCount(kQ)if not la or lb~=l3 or lc<l4 or ld>l5 then l8=true break end;
+task.wait(0.06)until os.clock()>=l9 or not q.alive or kQ.Parent~=a;
+if not l8 and not(l7 and l7.n and l7.n>0 and l7[1]==true)then l0="сервер не подтвердил • ответ "..tostring(q.eggGiftLastServerReply)break end;
+k_=k_+1;
+q.eggGiftStatus="передано "..tostring(k_).."/"..tostring(kX)if type(q.refreshEggGiftUI)=="function"then q.refreshEggGiftUI()end;
+if l1<kX then task.wait(0.18)end end end,function(gx)return tostring(gx)end)q.eggGiftInFlight=false;
+if not D then l0=tostring(hg):sub(1,100)end;
+if k_>=kX then q.eggGiftStatus="готово • передано ×"..tostring(k_)else q.eggGiftStatus=(k_>0 and("передано ×"..tostring(k_).." • ")or"")..tostring(l0 or"остановлено")end;
+if type(q.refreshEggGiftUI)=="function"then q.refreshEggGiftUI()end;
+if k_>0 then aP("ПЕРЕДАЧА ЯИЦ: ×"..tostring(k_).." → "..tostring(kQ.Name))else aP("ПЕРЕДАЧА ЯИЦ: "..tostring(l0 or"не сработало"))end;
+return k_>0,k_,l0 end;
+q.fastPunchRate=math.clamp(tonumber(q.fastPunchRate)or 120,5,120);
+q.fastPunchEffectiveRate=0;
+q.fastPunchTokens=0;
+q.fastPunchLastLoop=os.clock();
+q.fastPunchNextToolPulse=0;
+q.fastPunchAdaptiveRate=20;
+q.fastPunchLastControl=os.clock();
+q.fastPunchLastStrength=nil;
+q.fastPunchStalls=0;
+q.turboRepEnabled=true;
+q.turboRepRate=200;
+q.turboRepEffectiveRate=0;
+q.turboRepTokens=0;
+q.turboRepLastLoop=os.clock();
+q.turboRepLastControl=os.clock();
+q.turboRepLastStrength=nil;
+q.turboRepLastDurability=nil;
+q.turboRepStalls=0;
+q.turboRepActive=false;
+function q.turboRepStat(L)local D,hg=pcall(function()return L and L.Value end)if D and type(hg)=="number"then return hg end;
+return nil end;
+function q.resetTurboRep(b6)q.turboRepRate=200;
+q.turboRepEffectiveRate=0;
+q.turboRepTokens=0;
+q.turboRepLastLoop=b6 or os.clock();
+q.turboRepLastControl=b6 or os.clock();
+q.turboRepLastStrength=nil;
+q.turboRepLastDurability=nil;
+q.turboRepStalls=0;
+q.turboRepActive=false end;
+function q.getTurboRepTarget()if q.machineActive then local f2=q.selectedMachine;
+if f2 and f2.seat and f2.seat.Parent then return true,f2.seat end;
+return false,nil end;
+if not q.trainActive or#q.trainOrder==0 then return false,nil end;
+local cO=q.activeTool;
+local fi=aM()if not cO or not fi or cO.Parent~=fi or tostring(cO.Name)=="Punch"then return false,nil end;
+return true,nil end;
+function q.runTurboRep(b6)if not q.turboRepEnabled or not q.directRemoteEnabled or q.networkPaused or q.toolTransition then if q.turboRepActive then q.resetTurboRep(b6)end;
+return end;
+local kW,kX=q.getTurboRepTarget()if not kW then if q.turboRepActive then q.resetTurboRep(b6)end;
+return end;
+if not q.turboRepActive then q.turboRepActive=true;
+q.turboRepRate=200;
+q.turboRepTokens=0;
+q.turboRepLastLoop=b6;
+q.turboRepLastControl=b6;
+q.turboRepStalls=0 end;
+local kY=j:FindFirstChild("leaderstats")local kZ=kY and kY:FindFirstChild("Strength")local k_=j:FindFirstChild("Durability")local l0=q.turboRepStat(kZ)local l1=q.turboRepStat(k_);
+if b6-q.turboRepLastControl>=0.5 then local l2=q.turboRepLastStrength~=nil and l0~=nil and l0~=q.turboRepLastStrength or q.turboRepLastDurability~=nil and l1~=nil and l1~=q.turboRepLastDurability;
+if q.turboRepLastStrength==nil and q.turboRepLastDurability==nil then l2=true end;
+if l2 then q.turboRepStalls=0;
+q.turboRepRate=math.min(1200,math.max(200,q.turboRepRate*1.12))else q.turboRepStalls=q.turboRepStalls+1;
+if q.turboRepStalls>=2 then q.turboRepRate=math.max(200,q.turboRepRate*0.65)q.turboRepTokens=0 end end;
+q.turboRepLastStrength=l0;
+q.turboRepLastDurability=l1;
+q.turboRepLastControl=b6 end;
+local l2=1200;
+if q.pingAvailable then local dD=tonumber(q.pingMs)or 0;
+if dD>=700 then l2=50 elseif dD>=450 then l2=100 elseif dD>=300 then l2=200 elseif dD>=200 then l2=400 end end;
+local l3=math.min(q.turboRepRate,l2)q.turboRepEffectiveRate=l3;
+local l4=math.min(0.1,math.max(0,b6-q.turboRepLastLoop))q.turboRepLastLoop=b6;
+q.turboRepTokens=math.min(24,q.turboRepTokens+l3*l4)local l5=math.min(math.floor(q.turboRepTokens),math.max(1,math.min(24,math.ceil(l3*0.05))))if l5<1 then return end;
+local eh=eg()if not eh then return end;
+local l6=0;
+local D,hg=pcall(function()for o=1,l5 do if kX then eh:FireServer("rep",kX)else eh:FireServer("rep")end;
+l6=l6+1 end end)if D then q.turboRepTokens=q.turboRepTokens-l6;
+q.remoteSentWindow=q.remoteSentWindow+l6;
+ei()else q.turboRepTokens=0;
+ dN("turbo rep remote error")end end;
+function q.runFastPunch(b6)if not q.directRemoteEnabled or q.networkPaused or q.toolTransition then q.fastPunchTokens=0;
+ q.fastPunchEffectiveRate=0;
+ q.fastPunchLastLoop=b6;
+ return end;
+ local l7=q.bugActive or(q.trainActive and q.activeTrains and q.activeTrains.Punch)if not l7 then q.fastPunchTokens=0;
+ q.fastPunchEffectiveRate=0;
+ q.fastPunchLastLoop=b6;
+ return end;
+ local l8=math.clamp(tonumber(q.fastPunchRate)or 120,5,120)local lc=tonumber(q.sessionStrengthCurrent);
+ if b6-(q.fastPunchLastControl or b6)>=0.5 then local ld=q.fastPunchLastStrength==nil or(lc~=nil and lc>q.fastPunchLastStrength)if lc==nil then q.fastPunchAdaptiveRate=math.min(l8,20)q.fastPunchStalls=0 elseif ld then q.fastPunchStalls=0;
+ q.fastPunchAdaptiveRate=math.min(l8,math.max(10,(q.fastPunchAdaptiveRate or 20)*1.25))else q.fastPunchStalls=(q.fastPunchStalls or 0)+1;
+ if q.fastPunchStalls>=2 then q.fastPunchAdaptiveRate=math.max(5,(q.fastPunchAdaptiveRate or 20)*0.60)q.fastPunchTokens=0 end end;
+ q.fastPunchLastStrength=lc;
+ q.fastPunchLastControl=b6 end;
+ l8=math.min(l8,tonumber(q.fastPunchAdaptiveRate)or 20)local dD=tonumber(q.pingMs)or 0;
+ if q.pingAvailable then if dD>=700 then l8=math.min(l8,10)elseif dD>=450 then l8=math.min(l8,20)elseif dD>=300 then l8=math.min(l8,40)elseif dD>=200 then l8=math.min(l8,60)end end;
+ q.fastPunchEffectiveRate=l8;
+ local l9=math.min(0.1,math.max(0,b6-(q.fastPunchLastLoop or b6)))q.fastPunchLastLoop=b6;
+ q.fastPunchTokens=math.min(6,(q.fastPunchTokens or 0)+l8*l9)local la=math.min(4,math.floor(q.fastPunchTokens))if la<1 then return end;
+ local eh=eg()if not eh then return end;
+ local lb=0;
+ local D=pcall(function()for o=1,la do q.punchCycle=q.punchCycle+1;
+ local el=q.punchCycle%2==0 and"rightHand"or"leftHand"eh:FireServer("punch",el)lb=lb+1 end end)if D then q.fastPunchTokens=q.fastPunchTokens-lb;
+ q.remoteSentWindow=q.remoteSentWindow+lb;
+ ei()else q.fastPunchTokens=0;
+ dN("fast punch remote error")end end;
 local function kP()while q.alive do local b6=os.clock()q.lastSchedulerTick=b6;
 if b6>=q.nextNetUpdate then q.nextNetUpdate=b6+0.5;
 dO(b6)ei()q.updateSessionStats(b6)b2()end;
@@ -1775,12 +2019,795 @@ q.trainRetryAt[l3]=0;
 B(function()cO:Activate()end)em()elseif jV then q.trainRetryAt[l3]=b6+1.25;
 q.hybridSwitchAt=0;
 aP(tostring(hR.label)..": ожидаю предмет • остальные функции работают")end end end;
-if not q.networkPaused and(q.bugActive or q.trainActive)and b6>=q.nextCooldownSweep then q.nextCooldownSweep=b6+2;
+ q.runFastPunch(b6)q.runTurboRep(b6)if not q.networkPaused and(q.bugActive or q.trainActive)and b6>=q.nextCooldownSweep then q.nextCooldownSweep=b6+2;
 d4(q.activeTool)end;
 local l4=q.bugActive or q.trainActive or q.machineActive or q.networkPaused or q.lockRock or q.lockPosition or q.kingLock;
 task.wait(l4 and 0.005 or 0.08)end end;
-local l5=aJ(j.Idled:Connect(function()if not q.antiAfkEnabled then return end;
-B(function()e:CaptureController()e:ClickButton2(Vector2.new())end)end))local function l6()local l7=Instance.new("ScreenGui")l7.Name=l;
+aJ(j.Idled:Connect(function()if not q.antiAfkEnabled then return end;
+B(function()e:CaptureController()e:ClickButton2(Vector2.new())end)end))q.bossFactory=(function()
+-- Boss automation uses the ordinary Punch/touch path.
+-- This module never changes the boss, another player, or server health values.
+return function(runtime, api)
+    local state = {
+        enabled = false, generation = 0, target = nil,
+        height = 8, interval = 0.01, status = "Выключено", candidates = {},
+        nextScan = 0, nextAttack = 0, nextUI = 0, retryAt = 0, noProgress = 0,
+        lastTargetHealth = nil, lastOwnHealth = nil, lastBossDamage = nil, damageStart = nil, lastTick = nil,
+        attempts = 0, observations = 0, damageEvents = 0, busy = false,
+    }
+    local function show(message)
+        state.status = message
+        if runtime.refreshBossUI then runtime.refreshBossUI() end
+    end
+    function state:Stop(message, retreat)
+        local wasEnabled = self.enabled
+        self.enabled = false
+        self.generation += 1
+        if wasEnabled then pcall(api.release, retreat == true) end
+        self.target = nil
+        self.lastTick = nil
+        if runtime.leverRefs and runtime.leverRefs.boss then
+            runtime.leverRefs.boss.Set(false, true)
+        end
+        if message then show(message) end
+    end
+    function state:Scan()
+        local list = api.scan()
+        self.candidates = list
+        self.nextScan = api.now() + 3
+        return list
+    end
+    function state:Start()
+        if self.enabled or not runtime.alive then return self.enabled end
+        local health = api.ownHealth()
+        api.prepare()
+        if not runtime.alive then return false end
+        self.generation += 1
+        self.enabled = true
+        self.nextScan = 0
+        self.nextAttack = 0
+        self.lastTick = nil
+        self.lastOwnHealth = health and health > 0 and health or nil
+        self.retryAt = 0
+        self.attempts = 0
+        self.observations = 0
+        self.damageEvents = 0
+        self.height = 8
+        self.lastBossDamage = nil
+        self.damageStart = nil
+        show(health and health > 0 and "Запущено — ищу текущего босса…" or "Запущено — жду персонажа и текущего босса…")
+        return true
+    end
+    function state:Damage(health)
+        if not self.enabled then return end
+        if self.lastOwnHealth and health < self.lastOwnHealth then
+            self.damageEvents += 1
+            self.height = math.min(12, self.height + 1)
+            show(("Получен урон • опускаюсь чуть глубже: %.2f"):format(self.height))
+        end
+        self.lastOwnHealth = health
+    end
+    local function readBossDamage()
+        if not api.damage then return nil end
+        local ok, value = pcall(api.damage)
+        return ok and type(value) == "number" and value or nil
+    end
+    local function step(now)
+        if not state.enabled then return end
+        if not runtime.alive then state:Stop(nil, false) return end
+        if api.conflict() then
+            state:Stop("Стоп: включён другой режим боя/перемещения", false)
+            return
+        end
+        local ownHealth = api.ownHealth()
+        if not ownHealth or ownHealth <= 0 then
+            api.release(false)
+            state.target = nil
+            state.lastOwnHealth = nil
+            state.nextAttack = now + state.interval
+            if state.status ~= "Автобосс включён — жду живого персонажа…" then
+                show("Автобосс включён — жду живого персонажа…")
+            end
+            return
+        end
+        state:Damage(ownHealth)
+        if not state.enabled then return end
+        local dt = state.lastTick and math.clamp(now - state.lastTick, 0, 0.25) or 0
+        state.lastTick = now
+        if runtime.networkPaused then
+            api.release(false)
+            state.target = nil
+            state.nextScan = 0
+            state.nextAttack = now + state.interval
+            if state.status ~= "Пауза сети — атаки не отправляются" then
+                show("Пауза сети — атаки не отправляются")
+            end
+            return
+        end
+        if now < state.retryAt then return end
+        local info = state.target and api.info(state.target)
+        if not info or not info.alive then
+            if state.target then
+                api.release(true)
+                state.target = nil
+                state.nextScan = 0
+            end
+            if now >= state.nextScan then state:Scan() end
+            for _, candidate in ipairs(state.candidates) do
+                local current = api.info(candidate.model)
+                if current and current.alive then
+                    state.target = candidate.model
+                    info = current
+                    break
+                end
+            end
+            if not state.target then
+                if state.status ~= "Активный босс не найден — жду появления" then
+                    show("Активный босс не найден — жду появления")
+                end
+                return
+            end
+            state.lastTargetHealth = info.health
+            state.lastBossDamage = readBossDamage()
+            state.damageStart = state.lastBossDamage
+            state.noProgress = 0
+            state.attempts = 0
+            state.observations = 0
+            state.nextAttack = now
+            api.claim(function(health) state:Damage(health) end)
+            if not state.enabled then return end
+            show(info.name .. " найден — физически занимаю точку под ареной")
+        end
+        local progressed = info.healthKnown and state.lastTargetHealth and info.health < state.lastTargetHealth
+        local bossDamage = readBossDamage()
+        if bossDamage and state.lastBossDamage and bossDamage > state.lastBossDamage then progressed = true end
+        if progressed then
+            state.observations += 1
+            state.noProgress = 0
+        elseif info.healthKnown or bossDamage ~= nil then
+            state.noProgress += dt
+        end
+        state.lastTargetHealth = info.health
+        state.lastBossDamage = bossDamage
+        -- A decrease is only an observation: other players may also attack.
+        if (info.healthKnown or bossDamage ~= nil) and state.noProgress >= 2.5 and state.attempts > 0 then
+            state.noProgress = 0
+            state.nextAttack = now
+            show(("Урон не виден • догоняю босса по X/Z, глубина безопасная: %.2f"):format(state.height))
+        end
+        api.hold(info, state.height, state.damageEvents)
+        if now >= state.nextAttack then
+            state.nextAttack = now + state.interval -- no catch-up bursts after lag
+            local generation = state.generation
+            local target = state.target
+            local ok, reason = api.punch(info, function()
+                return runtime.alive and state.enabled and state.generation == generation
+                    and not runtime.networkPaused and state.target == target
+            end)
+            if state.generation ~= generation or not state.enabled then return end
+            if ok == false then
+                api.release(false)
+                state.target = nil
+                state.retryAt = now + 3
+                state.nextScan = state.retryAt
+                state.lastTick = nil
+                show((reason or "Атака пока недоступна") .. " — повтор через 3 секунды")
+                return
+            end
+            state.attempts += 1
+        end
+        if now >= state.nextUI then
+            state.nextUI = now + 0.4
+            local damageText = bossDamage and state.damageStart and (" • Boss Damage +%s"):format(tostring(math.max(0, bossDamage - state.damageStart))) or ""
+            local depthText = (" • глубина: %.2f"):format(state.height)
+            show(("%s • %s%s%s • %s"):format(info.name, info.modelName or info.model.Name, damageText, depthText,
+                state.observations > 0 and "урон подтверждён" or "проверяю урон…"))
+        end
+    end
+    function state:Tick(now)
+        if self.busy or not self.enabled then return end
+        self.busy = true
+        local ok, problem = pcall(step, now)
+        self.busy = false
+        if not ok then
+            self:Stop("Ошибка босса — отход и стоп: " .. tostring(problem):sub(1, 100), true)
+        end
+    end
+    return state
+end
+
+end)()
+-- Embedded after the core helpers; no new long-lived outer locals.
+do
+    local Players, World = a, workspace
+    local saved = nil
+    local knownBoss = setmetatable({}, {__mode = "k"})
+    local knownMeta = setmetatable({}, {__mode = "k"})
+    local hitCache = setmetatable({}, {__mode = "k"})
+    q.bossFollowCache = setmetatable({}, {__mode = "k"})
+    q.bossAnchorCache = setmetatable({}, {__mode = "k"})
+    local bossDamageNode = nil
+    local bossTitles = {
+        commonboss = "COMMON BOSS", uncommonboss = "UNCOMMON BOSS", rareboss = "RARE BOSS",
+        epicboss = "EPIC BOSS", legendaryboss = "LEGENDARY BOSS", mythicboss = "MYTHIC BOSS",
+        mythicalboss = "MYTHICAL BOSS", uniqueboss = "UNIQUE BOSS",
+    }
+    local function normalized(value)
+        return tostring(value or ""):lower():gsub("[^%w]", "")
+    end
+    local function bossTitle(value)
+        return bossTitles[normalized(value)]
+    end
+    local function rootOf(model)
+        return model and (model:FindFirstChild("HumanoidRootPart") or model.PrimaryPart
+            or model:FindFirstChild("UpperTorso") or model:FindFirstChild("Torso")
+            or model:FindFirstChildWhichIsA("BasePart", true))
+    end
+    local function objectPosition(object)
+        if not object then return nil end
+        if object:IsA("Attachment") then return object.WorldPosition end
+        if object:IsA("BasePart") then return object.Position end
+        if object:IsA("Model") then return object:GetPivot().Position end
+        return nil
+    end
+    local function replicatedHealth(model)
+        local humanoid = model:FindFirstChildOfClass("Humanoid")
+        if humanoid then return humanoid, humanoid.Health, humanoid.MaxHealth, true end
+        for _, node in ipairs(model:GetDescendants()) do
+            local key = normalized(node.Name)
+            if (key == "health" or key == "hp" or key == "bosshealth")
+                and (node:IsA("NumberValue") or node:IsA("IntValue")) then
+                return nil, node.Value, node.Value, true
+            end
+        end
+        for _, key in ipairs({"Health", "HP", "BossHealth"}) do
+            local value = model:GetAttribute(key)
+            if type(value) == "number" then return nil, value, value, true end
+        end
+        return nil, 1, 1, false
+    end
+    local function isPlayerModel(model)
+        for _, player in ipairs(Players:GetPlayers()) do
+            if player.Character and (model == player.Character or model:IsDescendantOf(player.Character)) then return true end
+        end
+        return false
+    end
+    function q.bossMovingRootOf(model, fallback)
+        local cached = q.bossFollowCache[model]
+        if cached and cached.part and cached.part.Parent and cached.untilAt > os.clock() then
+            return cached.part, cached.humanoid
+        end
+        -- The arena title can be attached to a stationary centre marker.  Prefer the
+        -- living boss body; use the title anchor only when no moving body exists.
+        local anchor, anchorPart = q.bossAnchorCache[model], nil
+        if anchor and anchor.Parent then
+            if anchor:IsA("Attachment") and anchor.Parent:IsA("BasePart") then anchorPart = anchor.Parent
+            elseif anchor:IsA("BasePart") then anchorPart = anchor end
+        end
+        local best = fallback or anchorPart
+        local bestHumanoid, bestScore = nil, best and 50 or -math.huge
+        for _, node in ipairs(model:GetDescendants()) do
+            if node:IsA("Humanoid") and node.Health > 0 and node.Parent
+                and not Players:GetPlayerFromCharacter(node.Parent) then
+                local part = node.RootPart or node.Parent:FindFirstChild("HumanoidRootPart")
+                    or node.Parent:FindFirstChild("UpperTorso") or node.Parent:FindFirstChild("Torso")
+                if part and part:IsA("BasePart") then
+                    local score = 2000 + (part.Anchored and 0 or 500)
+                    if score > bestScore then best, bestHumanoid, bestScore = part, node, score end
+                end
+            elseif node:IsA("BasePart") then
+                local key = normalized(node.Name)
+                local score = key == "humanoidrootpart" and 1100
+                    or (key == "uppertorso" or key == "lowertorso" or key == "torso") and 850
+                    or key == "head" and 650 or 0
+                if score > 0 then
+                    if not node.Anchored then score += 450 end
+                    if node.Transparency < 0.98 then score += 40 end
+                    if score > bestScore then best, bestScore = node, score end
+                end
+            end
+        end
+        q.bossFollowCache[model] = {part = best, humanoid = bestHumanoid, untilAt = os.clock() + 0.5}
+        return best, bestHumanoid
+    end
+    local function info(model)
+        if not model or not model:IsA("Model") or not model:IsDescendantOf(World) or isPlayerModel(model) then return nil end
+        local parent = model
+        while parent and parent ~= World do
+            local name = parent.Name:lower()
+            if name:find("pet", 1, true) or name:find("preview", 1, true) or name:find("template", 1, true) then return nil end
+            parent = parent.Parent
+        end
+        local title = bossTitle(model.Name) or knownBoss[model]
+        if not title then return nil end
+        knownBoss[model] = title
+        local humanoid, health, maxHealth, healthKnown = replicatedHealth(model)
+        local root, nestedHumanoid = q.bossMovingRootOf(model, (humanoid and humanoid.RootPart) or rootOf(model))
+        if not humanoid and nestedHumanoid then
+            humanoid = nestedHumanoid
+            health, maxHealth, healthKnown = humanoid.Health, humanoid.MaxHealth, true
+        end
+        if not root or not root:IsA("BasePart") then return nil end
+        local meta = knownMeta[model] or {}
+        return { model = model, name = title, modelName = model.Name, root = root, health = health,
+            maxHealth = maxHealth or health, healthKnown = healthKnown,
+            alive = model.Parent ~= nil and (not healthKnown or health > 0), humanoid = humanoid,
+            detection = meta.detection, confidence = meta.confidence }
+    end
+    local function attackParts(target)
+        local cached = hitCache[target.model]
+        if cached and cached.untilAt > os.clock() then return cached.parts end
+        local ranked, used = {}, {}
+        local bodyModel = target.humanoid and target.humanoid.Parent
+        for _, part in ipairs(target.model:GetDescendants()) do
+            if part:IsA("BasePart") then
+                local key = normalized(part.Name)
+                local score = part == target.root and 240 or 0
+                if bodyModel then
+                    if part == bodyModel or part:IsDescendantOf(bodyModel) then score += 700 else score -= 350 end
+                end
+                if key:find("hitbox", 1, true) or key:find("damage", 1, true) then score += 400 end
+                if key == "humanoidrootpart" or key == "uppertorso" or key == "torso" or key == "head" then score += 260 end
+                if part:FindFirstChildOfClass("TouchTransmitter") then score += 500 end
+                if part.CanTouch then score += 40 end
+                score += math.min(80, part.Size.Magnitude)
+                table.insert(ranked, {part = part, score = score})
+            end
+        end
+        table.sort(ranked, function(x, y) return x.score > y.score end)
+        local parts = {}
+        for _, item in ipairs(ranked) do
+            if not used[item.part] then
+                used[item.part] = true
+                table.insert(parts, item.part)
+                if #parts >= 5 then break end
+            end
+        end
+        hitCache[target.model] = {parts = parts, untilAt = os.clock() + 1}
+        return parts
+    end
+    local function bossDamage()
+        if bossDamageNode and bossDamageNode.Parent
+            and (bossDamageNode:IsA("NumberValue") or bossDamageNode:IsA("IntValue")) then
+            return bossDamageNode.Value
+        end
+        bossDamageNode = nil
+        for _, node in ipairs(j:GetDescendants()) do
+            if normalized(node.Name) == "bossdamage"
+                and (node:IsA("NumberValue") or node:IsA("IntValue")) then
+                bossDamageNode = node
+                return node.Value
+            end
+        end
+        for _, key in ipairs({"BossDamage", "Boss Damage"}) do
+            local value = j:GetAttribute(key)
+            if type(value) == "number" then return value end
+        end
+        return nil
+    end
+    local dangerTokens = {"attack", "damage", "hitbox", "warning", "telegraph", "danger", "hazard", "aoe", "slam", "strike", "laser", "beam"}
+    local function looksRed(part)
+        local color = part.Color
+        return color.R >= 0.62 and color.R >= color.G * 1.45 and color.R >= color.B * 1.18
+    end
+    local function dangerName(part)
+        local key = normalized(part.Name)
+        for _, token in ipairs(dangerTokens) do
+            if key:find(token, 1, true) then return true end
+        end
+        return false
+    end
+    local function dangerSignature(part)
+        local names, node = {}, part
+        for _ = 1, 5 do
+            if not node or node == World then break end
+            table.insert(names, 1, normalized(node.Name))
+            node = node.Parent
+        end
+        return table.concat(names, "/") .. ":" .. part.ClassName
+    end
+    local function horizontalBox(part, position, padding)
+        local point = part.CFrame:PointToObjectSpace(Vector3.new(position.X, part.Position.Y, position.Z))
+        return math.abs(point.X) <= part.Size.X * 0.5 + padding
+            and math.abs(point.Z) <= part.Size.Z * 0.5 + padding
+    end
+    local function dangerParts(target)
+        if saved and saved.dangerParts and os.clock() < (saved.nextDangerScan or 0) then return saved.dangerParts end
+        local result, character = {}, saved and saved.character
+        local overlap = OverlapParams.new()
+        overlap.FilterType = Enum.RaycastFilterType.Exclude
+        overlap.FilterDescendantsInstances = character and {character} or {}
+        overlap.MaxParts = 350
+        local ok, nearby = pcall(function() return World:GetPartBoundsInRadius(target.root.Position, 85, overlap) end)
+        if ok then
+            for _, part in ipairs(nearby) do
+                if part:IsA("BasePart") and part.Parent then
+                    local broad = math.max(part.Size.X, part.Size.Z) >= 2
+                    local spawned = saved and saved.spawnedParts and saved.spawnedParts[part]
+                    local insideBoss = part:IsDescendantOf(target.model)
+                    local flat = part.Size.Y <= math.max(part.Size.X, part.Size.Z) * 0.30
+                    local visible = part.Transparency < 0.97
+                    local currentRed = visible and looksRed(part)
+                    local old = saved and saved.partState and saved.partState[part]
+                    local moved = old and broad and ((part.Position - old.position).Magnitude > 1.5
+                        or math.abs(part.CFrame.LookVector:Dot(old.lookVector)) < 0.985)
+                    local changed = old and ((part.CanTouch and not old.canTouch)
+                        or (visible and old.transparency >= 0.97)
+                        or (currentRed and not old.red)
+                        or part.Size.Magnitude > old.size * 1.20
+                        or part.Transparency < old.transparency - 0.12
+                        or (moved and (currentRed or dangerName(part))))
+                    if saved and not old then
+                        if saved.baselineReady then saved.dynamicParts[part] = true else saved.baselineParts[part] = true end
+                    end
+                    if saved and changed then saved.dynamicParts[part] = true end
+                    local dynamic = spawned or (saved and saved.dynamicParts and saved.dynamicParts[part]) or changed
+                    local signature = dangerSignature(part)
+                    local confirmed = saved and saved.confirmedHazards and saved.confirmedHazards[signature]
+                    local canBeAttack = not insideBoss or spawned or (flat and dynamic)
+                    local confirmedActive = confirmed and visible and broad and canBeAttack
+                    local redTelegraph = dynamic and currentRed and broad and canBeAttack
+                    local named = dynamic and visible and dangerName(part) and broad and canBeAttack
+                    local liveHitbox = dynamic and visible and broad and part.CanTouch and canBeAttack
+                    if confirmedActive or redTelegraph or named or liveHitbox then
+                        table.insert(result, part)
+                    end
+                    if saved then saved.partState[part] = {canTouch = part.CanTouch, red = currentRed,
+                        size = part.Size.Magnitude, transparency = part.Transparency,
+                        position = part.Position, lookVector = part.CFrame.LookVector} end
+                end
+            end
+        end
+        if saved then
+            saved.baselineReady = true
+            saved.dangerParts = result
+            saved.nextDangerScan = os.clock() + 0.035
+        end
+        return result
+    end
+    local function confirmDamageHazards(target)
+        if not saved or not target or not target.root or not target.root.Parent then return end
+        local overlap = OverlapParams.new()
+        overlap.FilterType = Enum.RaycastFilterType.Exclude
+        overlap.FilterDescendantsInstances = {saved.character, target.model}
+        overlap.MaxParts = 120
+        local ok, nearby = pcall(function() return World:GetPartBoundsInRadius(saved.root.Position, 14, overlap) end)
+        if not ok then return end
+        for _, part in ipairs(nearby) do
+            if part:IsA("BasePart") and part.Parent and part.Transparency < 0.97 then
+                local broad = math.max(part.Size.X, part.Size.Z) >= 2
+                local flat = part.Size.Y <= math.max(part.Size.X, part.Size.Z) * 0.35
+                local dynamic = saved.spawnedParts[part] or saved.dynamicParts[part]
+                local translucentRed = looksRed(part) and part.Transparency > 0.04
+                if broad and horizontalBox(part, saved.root.Position, 2.8)
+                    and (dynamic or dangerName(part) or (flat and translucentRed)) then
+                    saved.confirmedHazards[dangerSignature(part)] = true
+                    saved.dynamicParts[part] = true
+                end
+            end
+        end
+        saved.nextDangerScan = 0
+    end
+    local function standingPoint(position, target)
+        local root, humanoid = saved.root, saved.humanoid
+        local ray = RaycastParams.new()
+        ray.FilterType = Enum.RaycastFilterType.Exclude
+        ray.FilterDescendantsInstances = {saved.character, target.model}
+        local hit = World:Raycast(position + Vector3.new(0, 45, 0), Vector3.new(0, -130, 0), ray)
+        local y = hit and (hit.Position.Y + humanoid.HipHeight + root.Size.Y * 0.5 + 0.08) or root.Position.Y
+        return Vector3.new(position.X, y, position.Z)
+    end
+    local function chooseDodgePoint(target, damageRevision)
+        local root = saved.root
+        local radius = 6
+        for _, part in ipairs(attackParts(target)) do
+            if part.Parent then radius = math.max(radius, math.clamp(math.max(part.Size.X, part.Size.Z) * 0.28, 4, 11)) end
+        end
+        local dangers = dangerParts(target)
+        local currentUnsafe = false
+        for _, part in ipairs(dangers) do
+            if horizontalBox(part, root.Position, 3.2) then currentUnsafe = true break end
+        end
+        local damaged = damageRevision ~= (saved.damageRevision or 0)
+        if damaged then
+            saved.damageRevision = damageRevision
+            saved.dodgeDirection = -(saved.dodgeDirection or 1)
+        end
+        saved.dodgeDirection = saved.dodgeDirection or 1
+        local delta = root.Position - target.root.Position
+        local distance = Vector3.new(delta.X, 0, delta.Z).Magnitude
+        if not currentUnsafe and not damaged and distance >= radius - 2.2 and distance <= radius + 2.2 then
+            return nil, #dangers, false
+        end
+        local baseAngle = math.atan2(delta.Z, delta.X)
+        if currentUnsafe or damaged then baseAngle += saved.dodgeDirection * math.pi * (damaged and 0.72 or 0.52) end
+        local best, bestScore, bestAngle = nil, -math.huge, nil
+        for offset = 0, 23 do
+            local angle = baseAngle + saved.dodgeDirection * offset * math.pi * 2 / 24
+            local flat = target.root.Position + Vector3.new(math.cos(angle) * radius, 0, math.sin(angle) * radius)
+            local candidate = Vector3.new(flat.X, root.Position.Y, flat.Z)
+            local blocked, clearance = false, math.huge
+            for _, part in ipairs(dangers) do
+                if horizontalBox(part, candidate, 2.1) then blocked = true break end
+                local localPoint = part.CFrame:PointToObjectSpace(Vector3.new(candidate.X, part.Position.Y, candidate.Z))
+                local dx = math.max(0, math.abs(localPoint.X) - part.Size.X * 0.5)
+                local dz = math.max(0, math.abs(localPoint.Z) - part.Size.Z * 0.5)
+                clearance = math.min(clearance, math.sqrt(dx * dx + dz * dz))
+            end
+            if (currentUnsafe or damaged) and (candidate - root.Position).Magnitude < radius * 0.72 then blocked = true end
+            if not blocked then
+                local moveCost = (candidate - root.Position).Magnitude
+                local score = (clearance == math.huge and 40 or math.min(40, clearance * 3)) - moveCost * 0.08 - offset * 0.7
+                if score > bestScore then best, bestScore, bestAngle = candidate, score, angle end
+            end
+        end
+        if not best then
+            bestAngle = baseAngle + saved.dodgeDirection * math.pi
+            best = target.root.Position + Vector3.new(math.cos(bestAngle) * radius * 1.8, 0, math.sin(bestAngle) * radius * 1.8)
+        end
+        saved.safeAngle = bestAngle
+        best = standingPoint(best, target)
+        return best, #dangers, currentUnsafe or damaged
+    end
+    local function release(retreat)
+        local old = saved
+        saved = nil
+        q.bossDangerCount = 0
+        if not old then return end
+        if old.healthConnection then old.healthConnection:Disconnect() end
+        if old.spawnConnection then old.spawnConnection:Disconnect() end
+        if old.holdPosition and old.holdPosition.Parent then old.holdPosition:Destroy() end
+        for part, canCollide in pairs(old.collisionState or {}) do
+            if part and part.Parent then part.CanCollide = canCollide end
+        end
+        if old.humanoid.Parent then old.humanoid.AutoRotate = old.autoRotate end
+        if old.root.Parent and old.character == aM() and old.humanoid.Health > 0 then
+            old.root.Anchored = old.anchored
+            if retreat and old.origin then
+                old.root.CFrame = old.origin
+                old.root.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+                old.root.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+            end
+        end
+    end
+    q.boss = q.bossFactory(q, {
+        now = os.clock,
+        ownHealth = function() local humanoid = aN() return humanoid and humanoid.Health end,
+        prepare = function() jT() end,
+        conflict = function()
+            return q.bugActive or q.trainActive or q.machineActive or q.kingLock
+                or q.lockPosition or q.lockRock or q.autoRebirth or q.autoQuest or q.killMode ~= "off"
+        end,
+        scan = function()
+            local list, origin, seen, anchors = {}, aO(), setmetatable({}, {__mode = "k"}), {}
+            local linkedThisScan = setmetatable({}, {__mode = "k"})
+            local nodes = World:GetDescendants()
+            for _, node in ipairs(nodes) do
+                if node:IsA("TextLabel") or node:IsA("TextButton") then
+                    local title = bossTitle(node.Text)
+                    if title then
+                        local gui = node:FindFirstAncestorWhichIsA("BillboardGui")
+                            or node:FindFirstAncestorWhichIsA("SurfaceGui")
+                        local anchor = gui and (gui.Adornee or gui.Parent)
+                        local model = anchor and (anchor:IsA("Model") and anchor or anchor:FindFirstAncestorWhichIsA("Model"))
+                            or node:FindFirstAncestorWhichIsA("Model")
+                        local position = objectPosition(anchor) or (model and objectPosition(model))
+                        if model then
+                            knownBoss[model], linkedThisScan[model] = title, title
+                            if anchor then q.bossAnchorCache[model] = anchor end
+                        end
+                        if position then table.insert(anchors, {position = position, title = title, direct = model, object = anchor}) end
+                    end
+                end
+            end
+            for _, node in ipairs(nodes) do
+                if node:IsA("Model") and not seen[node] and not isPlayerModel(node) then
+                    seen[node] = true
+                    local root = rootOf(node)
+                    local exactTitle, linkedTitle = bossTitle(node.Name), linkedThisScan[node]
+                    local nearest, anchorTitle, nearestAnchor, direct = math.huge, nil, nil, false
+                    if root then
+                        for _, anchor in ipairs(anchors) do
+                            local distance = (root.Position - anchor.position).Magnitude
+                            if distance < nearest then
+                                nearest, anchorTitle, nearestAnchor, direct = distance, anchor.title, anchor.object, anchor.direct == node
+                            end
+                        end
+                    end
+                    local humanoid, _, _, healthKnown = nil, nil, nil, false
+                    if exactTitle or linkedTitle or (root and nearest <= 100) then
+                        humanoid, _, _, healthKnown = replicatedHealth(node)
+                    end
+                    local nearLivingBoss = root and nearest <= 100 and (humanoid ~= nil or healthKnown)
+                    local title = exactTitle or linkedTitle or (nearLivingBoss and anchorTitle)
+                    if title then
+                        knownBoss[node] = title
+                        if nearestAnchor then q.bossAnchorCache[node] = nearestAnchor end
+                        local score = (exactTitle and 900 or 0) + (direct and 300 or 0)
+                            + (humanoid and 600 or 0) + (healthKnown and 350 or 0)
+                            + (nearest < math.huge and math.max(0, 500 - nearest * 4) or 0)
+                            + (root and not root.Anchored and 80 or 0)
+                        knownMeta[node] = {detection = exactTitle and "model-name" or (direct and "label-adornee" or "label-near-live-model"), confidence = score}
+                        local candidate = info(node)
+                        if candidate and candidate.alive then
+                        candidate.distance = origin and (origin.Position - candidate.root.Position).Magnitude or 0
+                        candidate.score = score
+                        table.insert(list, candidate)
+                        end
+                    end
+                end
+            end
+            table.sort(list, function(x, y)
+                if x.score ~= y.score then return x.score > y.score end
+                return x.distance < y.distance
+            end)
+            return list[1] and {list[1]} or {}
+        end,
+        info = info,
+        damage = bossDamage,
+        claim = function(onHealth)
+            release(false)
+            local root, humanoid = aO(), aN()
+            assert(root and humanoid, "Персонаж ещё не готов")
+            saved = { character = aM(), root = root, humanoid = humanoid, origin = root.CFrame,
+                rotation = root.CFrame - root.CFrame.Position,
+                autoRotate = humanoid.AutoRotate, anchored = root.Anchored, spawnedParts = setmetatable({}, {__mode = "k"}),
+                baselineParts = setmetatable({}, {__mode = "k"}), dynamicParts = setmetatable({}, {__mode = "k"}),
+                partState = setmetatable({}, {__mode = "k"}), baselineReady = false,
+                confirmedHazards = {}, lastHealth = humanoid.Health,
+                collisionState = setmetatable({}, {__mode = "k"}), touchIndex = 0,
+                dangerParts = {}, nextDangerScan = 0, dodgeDirection = 1, damageRevision = 0, nextMoveAt = 0 }
+            for _, part in ipairs(saved.character:GetDescendants()) do
+                if part:IsA("BasePart") then
+                    saved.collisionState[part] = part.CanCollide
+                    part.CanCollide = false
+                end
+            end
+            saved.healthConnection = humanoid.HealthChanged:Connect(function(health)
+                if saved and saved.lastHealth and health < saved.lastHealth then
+                    local current = q.boss and q.boss.target and info(q.boss.target)
+                    if current then confirmDamageHazards(current) end
+                end
+                if saved then saved.lastHealth = health end
+                onHealth(health)
+            end)
+            saved.spawnConnection = World.DescendantAdded:Connect(function(node)
+                if saved and node:IsA("BasePart") then saved.spawnedParts[node] = true saved.nextDangerScan = 0 end
+            end)
+        end,
+        release = release,
+        hold = function(target, height, damageRevision)
+            assert(saved and saved.character == aM() and saved.root.Parent, "Персонаж сменился")
+            assert(target.root and target.root.Parent, "Босс исчез")
+            saved.humanoid.AutoRotate = false
+            local depth = math.clamp(tonumber(height) or 8, 8, 12)
+            if not saved.arenaY then
+                local ray = RaycastParams.new()
+                ray.FilterType = Enum.RaycastFilterType.Exclude
+                local exclusions = {target.root}
+                if target.humanoid and target.humanoid.Parent then table.insert(exclusions, target.humanoid.Parent) end
+                for _, player in ipairs(Players:GetPlayers()) do
+                    if player.Character then table.insert(exclusions, player.Character) end
+                end
+                ray.FilterDescendantsInstances = exclusions
+                pcall(function() ray.RespectCanCollide = true end)
+                local floorSamples = {}
+                for _, offset in ipairs({Vector3.new(9, 0, 0), Vector3.new(-9, 0, 0), Vector3.new(0, 0, 9), Vector3.new(0, 0, -9)}) do
+                    local hit = World:Raycast(target.root.Position + offset + Vector3.new(0, 12, 0), Vector3.new(0, -140, 0), ray)
+                    if hit and hit.Position.Y <= target.root.Position.Y + 4 then table.insert(floorSamples, hit.Position.Y) end
+                end
+                table.sort(floorSamples)
+                saved.arenaY = #floorSamples > 0 and floorSamples[math.ceil(#floorSamples * 0.5)]
+                    or (target.root.Position.Y - math.max(5, target.root.Size.Y * 0.5))
+            end
+            if saved.depth ~= depth or not saved.underY then
+                saved.depth = depth
+                saved.underY = saved.arenaY - depth
+            end
+            local base = target.root.Position
+            local revision = tonumber(damageRevision) or 0
+            if saved.lastDamageRevision ~= revision or not saved.safeOffset then
+                local delta = saved.root.Position - base
+                local startAngle = saved.safeAngle or math.atan2(delta.Z, delta.X)
+                if revision > 0 then startAngle += math.pi * 0.65 end
+                saved.safeOffset = Vector3.new(math.cos(startAngle) * 2.6, 0, math.sin(startAngle) * 2.6)
+                saved.safeAngle = startAngle
+                saved.lastDamageRevision = revision
+            end
+            local point = Vector3.new(base.X + saved.safeOffset.X, saved.underY, base.Z + saved.safeOffset.Z)
+            q.bossDangerCount = 0
+            saved.root.Anchored = false
+            if not saved.holdPosition or not saved.holdPosition.Parent then
+                local hold = Instance.new("BodyPosition")
+                hold.Name = "RockBugBossPhysicalHold"
+                hold.MaxForce = Vector3.new(1e9, 1e9, 1e9)
+                hold.P = 80000
+                hold.D = 2000
+                hold.Position = point
+                hold.Parent = saved.root
+                saved.holdPosition = hold
+            end
+            saved.holdPosition.Position = point
+            if not saved.positioned then
+                saved.positioned = true
+                saved.root.CFrame = CFrame.new(point) * saved.rotation
+            end
+            saved.root.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+        end,
+        punch = function(target, stillActive)
+            if not stillActive() then return true end
+            local tool, problem = dj()
+            if not stillActive() then return true end
+            if not tool then return false, tostring(problem) end
+            local character = aM()
+            if not character or not info(target.model) then return false, "Цель или персонаж исчезли" end
+            if not stillActive() then return true end
+            local contacts, touched = {}, {}
+            q.punchCycle += 1
+            local useRight = q.punchCycle % 2 == 0
+            local handName = useRight and "RightHand" or "LeftHand"
+            local hand = character:FindFirstChild(handName, true)
+                or character:FindFirstChild(handName == "RightHand" and "Right Arm" or "Left Arm", true)
+            local handle = tool:FindFirstChild("Handle")
+            if hand and hand:IsA("BasePart") then table.insert(contacts, hand) end
+            if handle and handle:IsA("BasePart") and handle ~= hand then table.insert(contacts, handle) end
+            if #contacts == 0 and saved and saved.root then table.insert(contacts, saved.root) end
+            local parts = attackParts(target)
+            saved.touchIndex = (saved.touchIndex or 0) + 1
+            local hitPart = #parts > 0 and parts[(saved.touchIndex - 1) % #parts + 1] or target.root
+            if type(firetouchinterest) == "function" and hitPart and hitPart.Parent then
+                for _, contact in ipairs(contacts) do
+                    if contact and contact.Parent and pcall(firetouchinterest, contact, hitPart, 0) then
+                        table.insert(touched, contact)
+                    end
+                end
+            end
+            d4(tool)
+            tool:Activate()
+            if not stillActive() then
+                if type(firetouchinterest) == "function" and hitPart and hitPart.Parent then
+                    for _, contact in ipairs(touched) do
+                        if contact and contact.Parent then pcall(firetouchinterest, contact, hitPart, 1) end
+                    end
+                end
+                return true
+            end
+            local remote = eg()
+            local sent = remote and q.directRemoteEnabled and pcall(function()
+                remote:FireServer("punch", useRight and "rightHand" or "leftHand")
+            end)
+            if sent then q.remoteSentWindow += 1 ei() else ek() end
+            if type(firetouchinterest) == "function" and hitPart and hitPart.Parent then
+                for _, contact in ipairs(touched) do
+                    if contact and contact.Parent then pcall(firetouchinterest, contact, hitPart, 1) end
+                end
+            end
+            return true
+        end,
+    })
+    q.bossFactory = nil
+    function q:StartBoss() return self.boss:Start() end
+    function q:StopBoss() self.boss:Stop("Выключено — возврат к точке старта", true) end
+    -- One-shot teleports have no persistent flag for the conflict guard.
+    local teleport = q.teleportToIsland
+    if type(teleport) == "function" then
+        q.teleportToIsland = function(...)
+            q.boss:Stop("Телепорт — автоатака выключена", false)
+            return teleport(...)
+        end
+    end
+    aJ(c.Heartbeat:Connect(function() q.boss:Tick(os.clock()) end))
+    aJ(j.CharacterRemoving:Connect(function()
+        if q.boss.enabled then
+            pcall(function() release(false) end)
+            q.boss.target = nil
+            q.boss.lastOwnHealth = nil
+            q.boss.status = "Автобосс включён — жду респавн…"
+        end
+    end))
+end
+
+local function l6()local l7=Instance.new("ScreenGui")l7.Name=l;
 l7.ResetOnSpawn=false;
 l7.IgnoreGuiInset=true;
 l7.DisplayOrder=999999;
@@ -1788,6 +2815,9 @@ pcall(function()l7.AutoLocalize=false end)l7.Parent=k;
 q.uiRoot=l7;
 q.layoutUI={}q.layoutUI.localizationNodes={}q.layoutUI.englishText={["КАМНИ"]="ROCKS",["ФАРМ"]="FARM",["КАЧ"]="TRAIN",["РЕБ"]="REB",["ШОП"]="SHOP",["ЯЙЦА"]="EGGS",["ТП"]="TP",["КВЕСТЫ"]="QUESTS",["ЕЩЁ"]="MORE",["КИЛЛ"]="KILL",["ФАРМ КАМНЕЙ"]="ROCK FARM",["ТРЕНАЖЁРЫ"]="MACHINES",["ТРЕНИРОВКА"]="TRAINING",["РЕБИРТЫ"]="REBIRTHS",["МАГАЗИН"]="SHOP",["АВТОКИЛ"]="AUTO KILL",["ПРОТЕИНОВЫЕ ЯЙЦА"]="PROTEIN EGGS",["ТЕЛЕПОРТ"]="TELEPORT",["ТЕЛЕПОРТЫ"]="TELEPORTS",["АВТОКВЕСТЫ"]="AUTO QUESTS",["ИНТЕРФЕЙС"]="INTERFACE",["НАСТРОЙКИ"]="SETTINGS",["Выбери камень и включи автоудар."]="Select a rock and enable auto punch.",["Выбери камень, затем включи автоудар."]="Select a rock, then enable auto punch.",["Выбери локацию и нужный тренажёр."]="Choose a location and machine.",["Выбери упражнение для автокачалки."]="Choose exercises for automatic training.",["Установи цель или запусти ребирты."]="Set a target or start auto rebirth.",["Выбери товар и включи покупку."]="Choose an item and enable purchase.",["Выбери игроков и режим атаки."]="Choose players and an attack mode.",["Только Protein Egg: ×2 к силе."]="Protein Egg only: ×2 strength.",["Выбери остров и переместись."]="Choose an island and teleport.",["Выбери NPC и запусти автоквест."]="Choose an NPC and start auto quest.",["Настрой цвета, неон и прозрачность."]="Customize colors, neon and transparency.",["Графика, сеть и защита клиента."]="Graphics, network and client protection.",["Питомцы, графика, сеть и защита клиента."]="Pets, graphics, network and client protection.",["⌁  СТАТУС"]="⌁  STATUS",["ГОТОВО"]="DONE",["АВТОФАРМ"]="AUTO FARM",["ВЫБОР КАМНЯ"]="SELECT ROCK",["АВТОПОДБОР ПО РЕБЁРТАМ"]="AUTO ROCK BY REBIRTHS",["АВТО"]="AUTO",["ВЫБРАТЬ"]="SELECT",["РУЧНАЯ НАСТРОЙКА"]="MANUAL SELECTION",["камень не выбран"]="no rock selected",["У КАМНЯ"]="AT ROCK",["только фиксация позиции"]="position lock only",["АВТОУДАР"]="AUTO PUNCH",["бьёт с любой точки"]="hits from anywhere",["БЫСТРЫЙ УДАР"]="FAST PUNCH",["ускоряет фарм"]="speeds up farming",["ЛОКАЦИЯ И ТРЕНАЖЁР"]="LOCATION AND MACHINE",["ЛОКАЦИЯ"]="LOCATION",["ОСТРОВА И ЛОКАЦИИ"]="ISLANDS AND LOCATIONS",["БЫСТРЫЕ ТЕЛЕПОРТЫ"]="QUICK TELEPORTS",["ОСТРОВА"]="ISLANDS",["ТРЕНАЖЁРНЫЕ ЗАЛЫ"]="GYMS",["Нажми на нужное место — телепорт сработает сразу."]="Tap a destination to teleport immediately.",["ТЕКУЩАЯ ЛОКАЦИЯ"]="CURRENT LOCATION",["ПЕРЕМЕСТИТЬСЯ"]="TELEPORT NOW",["ТРЕНАЖЁР"]="MACHINE",["АВТОТРЕНИРОВКА"]="AUTO TRAINING",["АВТОТРЕНАЖЁР"]="AUTO MACHINE",["телепорт и повторения"]="teleport and repetitions",["Поиск доступных тренажёров..."]="Finding available machines...",["УПРАЖНЕНИЯ"]="EXERCISES",["ПОЛОЖЕНИЕ ИГРОКА"]="PLAYER POSITION",["ЗАКРЕПИТЬСЯ"]="LOCK POSITION",["не сдвигаться"]="stay in place",["УДАРЫ"]="PUNCH",["ГАНТЕЛИ"]="WEIGHT",["ОТЖИМАНИЯ"]="PUSHUPS",["ПРЕСС"]="SITUPS",["СТОЙКА"]="HANDSTANDS",["БЕГ"]="TREADMILL",["сила"]="strength",["гантели и штанга"]="weights and barbells",["обычные отжимания"]="standard pushups",["упражнение на пресс"]="situp exercise",["стойка на руках"]="handstand exercise",["скорость и ловкость"]="speed and agility",["БЕЗ ОГРАНИЧЕНИЯ"]="NO LIMIT",["РАЗМЕР ПЕРСОНАЖА"]="CHARACTER SIZE",["KING И РАЗМЕР"]="KING AND SIZE",["ЦЕЛЬ РЕБИРТОВ"]="REBIRTH TARGET",["Лимит выключен • цель: 100"]="Limit off • target: 100",["АВТОРЕБИРТ"]="AUTO REBIRTH",["работает без лимита"]="runs without a limit",["значение от 0.1 до 1000"]="value from 0.1 to 1000",["ФИКС. РАЗМЕР"]="LOCK SIZE",["держит нужный размер"]="keeps selected size",["остаётся в King"]="stays inside King",["АВТОАТАКА"]="AUTO ATTACK",["КОГО АТАКОВАТЬ"]="ATTACK TARGETS",["ВСЕ ИГРОКИ"]="ALL PLAYERS",["без исключений"]="no exceptions",["КРОМЕ ДРУЗЕЙ"]="EXCEPT FRIENDS",["пропускает список"]="skips protected players",["ТОЛЬКО ЦЕЛИ"]="TARGETS ONLY",["чёрный список"]="target list",["ЗАЩИЩЕНЫ"]="PROTECTED",["ЦЕЛИ"]="TARGETS",["0 игроков"]="0 players",["Защищённых скрипт пропускает. Цели — отдельный режим атаки."]="Protected players are skipped. Targets use a separate attack mode.",["ОТКРЫТИЕ / ПОКУПКА"]="OPEN / PURCHASE",["ВЫБОР ТОВАРА"]="ITEM SELECTION",["АВТОКРИСТАЛЛ"]="AUTO CRYSTAL",["режимы ×1 / ×3 / ×10"]="modes ×1 / ×3 / ×10",["АВТОУДАЛЕНИЕ"]="AUTO DELETE",["только отмеченные питомцы"]="selected pets only",["КУПИТЬ ПЕТА"]="BUY PET",["КУПИТЬ АУРУ"]="BUY AURA",["покупка за гемы"]="purchase with gems",["АВТОЭВОЛЮЦИЯ"]="AUTO EVOLVE",["5 одинаковых купленных петов"]="5 matching purchased pets",["ПИТОМЦЫ"]="PETS",["ЛУЧШИЕ ПЕТЫ"]="BEST PETS",["только полный комплект"]="full set only",["ВЫБОР NPC"]="NPC SELECTION",["АВТОКВЕСТ"]="AUTO QUEST",["берёт и сдаёт квесты"]="accepts and collects quests",["КД ПОКУПКИ"]="PURCHASE DELAY",["от 0.05 до 5 секунд"]="0.05 to 5 seconds",["КРИСТАЛЛ"]="CRYSTAL",["ОТКРЫТЬ"]="OPEN",["УДАЛЯТЬ"]="DELETE",["ПИТОМЕЦ"]="PET",["АУРА"]="AURA",["PROTEIN EGG • ×2 СИЛА"]="PROTEIN EGG • ×2 STRENGTH",["ИСПОЛЬЗ."]="USE",["КАЖДЫЕ"]="EVERY",["В инвентаре: —"]="In inventory: —",["АВТОИСПОЛЬЗОВАНИЕ"]="AUTO USE",["только яйцо ×2 к силе"]="×2 strength egg only",["ПРОИЗВОДИТЕЛЬНОСТЬ"]="PERFORMANCE",["ЦВЕТА ИНТЕРФЕЙСА"]="INTERFACE COLORS",["ВНЕШНИЙ ВИД"]="APPEARANCE",["ЦВЕТ ИКОНОК"]="ICON COLOR",["ЦВЕТ ФОНА"]="BACKGROUND COLOR",["ЦВЕТ НЕОНА"]="NEON COLOR",["ЦВЕТ ТЕКСТА"]="TEXT COLOR",["ЦВЕТА"]="COLORS",["ВИД"]="STYLE",["ЭФФЕКТЫ"]="EFFECTS",["ПАМЯТЬ"]="MEMORY",["КОНФИГ"]="CONFIG",["ВКЛАДКИ"]="TABS",["ПРОЗРАЧНОСТЬ"]="TRANSPARENCY",["ЯРКОСТЬ НЕОНА"]="NEON INTENSITY",["СКРУГЛЕНИЕ"]="ROUNDING",["КОНТРАСТ ПАНЕЛЕЙ"]="PANEL CONTRAST",["РАЗМЕР ТЕКСТА"]="TEXT SIZE",["ТОЛЩИНА РАМОК"]="BORDER WEIGHT",["ГРАДИЕНТ"]="GRADIENT",["ТЕНЬ ОКНА"]="WINDOW SHADOW",["СДВИГ ВКЛАДОК"]="PAGE MOTION",["АНИМАЦИЯ ОКНА"]="WINDOW ANIMATION",["ПЕРЕТАСКИВАНИЕ"]="DRAG TO REORDER",["зажми вкладку и перемести"]="hold a tab and move it",["ПОСЛЕДНЯЯ ВКЛАДКА"]="REMEMBER LAST TAB",["открывать прежний раздел"]="reopen your last section",["СБРОСИТЬ ПОРЯДОК"]="RESET TAB ORDER",["КЛЮЧ КОНФИГА"]="CONFIGURATION KEY",["КОД КОНФИГУРАЦИИ"]="CONFIGURATION CODE",["КОПИРОВАТЬ"]="COPY",["ВСТАВИТЬ"]="PASTE",["ПРИМЕНИТЬ"]="APPLY",["Вставь код с другого устройства"]="Paste a code from another device",["Код переносит настройки и порядок вкладок между устройствами."]="Your code transfers settings and tab order between devices.",["СКОПИРОВАТЬ КЛЮЧ"]="COPY KEY",["ИМПОРТ КЛЮЧА"]="IMPORT KEY",["Вставь зашифрованный ключ с другого устройства"]="Paste an encrypted key from another device",["Память и ключ защищены. Ключ переносит профиль между устройствами."]="Memory and keys are encrypted. Use a key to move your profile between devices.",["Зажми вкладку сверху и передвинь её в нужное место."]="Hold a top tab and drag it to the position you want.",["АНИМАЦИЯ И ЭФФЕКТЫ"]="ANIMATION AND EFFECTS",["СКОРОСТЬ АНИМАЦИИ"]="ANIMATION SPEED",["МОУШЕН БЛЮР"]="MOTION BLUR",["КОНФИГИ"]="CONFIGS",["ПРОФИЛЬ"]="PROFILE",["ПРОФИЛЬ 1"]="PROFILE 1",["ПРОФИЛЬ 2"]="PROFILE 2",["ПРОФИЛЬ 3"]="PROFILE 3",["ПРОФИЛЬ 4"]="PROFILE 4",["ПРОФИЛЬ 5"]="PROFILE 5",["СОХРАНИТЬ"]="SAVE",["ВОЗОБНОВИТЬ"]="RESUME",["ЗАГРУЗИТЬ"]="LOAD",["УДАЛИТЬ"]="DELETE",["Выбери профиль и сохрани свои настройки."]="Choose a profile and save your settings.",["ВЫБОР ПРОФИЛЯ"]="SELECT PROFILE",["СБРОСИТЬ ОФОРМЛЕНИЕ"]="RESET APPEARANCE",["СЕТЬ"]="NETWORK",["ЛЁГКАЯ ГРАФИКА"]="LOW GRAPHICS",["меньше нагрузки"]="reduces client load",["АНТИ-AFK"]="ANTI-AFK",["ЗАЩИТА СЕТИ"]="NETWORK GUARD",["автопауза при плохой сети"]="auto pause on poor network",["ПАУЗА СЕТИ"]="NETWORK PAUSE",["удерживает клиент"]="holds the client",["ЯЗЫК / LANGUAGE"]="LANGUAGE / ЯЗЫК",["ЯЗЫК"]="LANGUAGE",["ВЫБОР"]="SELECT",["ОТМЕНА"]="CANCEL",["ПОДТВЕРДИТЬ"]="CONFIRM",["ВНИМАНИЕ: УДАЛЕНИЕ"]="WARNING: DELETION",["НИЧЕГО НЕ НАЙДЕНО"]="NOTHING FOUND",["ЗАЩ"]="SAFE",["ЗАКРЫТЬ"]="CLOSE",["ВЫБОР ЛОКАЦИИ"]="SELECT LOCATION",["ВЫБОР ОСТРОВА"]="SELECT ISLAND",["ВЫБОР ЦВЕТА"]="SELECT COLOR",["НАСТРОЙКА ПРОЗРАЧНОСТИ"]="SET TRANSPARENCY",["НАСТРОЙКА НЕОНА"]="SET NEON",["НАСТРОЙКА СКРУГЛЕНИЯ"]="SET ROUNDING",["КРИСТАЛЛЫ ИЗ ИГРЫ"]="GAME CRYSTALS",["ЗАЩИЩЁННЫЕ ИГРОКИ"]="PROTECTED PLAYERS",["ЦЕЛИ АВТОКИЛА"]="AUTO KILL TARGETS",["ПЕТ ЗА ГЕМЫ • БЕЗ РУЛЕТКИ"]="PET FOR GEMS • NO RNG",["АУРА ЗА ГЕМЫ • БЕЗ РУЛЕТКИ"]="AURA FOR GEMS • NO RNG",["ПЕРИОД • PROTEIN EGG"]="INTERVAL • PROTEIN EGG"}function q.layoutUI.staticText(aF)local bA=tostring(aF or"")if q.language=="en"then return q.layoutUI.englishText[bA]or bA end;
 return bA end;
+q.layoutUI.englishText["КОЛЕСО УДАЧИ"]="FORTUNE WHEEL"q.layoutUI.englishText["АВТОПРОКРУТКА"]="AUTO SPIN"q.layoutUI.englishText["крутит при доступной попытке"]="spins when a try is available"q.layoutUI.englishText["УЛЬТРА-РЕЖИМ"]="ULTRA MODE"q.layoutUI.englishText["чёрный экран и отключение 3D"]="black screen and disabled 3D"q.layoutUI.englishText["ВЕРНУТЬ ЭКРАН"]="RESTORE SCREEN";
+q.layoutUI.englishText["ТЕМП УДАРОВ"]="PUNCH RATE"q.layoutUI.englishText["ускорение с защитой от перегрузки"]="acceleration with overload protection";
+q.layoutUI.englishText["ПЕРЕДАЧА ЯИЦ"]="EGG GIFTING"q.layoutUI.englishText["ИГРОК"]="PLAYER"q.layoutUI.englishText["ВЫБОР ИГРОКА"]="SELECT PLAYER"q.layoutUI.englishText["КОЛИЧЕСТВО"]="AMOUNT"q.layoutUI.englishText["ПЕРЕДАТЬ"]="GIFT";
 function q.layoutUI.registerText(k9,aF)local bA=tostring(aF or"")if bA~=""then table.insert(q.layoutUI.localizationNodes,{node=k9,source=bA})end;
 k9.Text=q.layoutUI.staticText(bA)end;
 q.gameLocalizedNames=q.gameLocalizedNames or{}q.gameLocalizationContexts=q.gameLocalizationContexts or{}q.gameLocalizationObjects=q.gameLocalizationObjects or{}q.gameLocalizationKeys=q.gameLocalizationKeys or{}q.gameLocalizationTables=q.gameLocalizationTables or{}function q.layoutUI.localizationKey(bA)return string.lower(tostring(bA or""):gsub("<[^>]*>",""):gsub("^%s+",""):gsub("%s+$",""):gsub("%s+"," "))end;
@@ -1921,7 +2951,6 @@ local lW=nil;
 if type(readfile)=="function"then local lX,aF=pcall(readfile,"RockBugHub_memory_v2.dat")if lX and type(aF)=="string"then lW=q.layoutUI.openMemory(aF,"RBM2")end;
 if not lW then local lY,lZ=pcall(readfile,"RockBugHub_configs_v1.json")if lY and type(lZ)=="string"and#lZ<=65536 then lW=lZ;
 q.layoutUI.legacyConfigMigration=true end end end;
--- Settings stay local; the deleted remote memory file must not block UI startup.
 if lW then local lV,m0=pcall(function()return game:GetService("HttpService"):JSONDecode(lW)end)if lV and type(m0)=="table"then W=type(m0.profiles)=="table"and m0.profiles or m0;
 if type(m0.appearance)=="table"then for M,N in pairs(m0.appearance)do if q.layoutUI.appearance[M]~=nil and type(q.layoutUI.appearance[M])==type(N)then q.layoutUI.appearance[M]=N end end end;
 if type(m0.tabOrder)=="table"then q.layoutUI.pendingTabOrder=m0.tabOrder end;
@@ -1946,13 +2975,13 @@ task.delay(0.45,function()if q.alive and q.layoutUI and q.layoutUI.memoryWriteTo
 function q.layoutUI.captureLastSession()local m9={}for e7,ma in pairs(q.activeTrains or{})do if ma then m9[e7]=true end end;
 local mb={}for u,fF in pairs(q.petCleanupTargets or{})do if fF then mb[u]=true end end;
 local f2=q.selectedMachine;
-return{language=q.language=="en"and"en"or"ru",autoRockSelection=q.autoRockSelection~=false,rockId=q.selectedRock and q.selectedRock.id or nil,petGradeIndex=math.clamp(math.floor(tonumber(q.petGradeIndex)or 5),1,5),bugActive=q.bugActive==true,lockRock=q.lockRock==true,activeTrains=m9,machineActive=q.machineActive==true,machineZone=f2 and f2.zone or q.machineZone,machineName=f2 and f2.name or nil,machineKind=f2 and f2.kind or nil,machineVariant=f2 and f2.variant or nil,kingLock=q.kingLock==true,eggEnabled=q.eggEnabled==true,eggAmount=q.eggAmount,eggIntervalMultiplier=q.eggIntervalMultiplier,autoRebirth=q.autoRebirth==true,rebirthGoalEnabled=q.rebirthGoalEnabled==true,rebirthGoal=q.rebirthGoal,autoSize=q.autoSize==true,sizeTarget=q.sizeTarget,crystalMode=q.crystalMode,crystalAmount=q.crystalAmount,purchaseDelay=q.purchaseDelay,selectedCrystal=q.selectedCrystal,selectedPet=q.selectedPet,selectedAura=q.selectedAura,petCleanupEnabled=q.petCleanupEnabled==true,petCleanupTargets=mb,autoEvolvePurchasedPets=q.autoEvolvePurchasedPets~=false,autoEquipBestPets=q.autoEquipBestPets==true,autoQuest=q.autoQuest==true,selectedQuestNpc=q.selectedQuestNpc,selectedTeleport=q.selectedTeleport,antiAfkEnabled=q.antiAfkEnabled~=false,netGuardEnabled=q.netGuardEnabled~=false,directRemoteEnabled=q.directRemoteEnabled~=false,visualLow=q.visualLow==true,savedAt=os.time()}end;
+return{language=q.language=="en"and"en"or"ru",autoRockSelection=q.autoRockSelection~=false,rockId=q.selectedRock and q.selectedRock.id or nil,petGradeIndex=math.clamp(math.floor(tonumber(q.petGradeIndex)or 5),1,5),bugActive=q.bugActive==true,lockRock=q.lockRock==true,activeTrains=m9,machineActive=q.machineActive==true,machineZone=f2 and f2.zone or q.machineZone,machineName=f2 and f2.name or nil,machineKind=f2 and f2.kind or nil,machineVariant=f2 and f2.variant or nil,kingLock=q.kingLock==true,eggEnabled=q.eggEnabled==true,eggAmount=q.eggAmount,eggIntervalMultiplier=q.eggIntervalMultiplier,autoRebirth=q.autoRebirth==true,rebirthGoalEnabled=q.rebirthGoalEnabled==true,rebirthGoal=q.rebirthGoal,autoSize=q.autoSize==true,sizeTarget=q.sizeTarget,crystalMode=q.crystalMode,crystalAmount=q.crystalAmount,purchaseDelay=q.purchaseDelay,selectedCrystal=q.selectedCrystal,selectedPet=q.selectedPet,selectedAura=q.selectedAura,petCleanupEnabled=q.petCleanupEnabled==true,petCleanupTargets=mb,autoEvolvePurchasedPets=q.autoEvolvePurchasedPets~=false,autoEquipBestPets=q.autoEquipBestPets==true,autoQuest=q.autoQuest==true,autoWheel=q.autoWheel==true,selectedQuestNpc=q.selectedQuestNpc,selectedTeleport=q.selectedTeleport,antiAfkEnabled=q.antiAfkEnabled~=false,netGuardEnabled=q.netGuardEnabled~=false,directRemoteEnabled=q.directRemoteEnabled~=false,fastPunchRate=math.clamp(tonumber(q.fastPunchRate)or 60,5,120),visualLow=q.visualLow==true,savedAt=os.time()}end;
 function q.layoutUI.saveLastSession()q.layoutUI.lastSavedSession=q.layoutUI.captureLastSession()n.RockBugLastSession=q.layoutUI.copyProfile(q.layoutUI.lastSavedSession)local m7=q.layoutUI.writeConfigs()aP(q.language=="en"and(m7 and"SETTINGS: SAVED"or"SETTINGS: FILE SAVE IS UNAVAILABLE")or(m7 and"НАСТРОЙКИ: сохранены"or"НАСТРОЙКИ: запись файла недоступна"))return m7 end;
 function q.layoutUI.resumeLastSession()if q.sessionResumeInFlight then aP(q.language=="en"and"SETTINGS: RESUME IN PROGRESS"or"НАСТРОЙКИ: уже восстанавливаются")return false end;
 local mc=q.layoutUI.lastSavedSession;
 if type(mc)~="table"or next(mc)==nil then aP(q.language=="en"and"SETTINGS: NO SAVED SESSION"or"НАСТРОЙКИ: сохранение не найдено")return false end;
 q.sessionResumeInFlight=true;
-task.spawn(function()local D,hg=xpcall(function()gw(nil)i4(nil)q.stopAutoEquipBestPets(nil)q.stopAutoQuest(nil)q.petCleanupEnabled=false;
+task.spawn(function()local D,hg=xpcall(function()gw(nil)i4(nil)q.stopAutoEquipBestPets(nil)q.stopAutoQuest(nil)q.stopAutoWheel(nil)q.petCleanupEnabled=false;
 q.petCleanupToken=(q.petCleanupToken or 0)+1;
 if q.eggEnabled and type(q.stopProteinEggAutomation)=="function"then q.stopProteinEggAutomation(nil)end;
 ij(nil,false)if q.machineActive then jX(nil)end;
@@ -1970,10 +2999,14 @@ q.autoEvolvePurchasedPets=mc.autoEvolvePurchasedPets~=false;
 q.antiAfkEnabled=mc.antiAfkEnabled~=false;
 q.netGuardEnabled=mc.netGuardEnabled~=false;
 q.directRemoteEnabled=mc.directRemoteEnabled~=false;
+q.fastPunchRate=math.clamp(tonumber(mc.fastPunchRate)or q.fastPunchRate or 60,5,120);
 q.autoRockSelection=mc.autoRockSelection~=false;
-if not q.autoRockSelection and type(mc.rockId)=="string"then for o,bu in ipairs(bb)do if bu.id==mc.rockId then q.selectedRock=bu;
-break end end else q.lastAutoRockRebs=nil;
-cH(true)end;
+local rockRestored=false;
+if type(mc.rockId)=="string"then for o,bu in ipairs(bb)do if bu.id==mc.rockId then q.selectedRock=bu;
+rockRestored=true;
+break end end end;
+if q.autoRockSelection then if rockRestored then local cr=c1()q.lastAutoRockRebs=cr else q.lastAutoRockRebs=nil;
+cH(true)end else q.lastAutoRockRebs=nil end;
 if type(mc.machineZone)=="string"or type(mc.machineName)=="string"then eo(false)for o,f2 in ipairs(q.machineCatalog or{})do if(not mc.machineZone or f2.zone==mc.machineZone)and(not mc.machineName or f2.name==mc.machineName)and(not mc.machineKind or f2.kind==mc.machineKind)and(not mc.machineVariant or f2.variant==mc.machineVariant)then q.selectedMachine=f2;
 q.machineZone=f2.zone;
 break end end end;
@@ -1983,10 +3016,11 @@ if q.ui and q.ui.rebirthGoalInput then q.ui.rebirthGoalInput.Text=("%.0f"):forma
 if q.leverRefs.antiAfk then q.leverRefs.antiAfk.Set(q.antiAfkEnabled,true)end;
 if q.leverRefs.netGuard then q.leverRefs.netGuard.Set(q.netGuardEnabled,true)end;
 if q.leverRefs.directRemote then q.leverRefs.directRemote.Set(q.directRemoteEnabled,true)end;
+if q.layoutUI.fastPunchSlider then q.layoutUI.fastPunchSlider.Set(q.fastPunchRate,true)q.layoutUI.fastPunchSlider.ValueLabel.Text=tostring(math.floor(q.fastPunchRate+0.5)).."/с"end;
 if q.leverRefs.petEvolve then q.leverRefs.petEvolve.Set(q.autoEvolvePurchasedPets,true)end;
 jG(mc.visualLow==true)if q.leverRefs.visualLow then q.leverRefs.visualLow.Set(q.visualLow,true)end;
 if mc.machineActive and q.selectedMachine then jZ(q.selectedMachine)elseif mc.kingLock then local fF=ji()if fF and q.leverRefs.kingLock then q.leverRefs.kingLock.Set(true,true)end elseif mc.lockRock then jR()end;
-for o,ma in ipairs(cV)do if type(mc.activeTrains)=="table"and mc.activeTrains[ma.id]then jW(ma)end end;
+for o,ma in ipairs(q.trainModes)do if type(mc.activeTrains)=="table"and mc.activeTrains[ma.id]then jW(ma)end end;
 if mc.bugActive then jU()end;
 if mc.eggEnabled and type(q.startProteinEggAutomation)=="function"then q.startProteinEggAutomation()end;
 if mc.rebirthGoalEnabled and q.leverRefs.rebirthGoal then q.leverRefs.rebirthGoal.Set(true,false)elseif mc.autoRebirth and q.leverRefs.autoRebirth then q.leverRefs.autoRebirth.Set(true,false)end;
@@ -1994,6 +3028,7 @@ if mc.autoSize and q.leverRefs.autoSize then q.leverRefs.autoSize.Set(true,false
 if mc.petCleanupEnabled then local e4=hY()if e4 and q.leverRefs.petCleanup then q.leverRefs.petCleanup.Set(true,true)end end;
 if mc.autoEquipBestPets then local e4=q.startAutoEquipBestPets()if e4 and q.leverRefs.petFullEquip then q.leverRefs.petFullEquip.Set(true,true)end end;
 if mc.autoQuest then local e4=q.startAutoQuest()if e4 and q.leverRefs.autoQuest then q.leverRefs.autoQuest.Set(true,true)end end;
+if mc.autoWheel then local e4=q.startAutoWheel()if e4 and q.leverRefs.autoWheel then q.leverRefs.autoWheel.Set(true,true)end end;
 if mc.crystalMode=="crystal"or mc.crystalMode=="pet"or mc.crystalMode=="aura"then if i5(mc.crystalMode)and q.leverRefs.crystal and q.leverRefs.crystal[mc.crystalMode]then q.leverRefs.crystal[mc.crystalMode].Set(true,true)end end;
 if type(q.refreshRockList)=="function"then q.refreshRockList()end;
 if type(q.refreshMachineUI)=="function"then q.refreshMachineUI()end;
@@ -2003,22 +3038,17 @@ if type(q.refreshTeleportUI)=="function"then q.refreshTeleportUI()end;
 if type(q.refreshQuestUI)=="function"then q.refreshQuestUI()end;
 ci(q.rebirthGoalCurrent)if type(q.layoutUI.applyLanguage)=="function"and(mc.language=="ru"or mc.language=="en")then q.layoutUI.applyLanguage(mc.language,true)end end,function(gx)return tostring(gx)end)q.sessionResumeInFlight=false;
 aP(D and(q.language=="en"and"SETTINGS: RESUMED"or"НАСТРОЙКИ: возобновлены")or"SETTINGS: "..tostring(hg):sub(1,75))end)return true end;
-function q.layoutUI.captureConfig()return{appearance=q.layoutUI.copyProfile(q.layoutUI.appearance),language=q.language=="en"and"en"or"ru",eggAmount=q.eggAmount,eggIntervalMultiplier=q.eggIntervalMultiplier,selectedCrystal=q.selectedCrystal,selectedTeleport=q.selectedTeleport,tabOrder=type(q.layoutUI.captureTabOrder)=="function"and q.layoutUI.captureTabOrder()or q.layoutUI.pendingTabOrder or{},savedAt=os.time()}end;
-function q.layoutUI.saveConfig(gQ)local y=tostring(math.clamp(math.floor(tonumber(gQ)or 1),1,5))q.layoutUI.configs=q.layoutUI.configs or{}q.layoutUI.configs[y]=q.layoutUI.captureConfig()q.layoutUI.writeConfigs()if type(q.layoutUI.refreshConfigUI)=="function"then q.layoutUI.refreshConfigUI()end;
-aP(q.language=="en"and"PROFILE "..y..": SAVED"or"ПРОФИЛЬ "..y..": сохранён")return true end;
+function q.layoutUI.captureConfig()local m2=q.layoutUI.captureLastSession()m2.appearance=q.layoutUI.copyProfile(q.layoutUI.appearance)m2.tabOrder=type(q.layoutUI.captureTabOrder)=="function"and q.layoutUI.captureTabOrder()or q.layoutUI.pendingTabOrder or{}m2.savedAt=os.time()return m2 end;
+function q.layoutUI.saveConfig(gQ)local y=tostring(math.clamp(math.floor(tonumber(gQ)or 1),1,5))q.layoutUI.configs=q.layoutUI.configs or{}q.layoutUI.configs[y]=q.layoutUI.captureConfig()local m7=q.layoutUI.writeConfigs()if type(q.layoutUI.refreshConfigUI)=="function"then q.layoutUI.refreshConfigUI()end;
+aP(q.language=="en"and(m7 and"PROFILE "..y..": SAVED"or"PROFILE "..y..": FILE SAVE UNAVAILABLE")or(m7 and"ПРОФИЛЬ "..y..": сохранён"or"ПРОФИЛЬ "..y..": запись файла недоступна"))return m7 end;
 function q.layoutUI.loadConfig(gQ)local y=tostring(math.clamp(math.floor(tonumber(gQ)or 1),1,5))local m2=q.layoutUI.configs and q.layoutUI.configs[y]if type(m2)~="table"then aP(q.language=="en"and"PROFILE "..y..": EMPTY"or"ПРОФИЛЬ "..y..": пустой")return false end;
 local H=q.layoutUI.appearance;
 for M,N in pairs(type(m2.appearance)=="table"and m2.appearance or{})do if H[M]~=nil and type(H[M])==type(N)then H[M]=N end end;
-local gI=tonumber(m2.eggAmount)if gI==1 or gI==3 or gI==10 then q.eggAmount=gI end;
-q.eggIntervalMultiplier=math.clamp(math.floor(tonumber(m2.eggIntervalMultiplier)or q.eggIntervalMultiplier or 1),1,10)if type(m2.selectedCrystal)=="string"then q.selectedCrystal=m2.selectedCrystal end;
-if type(m2.selectedTeleport)=="string"then q.selectedTeleport=m2.selectedTeleport end;
 if type(m2.tabOrder)=="table"and type(q.layoutUI.applyTabOrder)=="function"then q.layoutUI.applyTabOrder(m2.tabOrder,true)end;
-q.layoutUI.applyAppearance(true)if type(q.layoutUI.applyLanguage)=="function"then q.layoutUI.applyLanguage(m2.language,true)end;
-if type(q.refreshEggUI)=="function"then q.refreshEggUI()end;
-if type(q.refreshExtraUI)=="function"then q.refreshExtraUI()end;
-if type(q.refreshTeleportUI)=="function"then q.refreshTeleportUI()end;
+q.layoutUI.applyAppearance(true)local previousSession=q.layoutUI.lastSavedSession;
+q.layoutUI.lastSavedSession=q.layoutUI.copyProfile(m2)local resumed=q.layoutUI.resumeLastSession()q.layoutUI.lastSavedSession=previousSession;
 if type(q.layoutUI.refreshConfigUI)=="function"then q.layoutUI.refreshConfigUI()end;
-aP(q.language=="en"and"PROFILE "..y..": LOADED"or"ПРОФИЛЬ "..y..": загружен")return true end;
+aP(q.language=="en"and"PROFILE "..y..": LOADED"or"ПРОФИЛЬ "..y..": загружен")return resumed~=false end;
 function q.layoutUI.deleteConfig(gQ)local y=tostring(math.clamp(math.floor(tonumber(gQ)or 1),1,5))q.layoutUI.configs=q.layoutUI.configs or{}q.layoutUI.configs[y]=nil;
 q.layoutUI.writeConfigs()if type(q.layoutUI.refreshConfigUI)=="function"then q.layoutUI.refreshConfigUI()end;
 aP(q.language=="en"and"PROFILE "..y..": DELETED"or"ПРОФИЛЬ "..y..": удалён")return true end;
@@ -2154,7 +3184,7 @@ mg(nh,9)local ni=Instance.new("ScrollingFrame")ni.Parent=nh;
 ni.Size=UDim2.new(1,-8,1,-6)ni.Position=UDim2.fromOffset(4,3)ni.BackgroundTransparency=1;
 ni.BorderSizePixel=0;
 ni.Active=true;
-ni.ScrollingEnabled=false;
+ni.ScrollingEnabled=true;
 ni.ScrollingDirection=Enum.ScrollingDirection.X;
 ni.CanvasSize=UDim2.fromOffset(0,0)ni.ScrollBarThickness=0;
 ni.ScrollBarImageColor3=lw.Accent;
@@ -2177,11 +3207,12 @@ nn.Size=UDim2.new(1,-12,0,2)nn.Position=UDim2.new(0,6,1,-3)nn.BackgroundColor3=l
 nn.BorderSizePixel=0;
 nn.Visible=false;
 mg(nn,2)end;
-local no=kr(ni,"КАМНИ",lw.Accent)nk(no,6)local np=kr(ni,"ФАРМ",lw.Surface)nk(np,62)local nq=kr(ni,"КАЧ",lw.Surface)nk(nq,118)local nr=kr(ni,"РЕБ",lw.Surface)nk(nr,174)local ns=kr(ni,"ШОП",lw.Surface)nk(ns,230)local nt=kr(ni,"КИЛЛ",lw.Surface)nk(nt,286)q.layoutUI.eggTab=kr(ni,"ЯЙЦА",lw.Surface)nk(q.layoutUI.eggTab,342)q.layoutUI.teleportTab=kr(ni,"ТП",lw.Surface)nk(q.layoutUI.teleportTab,398)q.layoutUI.questTab=kr(ni,"КВЕСТЫ",lw.Surface)nk(q.layoutUI.questTab,454)q.layoutUI.systemTab=kr(ni,"ЕЩЁ",lw.Surface)nk(q.layoutUI.systemTab,510)q.layoutUI.navigationTabs={{id="bug",node=no},{id="farm",node=np},{id="train",node=nq},{id="reb",node=nr},{id="crystal",node=ns},{id="kill",node=nt},{id="egg",node=q.layoutUI.eggTab},{id="teleport",node=q.layoutUI.teleportTab},{id="quest",node=q.layoutUI.questTab},{id="system",node=q.layoutUI.systemTab}}function q.layoutUI.captureTabOrder()local ll={}for o,av in ipairs(q.layoutUI.navigationTabs or{})do table.insert(ll,av)end;
+local no=kr(ni,"КАМНИ",lw.Accent)nk(no,6)local np=kr(ni,"ФАРМ",lw.Surface)nk(np,62)local nq=kr(ni,"КАЧ",lw.Surface)nk(nq,118)local nr=kr(ni,"РЕБ",lw.Surface)nk(nr,174)local ns=kr(ni,"ШОП",lw.Surface)nk(ns,230)local nt=kr(ni,"КИЛЛ",lw.Surface)nk(nt,286)q.layoutUI.eggTab=kr(ni,"ЯЙЦА",lw.Surface)nk(q.layoutUI.eggTab,342)q.layoutUI.teleportTab=kr(ni,"ТП",lw.Surface)nk(q.layoutUI.teleportTab,398)q.layoutUI.questTab=kr(ni,"КВЕСТЫ",lw.Surface)nk(q.layoutUI.questTab,454)q.layoutUI.systemTab=kr(ni,"ЕЩЁ",lw.Surface)nk(q.layoutUI.systemTab,510)q.layoutUI.bossTab=kr(ni,"БОСС",lw.Surface)nk(q.layoutUI.bossTab,6)q.layoutUI.bossTab.LayoutOrder=0;q.layoutUI.navigationTabs={{id="boss",node=q.layoutUI.bossTab},{id="bug",node=no},{id="farm",node=np},{id="train",node=nq},{id="reb",node=nr},{id="crystal",node=ns},{id="kill",node=nt},{id="egg",node=q.layoutUI.eggTab},{id="teleport",node=q.layoutUI.teleportTab},{id="quest",node=q.layoutUI.questTab},{id="system",node=q.layoutUI.systemTab}}function q.layoutUI.captureTabOrder()local ll={}for o,av in ipairs(q.layoutUI.navigationTabs or{})do table.insert(ll,av)end;
 table.sort(ll,function(bJ,bK)return bJ.node.LayoutOrder<bK.node.LayoutOrder end)local nu={}for o,av in ipairs(ll)do table.insert(nu,av.id)end;
 return nu end;
 function q.layoutUI.applyTabOrder(nu,mC)local ll=q.layoutUI.navigationTabs or{}local nv={}local nw={}local nx=0;
 for o,av in ipairs(ll)do nv[av.id]=av end;
+if nv.boss then nv.boss.node.LayoutOrder=0;nw.boss=true end;
 for o,e7 in ipairs(type(nu)=="table"and nu or{})do local av=nv[tostring(e7)]if av and not nw[av.id]then nx=nx+1;
 av.node.LayoutOrder=nx;
 nw[av.id]=true end end;
@@ -2315,6 +3346,7 @@ local nV=nR(lw.Success)nV.Visible=false;
 local nW=nR(lw.Accent2)nW.Visible=false;
 local nX=nR(lw.Danger)nX.Visible=false;
 local nY=nR(lw.Neon)nY.Visible=false;
+q.layoutUI.bossPage=nR(lw.Danger)q.layoutUI.bossPage.Visible=false;
 q.layoutUI.eggPage=nR(lw.Warm)q.layoutUI.eggPage.Visible=false;
 q.layoutUI.teleportPage=nR(lw.Neon)q.layoutUI.teleportPage.Visible=false;
 q.layoutUI.questPage=nR(lw.Success)q.layoutUI.questPage.Visible=false;
@@ -2348,8 +3380,8 @@ local function o3(k4)local o4=Instance.new("UIPadding")o4.Parent=k4;
 o4.PaddingTop=UDim.new(0,2)o4.PaddingBottom=UDim.new(0,2)o4.PaddingLeft=UDim.new(0,1)o4.PaddingRight=UDim.new(0,1)local o5=Instance.new("UIListLayout")o5.Parent=k4;
 o5.SortOrder=Enum.SortOrder.LayoutOrder;
 o5.Padding=UDim.new(0,5)return o5 end;
-local o6=o3(nT)local o7=o3(nU)local o8=o3(nV)local o9=o3(nW)local oa=o3(nX)local ob=o3(nY)q.layoutUI.eggList=o3(q.layoutUI.eggPage)q.layoutUI.teleportList=o3(q.layoutUI.teleportPage)q.layoutUI.questList=o3(q.layoutUI.questPage)q.layoutUI.systemList=o3(q.layoutUI.systemPage)q.layoutUI.interfaceList=o3(q.layoutUI.interfacePage)local function oc()task.defer(function()nT.CanvasSize=UDim2.new(0,0,0,o6.AbsoluteContentSize.Y+20)nU.CanvasSize=UDim2.new(0,0,0,o7.AbsoluteContentSize.Y+20)nV.CanvasSize=UDim2.new(0,0,0,o8.AbsoluteContentSize.Y+20)nW.CanvasSize=UDim2.new(0,0,0,o9.AbsoluteContentSize.Y+20)nX.CanvasSize=UDim2.new(0,0,0,oa.AbsoluteContentSize.Y+20)nY.CanvasSize=UDim2.new(0,0,0,ob.AbsoluteContentSize.Y+20)q.layoutUI.eggPage.CanvasSize=UDim2.new(0,0,0,q.layoutUI.eggList.AbsoluteContentSize.Y+20)q.layoutUI.teleportPage.CanvasSize=UDim2.new(0,0,0,q.layoutUI.teleportList.AbsoluteContentSize.Y+20)q.layoutUI.questPage.CanvasSize=UDim2.new(0,0,0,q.layoutUI.questList.AbsoluteContentSize.Y+20)q.layoutUI.systemPage.CanvasSize=UDim2.new(0,0,0,q.layoutUI.systemList.AbsoluteContentSize.Y+20)q.layoutUI.interfacePage.CanvasSize=UDim2.new(0,0,0,q.layoutUI.interfaceList.AbsoluteContentSize.Y+20)end)end;
-aJ(o6:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(oc))aJ(o7:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(oc))aJ(o8:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(oc))aJ(o9:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(oc))aJ(oa:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(oc))aJ(ob:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(oc))aJ(q.layoutUI.eggList:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(oc))aJ(q.layoutUI.teleportList:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(oc))aJ(q.layoutUI.questList:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(oc))aJ(q.layoutUI.systemList:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(oc))aJ(q.layoutUI.interfaceList:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(oc))local function od(ab,nB)local oe=Instance.new("Frame")oe.Parent=ab;
+local o6=o3(nT)local o7=o3(nU)local o8=o3(nV)local o9=o3(nW)local oa=o3(nX)local ob=o3(nY)q.layoutUI.bossList=o3(q.layoutUI.bossPage)q.layoutUI.eggList=o3(q.layoutUI.eggPage)q.layoutUI.teleportList=o3(q.layoutUI.teleportPage)q.layoutUI.questList=o3(q.layoutUI.questPage)q.layoutUI.systemList=o3(q.layoutUI.systemPage)q.layoutUI.interfaceList=o3(q.layoutUI.interfacePage)local function oc()task.defer(function()nT.CanvasSize=UDim2.new(0,0,0,o6.AbsoluteContentSize.Y+20)nU.CanvasSize=UDim2.new(0,0,0,o7.AbsoluteContentSize.Y+20)nV.CanvasSize=UDim2.new(0,0,0,o8.AbsoluteContentSize.Y+20)nW.CanvasSize=UDim2.new(0,0,0,o9.AbsoluteContentSize.Y+20)nX.CanvasSize=UDim2.new(0,0,0,oa.AbsoluteContentSize.Y+20)nY.CanvasSize=UDim2.new(0,0,0,ob.AbsoluteContentSize.Y+20)q.layoutUI.bossPage.CanvasSize=UDim2.new(0,0,0,q.layoutUI.bossList.AbsoluteContentSize.Y+20)q.layoutUI.eggPage.CanvasSize=UDim2.new(0,0,0,q.layoutUI.eggList.AbsoluteContentSize.Y+20)q.layoutUI.teleportPage.CanvasSize=UDim2.new(0,0,0,q.layoutUI.teleportList.AbsoluteContentSize.Y+20)q.layoutUI.questPage.CanvasSize=UDim2.new(0,0,0,q.layoutUI.questList.AbsoluteContentSize.Y+20)q.layoutUI.systemPage.CanvasSize=UDim2.new(0,0,0,q.layoutUI.systemList.AbsoluteContentSize.Y+20)q.layoutUI.interfacePage.CanvasSize=UDim2.new(0,0,0,q.layoutUI.interfaceList.AbsoluteContentSize.Y+20)end)end;
+aJ(o6:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(oc))aJ(o7:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(oc))aJ(o8:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(oc))aJ(o9:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(oc))aJ(oa:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(oc))aJ(ob:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(oc))aJ(q.layoutUI.bossList:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(oc))aJ(q.layoutUI.eggList:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(oc))aJ(q.layoutUI.teleportList:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(oc))aJ(q.layoutUI.questList:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(oc))aJ(q.layoutUI.systemList:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(oc))aJ(q.layoutUI.interfaceList:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(oc))local function od(ab,nB)local oe=Instance.new("Frame")oe.Parent=ab;
 oe.Size=UDim2.new(1,0,0,nB)oe.BackgroundColor3=lw.Surface;
 oe.BackgroundTransparency=0.10;
 oe.BorderSizePixel=0;
@@ -2635,6 +3667,62 @@ aJ(p3.Activated:Connect(pq))aJ(p9.Activated:Connect(function()if not pm then ret
 local jl=pm;
 if jl.multiple and jl.onDone then jl.onDone(jl.selected)end;
 pq()end))aJ(p4:GetPropertyChangedSignal("Text"):Connect(function()if pm then pr(true)end end))q.closePicker=pq;
+do
+    local launch = kr(q.layoutUI.bossPage, "▶  ЗАПУСТИТЬ АВТОБОССА", lw.Success)
+    launch.Name = "BossLaunchButton"
+    launch.Size = UDim2.new(1, -4, 0, 42)
+    launch.LayoutOrder = 0
+    launch.TextSize = 12
+    local card, body = oq(q.layoutUI.bossPage, "ТЕКУЩИЙ БОСС", 184)
+    card.LayoutOrder = 1
+    local location = mt(body, "STARTER ISLAND • круглая арена • VIEW REWARDS", 9, Enum.Font.GothamBold, lw.Accent2)
+    location.Size = UDim2.new(1, -4, 0, 24)
+    location.TextWrapped = true
+    location.LayoutOrder = 0
+    local function paintLaunch()
+        launch.Text = q.boss.enabled and "■  ОСТАНОВИТЬ АВТОБОССА" or "▶  ЗАПУСТИТЬ АВТОБОССА"
+        launch.BackgroundColor3 = q.boss.enabled and lw.Danger or lw.Success
+        launch.TextColor3 = lw.Bg
+    end
+    q.leverRefs.boss = {Set = function() paintLaunch() end, Get = function() return q.boss.enabled end}
+    aJ(launch.Activated:Connect(function()
+        if q.boss.enabled then q:StopBoss() else
+            local ok, started = pcall(function() return q:StartBoss() end)
+            if not ok then q.boss:Stop("Ошибка запуска: " .. tostring(started):sub(1, 90), true) end
+        end
+        paintLaunch()
+    end))
+    local targetLabel = mt(body, "ЦЕЛЬ: определяется по точной надписи над активным боссом", 10, Enum.Font.GothamBold, lw.Text)
+    targetLabel.Size = UDim2.new(1, -4, 0, 28)
+    targetLabel.TextWrapped = true
+    targetLabel.TextXAlignment = Enum.TextXAlignment.Left
+    targetLabel.LayoutOrder = 1
+    local rangeLabel = mt(body, "РЕЖИМ: ПРОСТОЕ ФИЗИЧЕСКОЕ СЛЕЖЕНИЕ", 10, Enum.Font.GothamBold, lw.Success)
+    rangeLabel.Size = UDim2.new(1, -4, 0, 28)
+    rangeLabel.TextWrapped = true
+    rangeLabel.TextXAlignment = Enum.TextXAlignment.Left
+    rangeLabel.LayoutOrder = 2
+    local status = mt(body, q.boss.status, 10, Enum.Font.Gotham, lw.Text)
+    status.Size = UDim2.new(1, -4, 0, 44)
+    status.TextWrapped = true
+    status.TextXAlignment = Enum.TextXAlignment.Left
+    status.LayoutOrder = 3
+    local hint = mt(body, "Следует за живым корнем босса на глубине 8 studs под полом и со смещением 2.6. При уроне опускается до 12; повторных телепортов и вращения нет.", 9, Enum.Font.Gotham, lw.Muted)
+    hint.Size = UDim2.new(1, -4, 0, 40)
+    hint.TextWrapped = true
+    hint.LayoutOrder = 4
+    q.refreshBossUI = function()
+        if not q.alive or not status.Parent then return end
+        status.Text = q.boss.status
+        paintLaunch()
+    end
+    local function resize()
+        if card.Parent then card.Size = UDim2.new(1, 0, 0, body.UIListLayout.AbsoluteContentSize.Y + 36) oc() end
+    end
+    aJ(body.UIListLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(resize))
+    task.defer(resize)
+end
+
 local pJ,pK=oj(nT,"АВТОФАРМ",106,3)pJ.LayoutOrder=2;
 local pL,pM=oq(nT,"ВЫБОР КАМНЯ",170)pL.LayoutOrder=1;
 local pN=od(pM,70)pN.LayoutOrder=1;
@@ -2704,8 +3792,6 @@ pG("ВЫБОР КАМНЯ",pH,{selected={[tostring(q0())]=true},onDone=function(
 local qc;
 qb=oC(pK,"◇","У КАМНЯ","только фиксация позиции",false,function(jH,ox)if jH then if not jR()then ox.Set(false,true)end else jQ("ФИКСАЦИЯ: выключена")end end)qc=oC(pK,"▷","АВТОУДАР","бьёт с любой точки",false,function(jH,ox)if jH then if not jU()then ox.Set(false,true)end else jP("АВТОУДАР: выключен")end end)q.leverRefs.lockRock=qb;
 q.leverRefs.bug=qc;
-local qd=oC(pK,"◎","БЫСТРЫЙ УДАР","ускоряет фарм",true,function(jH)q.directRemoteEnabled=jH;
-aP("УСКОРЕНИЕ: "..(jH and"включено"or"выключено"))end)q.leverRefs.directRemote=qd;
 do local qe,qf=oq(nU,"ЛОКАЦИЯ И ТРЕНАЖЁР",130)qe.LayoutOrder=1;
 local qg;
 local qh;
@@ -2780,9 +3866,28 @@ q.layoutUI.eggInventoryLabel=qx;
 function q.refreshEggUI()local fE=type(q.proteinEggInventoryCount)=="function"and q.proteinEggInventoryCount()or 0;
 local ht;
 if q.language=="en"then ht=q.eggEnabled and"  •  auto on"or"  •  auto off"qx.Text="Protein Egg in inventory: "..tostring(fE)..ht else ht=q.eggEnabled and"  •  авто включено"or"  •  авто выключено"qx.Text=q.layoutUI.officialName("Protein Egg",q.layoutUI.gameObjectContext("Protein Egg")).." в инвентаре: "..tostring(fE)..ht end;
-qu()qw.Set(qv(q.eggIntervalMultiplier))end;
+qu()qw.Set(qv(q.eggIntervalMultiplier))if type(q.refreshEggGiftUI)=="function"then q.refreshEggGiftUI()end end;
 local qy,qz=oj(q.layoutUI.eggPage,"АВТОИСПОЛЬЗОВАНИЕ",92,1)qy.LayoutOrder=2;
-q.leverRefs.proteinEgg=oC(qz,"◉","PROTEIN EGG","только яйцо ×2 к силе",false,function(jH,ox)if jH then if type(q.startProteinEggAutomation)~="function"or not q.startProteinEggAutomation()then ox.Set(false,true)end elseif type(q.stopProteinEggAutomation)=="function"then q.stopProteinEggAutomation("PROTEIN EGG: автоиспользование выключено")end end)q.refreshEggUI()end;
+q.leverRefs.proteinEgg=oC(qz,"◉","PROTEIN EGG","только яйцо ×2 к силе",false,function(jH,ox)if jH then if type(q.startProteinEggAutomation)~="function"or not q.startProteinEggAutomation()then ox.Set(false,true)end elseif type(q.stopProteinEggAutomation)=="function"then q.stopProteinEggAutomation("PROTEIN EGG: автоиспользование выключено")end end)q.refreshEggUI();
+q.layoutUI.eggGiftPanel,q.layoutUI.eggGiftBody=oq(q.layoutUI.eggPage,"ПЕРЕДАЧА ЯИЦ",164)q.layoutUI.eggGiftPanel.LayoutOrder=3;
+q.layoutUI.eggGiftTargetSelection=oY(q.layoutUI.eggGiftBody,"ИГРОК","ВЫБРАТЬ",function()local pH={}for o,kQ in ipairs(a:GetPlayers())do if kQ~=j then table.insert(pH,{id=tostring(kQ.UserId),label=tostring(kQ.DisplayName),sub="@"..tostring(kQ.Name)})end end;
+if#pH==0 then aP("ПЕРЕДАЧА ЯИЦ: других игроков нет")return end;
+pG("ВЫБОР ИГРОКА",pH,{selected=q.eggGiftTargetUserId and{[tostring(q.eggGiftTargetUserId)]=true}or{},onDone=function(pw)q.eggGiftTargetUserId=tonumber(pw.id)if type(q.refreshEggGiftUI)=="function"then q.refreshEggGiftUI()end end})end)q.layoutUI.eggGiftTargetSelection.Row.LayoutOrder=1;
+q.layoutUI.eggGiftAmountSelection=oY(q.layoutUI.eggGiftBody,"КОЛИЧЕСТВО","×"..tostring(q.eggGiftAmount or 2),function()local pH={}for gI=1,10 do table.insert(pH,{id=tostring(gI),label="×"..tostring(gI),sub=q.language=="en"and("Gift "..tostring(gI).." eggs")or("Передать "..tostring(gI).." яиц")})end;
+pG("КОЛИЧЕСТВО",pH,{selected={[tostring(q.eggGiftAmount or 2)]=true},onDone=function(pw)q.eggGiftAmount=math.clamp(math.floor(tonumber(pw.id)or 1),1,10)if type(q.refreshEggGiftUI)=="function"then q.refreshEggGiftUI()end end})end)q.layoutUI.eggGiftAmountSelection.Row.LayoutOrder=2;
+q.layoutUI.eggGiftStartButton=kr(q.layoutUI.eggGiftBody,"ПЕРЕДАТЬ",lw.Success)q.layoutUI.eggGiftStartButton.Size=UDim2.new(1,0,0,32)q.layoutUI.eggGiftStartButton.LayoutOrder=3;
+q.layoutUI.eggGiftStatusLabel=mt(q.layoutUI.eggGiftBody,"ГОТОВО",8,Enum.Font.Gotham,lw.Muted)q.layoutUI.eggGiftStatusLabel.Size=UDim2.new(1,-4,0,18)q.layoutUI.eggGiftStatusLabel.LayoutOrder=4;
+function q.refreshEggGiftUI()local kQ=q.resolveEggGiftTarget and q.resolveEggGiftTarget()or nil;
+if q.layoutUI.eggGiftTargetSelection then q.layoutUI.eggGiftTargetSelection.Set(kQ and(tostring(kQ.DisplayName).." • @"..tostring(kQ.Name))or(q.language=="en"and"SELECT"or"ВЫБРАТЬ"))end;
+if q.layoutUI.eggGiftAmountSelection then q.layoutUI.eggGiftAmountSelection.Set("×"..tostring(q.eggGiftAmount or 2))end;
+if q.layoutUI.eggGiftStatusLabel then q.layoutUI.eggGiftStatusLabel.Text=q.language=="en"and(q.eggGiftInFlight and"Sending..."or("Status: "..tostring(q.eggGiftStatus or"ready")))or("Статус: "..tostring(q.eggGiftStatus or"готово"))end;
+if q.layoutUI.eggGiftStartButton then q.layoutUI.eggGiftStartButton.Text=q.language=="en"and(q.eggGiftInFlight and"SENDING..."or"GIFT")or(q.eggGiftInFlight and"ПЕРЕДАЧА..."or"ПЕРЕДАТЬ")q.layoutUI.eggGiftStartButton.Active=not q.eggGiftInFlight;
+q.layoutUI.eggGiftStartButton.AutoButtonColor=not q.eggGiftInFlight;
+q.layoutUI.eggGiftStartButton.BackgroundTransparency=q.eggGiftInFlight and 0.55 or 0.10 end end;
+aJ(q.layoutUI.eggGiftStartButton.Activated:Connect(function()if q.eggGiftInFlight then return end;
+local kQ=q.resolveEggGiftTarget()if not kQ then aP("ПЕРЕДАЧА ЯИЦ: выбери игрока")return end;
+task.spawn(function()q.giftProteinEggBatch(q.eggGiftAmount,kQ)end)end))aJ(a.PlayerRemoving:Connect(function(kQ)if tonumber(q.eggGiftTargetUserId)==kQ.UserId then q.eggGiftTargetUserId=nil;
+q.eggGiftStatus="игрок вышел"if type(q.refreshEggGiftUI)=="function"then q.refreshEggGiftUI()end end end))q.refreshEggGiftUI()end;
 local qA,qB=oj(nV,"УПРАЖНЕНИЯ",170,3)qA.LayoutOrder=1;
 local qC,qD=oj(nV,"ПОЛОЖЕНИЕ ИГРОКА",106,2)qC.LayoutOrder=2;
 do local qE,qF=oq(q.layoutUI.systemPage,"ЯЗЫК / LANGUAGE",74)qE.LayoutOrder=1;
@@ -2814,7 +3919,8 @@ if qJ then q.stopAutoQuest(nil)end;
 q.selectedQuestNpc=pw.id;
 q.refreshQuestUI()if qJ then local e4,qK=q.startAutoQuest()if e4 and q.leverRefs.autoQuest then q.leverRefs.autoQuest.Set(true,true)elseif qK then aP("АВТОКВЕСТ: "..tostring(qK))end else aP("NPC: "..tostring(pw.label))end end})end)q.leverRefs.autoQuest=oC(qz,"Q","АВТОКВЕСТ","берёт и сдаёт квесты",false,function(jH,ox)if jH then local e4,h7=q.startAutoQuest()if not e4 then ox.Set(false,true)aP("АВТОКВЕСТ: "..tostring(h7))end else q.stopAutoQuest("АВТОКВЕСТ: выключен")end end)function q.refreshQuestUI()if not q.layoutUI or not q.layoutUI.questSelection then return end;
 local av=q.selectedQuestNpcEntry()q.layoutUI.questSelection.Set(av and q.layoutUI.officialName(av.name,q.layoutUI.gameObjectContext(av.name))or q.layoutUI.staticText("ВЫБРАТЬ"))end;
-q.refreshQuestUI()end;
+q.layoutUI.wheelPanel,q.layoutUI.wheelBody=oj(q.layoutUI.questPage,"КОЛЕСО УДАЧИ",92,1)q.layoutUI.wheelPanel.LayoutOrder=3;
+q.leverRefs.autoWheel=oC(q.layoutUI.wheelBody,"◎","АВТОПРОКРУТКА","крутит при доступной попытке",false,function(jH,ox)if jH then local e4,h7=q.startAutoWheel()if not e4 then ox.Set(false,true)aP("КОЛЕСО УДАЧИ: "..tostring(h7))end else q.stopAutoWheel(q.language=="en"and"FORTUNE WHEEL: auto spin disabled"or"КОЛЕСО УДАЧИ: автопрокрутка выключена")end end)q.refreshQuestUI()end;
 do local qL={}q.layoutUI.interfaceSections=qL;
 q.layoutUI.interfaceCategoryButtons={}q.layoutUI.interfaceCategoryBar=Instance.new("Frame")q.layoutUI.interfaceCategoryBar.Name="InterfaceCategoryBar"q.layoutUI.interfaceCategoryBar.Parent=q.layoutUI.interfacePage;
 q.layoutUI.interfaceCategoryBar.Size=UDim2.new(1,-4,0,34)q.layoutUI.interfaceCategoryBar.BackgroundColor3=lw.Panel;
@@ -2962,6 +4068,7 @@ aP("ПОЗИЦИЯ: зафиксирована")else q.lockPosition=false;
 q.positionCF=nil;
 aP("ПОЗИЦИЯ: свободна")end end)q.leverRefs.lockPosition=rj;
 local rk=oC(q.layoutUI.systemVisualBody,"◫","ЛЁГКАЯ ГРАФИКА","меньше нагрузки",false,function(jH)jG(jH)end)q.leverRefs.visualLow=rk;
+q.leverRefs.ultraBlack=oC(q.layoutUI.systemVisualBody,"■","УЛЬТРА-РЕЖИМ","чёрный экран и отключение 3D",false,function(jH,ox)local D,hg=q.setUltraBlack(jH,false)if jH and not D then ox.Set(false,true)aP("УЛЬТРА: "..tostring(hg))end end);
 do local function rl(N)local aF=string.lower(tostring(N or""))return aF:find("fuse",1,true)~=nil or aF:find("fusion",1,true)~=nil or aF:find("fusing",1,true)~=nil or aF:find("фьюз",1,true)~=nil or aF:find("фуз",1,true)~=nil or aF:find("слияни",1,true)~=nil end;
 local function rm(N)local aF=string.lower(tostring(N or""))if rl(aF)then return true end;
 return aF:find("craft",1,true)~=nil and(aF:find("station",1,true)~=nil or aF:find("machine",1,true)~=nil or aF:find("pet",1,true)~=nil)end;
@@ -3005,12 +4112,13 @@ if rs~=false and q.alive and mc.paused then if mc.positionLocked then q.lockPosi
 q.positionCF=mc.positionCF or mc.origin;
 q.nextPosTick=0;
 if q.leverRefs and q.leverRefs.lockPosition then q.leverRefs.lockPosition.Set(true,true)end end;
-if mc.rockLocked and q.selectedRock==mc.rock then pcall(jR)elseif mc.kingLocked then local D,fF=pcall(ji)if D and fF and q.leverRefs and q.leverRefs.kingLock then q.leverRefs.kingLock.Set(true,true)end end end;
+if mc.rockLocked and q.selectedRock==mc.rock then pcall(jR)elseif mc.kingLocked then local D,fF=pcall(ji)if D and fF and q.leverRefs and q.leverRefs.kingLock then q.leverRefs.kingLock.Set(true,true)end end;
+if mc.machineWasActive and mc.machine then local D,W=pcall(jZ,mc.machine,true)if not D or W~=true then aP(q.language=="en"and"FUSE: MACHINE FARM WAS NOT RESTORED"or"FUSE: автотренажёр не восстановлен")end end end;
 return true end;
 q.layoutUI.closeFuseMachineSession=rr;
 local function rt(cl)local fB=aO()if not fB or not cl then return nil end;
 local ru,eT=pcall(function()return(fB.Position-cl.Position).Magnitude end)local iU=ru and eT<=10;
-local mc={root=fB,origin=fB.CFrame,connections={},paused=not iU,positionLocked=q.lockPosition,positionCF=q.positionCF,rockLocked=q.lockRock,rock=q.selectedRock,kingLocked=q.kingLock,machineWasActive=q.machineActive}q.fuseSession=mc;
+local mc={root=fB,origin=fB.CFrame,connections={},paused=not iU,positionLocked=q.lockPosition,positionCF=q.positionCF,rockLocked=q.lockRock,rock=q.selectedRock,kingLocked=q.kingLock,machineWasActive=q.machineActive,machine=q.selectedMachine}q.fuseSession=mc;
 q.layoutUI.refreshFuseQuickButton()if iU then return mc end;
 if mc.machineWasActive then jX(nil)task.wait(0.12)end;
 if mc.rockLocked then jQ(nil)end;
@@ -3105,8 +4213,17 @@ local rM=oC(q.layoutUI.systemNetworkBody,"◌","ПАУЗА СЕТИ","удерж
 if jH then q.netGuardEnabled=true;
 if q.leverRefs.netGuard then q.leverRefs.netGuard.Set(true,true)end;
 dK("manual WiFi hold",os.clock())q.networkState="MANUAL HOLD"aP("ПАУЗА СЕТИ: включена")else dL(os.clock(),"MANUAL RELEASE")aP("ПАУЗА СЕТИ: выключена")end end)q.leverRefs.wifiHold=rM;
-q.leverRefs.train={}local rN={Punch="▷",Weight="▣",Push="▽",Sit="⌁",Hand="♢",Tread="↗"}local rO={Punch="УДАРЫ",Weight="ГАНТЕЛИ",Push="ОТЖИМАНИЯ",Sit="ПРЕСС",Hand="СТОЙКА",Tread="БЕГ"}local rP={Punch="сила",Weight="гантели и штанга",Push="обычные отжимания",Sit="упражнение на пресс",Hand="стойка на руках",Tread="скорость и ловкость"}for o,cX in ipairs(cV)do local qR;
-qR=oC(qB,rN[cX.id]or"◈",rO[cX.id]or cX.label,rP[cX.id]or cX.desc,false,function(jH,ox)if jH then if not jW(cX)then ox.Set(false,true)end else if q.activeTrains[cX.id]then jS(cX.id,cX.label..": OFF")end end end)q.leverRefs.train[cX.id]=qR end;
+q.leverRefs.train={}local qd,qe=oC(qB,"◎","БЫСТРЫЙ УДАР","ускорение с защитой от перегрузки",q.directRemoteEnabled,function(jH)q.directRemoteEnabled=jH;
+q.fastPunchTokens=0;
+aP("БЫСТРЫЙ УДАР: "..(jH and"включён"or"выключен"))end)qe.LayoutOrder=1;
+q.leverRefs.directRemote=qd;
+local qf,qg=q.layoutUI.makePercentSlider(qB,"ТЕМП УДАРОВ",q.fastPunchRate,5,120,5,function(N,ox)q.fastPunchRate=math.clamp(math.floor(N+0.5),5,120)q.fastPunchTokens=0;
+q.fastPunchAdaptiveRate=math.min(q.fastPunchRate,20)q.fastPunchLastStrength=nil;
+ox.ValueLabel.Text=tostring(q.fastPunchRate).."/с"end)qg.LayoutOrder=2;
+qf.ValueLabel.Text=tostring(q.fastPunchRate).."/с"q.layoutUI.fastPunchSlider=qf;
+local rN={Punch="▷",Weight="▣",Push="▽",Sit="⌁",Hand="♢",Tread="↗"}local rO={Punch="УДАРЫ",Weight="ГАНТЕЛИ",Push="ОТЖИМАНИЯ",Sit="ПРЕСС",Hand="СТОЙКА",Tread="БЕГ"}local rP={Punch="сила",Weight="гантели и штанга",Push="обычные отжимания",Sit="упражнение на пресс",Hand="стойка на руках",Tread="скорость и ловкость"}for o,cX in ipairs(q.trainModes)do local qR,qS;
+qR,qS=oC(qB,rN[cX.id]or"◈",rO[cX.id]or cX.label,rP[cX.id]or cX.desc,false,function(jH,ox)if jH then if not jW(cX)then ox.Set(false,true)end else if q.activeTrains[cX.id]then jS(cX.id,cX.label..": OFF")end end end)qS.LayoutOrder=o+2;
+q.leverRefs.train[cX.id]=qR end;
 local rQ,rR=oj(nW,"БЕЗ ОГРАНИЧЕНИЯ",106,2)rQ.LayoutOrder=2;
 local rS,rT=oq(nW,"РАЗМЕР ПЕРСОНАЖА",80)rS.LayoutOrder=3;
 q.layoutUI.rebSupportPanel,q.layoutUI.rebSupportBody=oj(nW,"KING И РАЗМЕР",106,2)q.layoutUI.rebSupportPanel.LayoutOrder=4;
@@ -3273,17 +4390,17 @@ q.layoutUI.auraSelection=sI;
 q.refreshExtraUI=function()local sJ=q.language=="en"and" players"or" игроков"sj.Set(fC(q.killWhitelist)..sJ)sk.Set(fC(q.killBlacklist)..sJ)sA.Set(q.layoutUI.officialName(q.selectedCrystal,q.layoutUI.gameObjectContext(q.selectedCrystal)))sE()sx.Set(sy())sH.Set(q.selectedPet and q.layoutUI.officialName(q.selectedPet,q.layoutUI.gameObjectContext(q.selectedPet))or q.layoutUI.staticText("ВЫБРАТЬ"))sI.Set(q.selectedAura and q.layoutUI.officialName(q.selectedAura,q.layoutUI.gameObjectContext(q.selectedAura))or q.layoutUI.staticText("ВЫБРАТЬ"))end;
 fG()local sK="bug"local sL=false;
 local sM=n7.Size;
-q.layoutUI.sectionInfo={bug={title="КАМНИ",hint="Выбери камень и включи автоудар."},farm={title="ТРЕНАЖЁРЫ",hint="Выбери локацию и нужный тренажёр."},train={title="ТРЕНИРОВКА",hint="Выбери упражнение для автокачалки."},reb={title="РЕБИРТЫ",hint="Установи цель или запусти ребирты."},crystal={title="МАГАЗИН",hint="Выбери товар и включи покупку."},kill={title="АВТОКИЛ",hint="Выбери игроков и режим атаки."},egg={title="ПРОТЕИНОВЫЕ ЯЙЦА",hint="Только Protein Egg: ×2 к силе."},teleport={title="ТЕЛЕПОРТЫ",hint="Выбери остров и переместись."},quest={title="АВТОКВЕСТЫ",hint="Выбери NPC и запусти автоквест."},system={title="НАСТРОЙКИ",hint="Питомцы, графика, сеть и защита клиента."},interface={title="ИНТЕРФЕЙС",hint="Настрой цвета, неон и прозрачность."}}local function sN()local sO=n7.AbsoluteSize.X<420;
+q.layoutUI.sectionInfo={boss={title="БОСС",hint="Фиксация под центром арены и автоматические удары."},bug={title="КАМНИ",hint="Выбери камень и включи автоудар."},farm={title="ТРЕНАЖЁРЫ",hint="Выбери локацию и нужный тренажёр."},train={title="ТРЕНИРОВКА",hint="Настрой темп и выбери упражнение."},reb={title="РЕБИРТЫ",hint="Установи цель или запусти ребирты."},crystal={title="МАГАЗИН",hint="Выбери товар и включи покупку."},kill={title="АВТОКИЛ",hint="Выбери игроков и режим атаки."},egg={title="ПРОТЕИНОВЫЕ ЯЙЦА",hint="Только Protein Egg: ×2 к силе."},teleport={title="ТЕЛЕПОРТЫ",hint="Выбери остров и переместись."},quest={title="АВТОКВЕСТЫ",hint="Выбери NPC и запусти автоквест."},system={title="НАСТРОЙКИ",hint="Питомцы, графика, сеть и защита клиента."},interface={title="ИНТЕРФЕЙС",hint="Настрой цвета, неон и прозрачность."}}local function sN()local sO=n7.AbsoluteSize.X<420;
 local sP=n7.AbsoluteSize.Y<440;
-nh.Size=UDim2.new(1,-16,0,sP and 34 or 38)nh.Position=UDim2.fromOffset(8,52)nI.Size=UDim2.new(1,-12,1,sP and-92 or-96)nI.Position=UDim2.fromOffset(6,sP and 90 or 94)q.layoutUI.navigationGrid.CellSize=UDim2.new(1/10,sO and-2 or-3,1,0)q.layoutUI.navigationGrid.CellPadding=UDim2.fromOffset(sO and 2 or 3,0)ni.CanvasSize=UDim2.fromOffset(0,0)ni.ScrollBarThickness=0;
+nh.Size=UDim2.new(1,-16,0,sP and 34 or 38)nh.Position=UDim2.fromOffset(8,52)nI.Size=UDim2.new(1,-12,1,sP and-92 or-96)nI.Position=UDim2.fromOffset(6,sP and 90 or 94)do local count=#q.layoutUI.navigationTabs;local gap=3;local width=math.max(49,math.floor((ni.AbsoluteSize.X-(count-1)*gap)/count));q.layoutUI.navigationGrid.FillDirectionMaxCells=count;q.layoutUI.navigationGrid.CellSize=UDim2.new(0,width,1,-3);q.layoutUI.navigationGrid.CellPadding=UDim2.fromOffset(gap,0);ni.CanvasSize=UDim2.fromOffset(count*(width+gap)-gap,0);ni.ScrollBarThickness=2 end;
 nc.TextSize=sO and 12 or 14;
 ne.TextSize=sO and 6 or 7;
 nK.TextSize=sO and 11 or 12;
 q.layoutUI.quickHint.TextSize=sO and 8 or 9;
 nQ.TextSize=sO and 7 or 8;
-for o,nl in ipairs({no,np,nq,nr,ns,nt,q.layoutUI.eggTab,q.layoutUI.teleportTab,q.layoutUI.questTab,q.layoutUI.systemTab})do nl.TextSize=sO and(n7.AbsoluteSize.X<320 and 6 or 7)or 8 end;
+for o,nl in ipairs({no,np,nq,nr,ns,nt,q.layoutUI.bossTab,q.layoutUI.eggTab,q.layoutUI.teleportTab,q.layoutUI.questTab,q.layoutUI.systemTab})do nl.TextSize=9 end;
 q.layoutUI.interfaceSideTab.Position=UDim2.fromOffset(n7.Position.X.Offset>=26 and-23 or 1,sP and 92 or 98)if sP then nJ.Size=UDim2.new(1,-12,0,67)q.layoutUI.quickHint.Position=UDim2.fromOffset(8,21)q.layoutUI.quickHint.Size=UDim2.new(1,-16,0,13)nL.Position=UDim2.fromOffset(6,36)nL.Size=UDim2.new(1,-12,0,25)else nJ.Size=UDim2.new(1,-12,0,76)q.layoutUI.quickHint.Position=UDim2.fromOffset(8,23)q.layoutUI.quickHint.Size=UDim2.new(1,-16,0,15)nL.Position=UDim2.fromOffset(6,43)nL.Size=UDim2.new(1,-12,0,26)end;
-for o,nS in ipairs({nT,nU,nV,nW,nX,nY,q.layoutUI.eggPage,q.layoutUI.teleportPage,q.layoutUI.questPage,q.layoutUI.systemPage,q.layoutUI.interfacePage})do nS.Position=UDim2.fromOffset(6,sP and 78 or 87)nS.Size=UDim2.new(1,-12,1,sP and-129 or-138)end;
+for o,nS in ipairs({nT,nU,nV,nW,nX,nY,q.layoutUI.bossPage,q.layoutUI.eggPage,q.layoutUI.teleportPage,q.layoutUI.questPage,q.layoutUI.systemPage,q.layoutUI.interfacePage})do nS.Position=UDim2.fromOffset(6,sP and 78 or 87)nS.Size=UDim2.new(1,-12,1,sP and-129 or-138)end;
 oc()end;
 local function sQ(nl,ht)nl.BackgroundColor3=ht and lw.SurfaceAlt or lw.Surface;
 nl.BackgroundTransparency=ht and 0.34 or 1;
@@ -3305,16 +4422,16 @@ nV.Visible=not sL and sV;
 nW.Visible=not sL and sW;
 nX.Visible=not sL and sX;
 nY.Visible=not sL and k5;
-q.layoutUI.eggPage.Visible=not sL and ku;
+q.layoutUI.bossPage.Visible=not sL and u=="boss";q.layoutUI.eggPage.Visible=not sL and ku;
 q.layoutUI.teleportPage.Visible=not sL and r4;
 q.layoutUI.questPage.Visible=not sL and hq;
 q.layoutUI.systemPage.Visible=not sL and sY;
 q.layoutUI.interfacePage.Visible=not sL and sZ;
-if not sL and sS~=u then local nS=sT and nT or sU and nU or sV and nV or sW and nW or sX and nX or k5 and nY or ku and q.layoutUI.eggPage or r4 and q.layoutUI.teleportPage or hq and q.layoutUI.questPage or sY and q.layoutUI.systemPage or sZ and q.layoutUI.interfacePage or nil;
+if not sL and sS~=u then local nS=u=="boss"and q.layoutUI.bossPage or sT and nT or sU and nU or sV and nV or sW and nW or sX and nX or k5 and nY or ku and q.layoutUI.eggPage or r4 and q.layoutUI.teleportPage or hq and q.layoutUI.questPage or sY and q.layoutUI.systemPage or sZ and q.layoutUI.interfacePage or nil;
 if nS then local k2=nS.Position;
 local s_=math.floor(math.clamp(tonumber(q.layoutUI.appearance.pageMotion)or 40,0,100)*0.2+0.5)if s_>0 then nS.Position=UDim2.new(k2.X.Scale,k2.X.Offset+s_,k2.Y.Scale,k2.Y.Offset)q.layoutUI.animate(nS,{Position=k2},0.16)end;
 q.layoutUI.pulseMotionBlur()end end;
-sQ(no,sT)sQ(np,sU)sQ(nq,sV)sQ(nr,sW)sQ(nt,sX)sQ(ns,k5)sQ(q.layoutUI.eggTab,ku)sQ(q.layoutUI.teleportTab,r4)sQ(q.layoutUI.questTab,hq)sQ(q.layoutUI.systemTab,sY)q.layoutUI.interfaceSideTab.BackgroundColor3=sZ and lw.SurfaceAlt or lw.Panel;
+sQ(q.layoutUI.bossTab,u=="boss")sQ(no,sT)sQ(np,sU)sQ(nq,sV)sQ(nr,sW)sQ(nt,sX)sQ(ns,k5)sQ(q.layoutUI.eggTab,ku)sQ(q.layoutUI.teleportTab,r4)sQ(q.layoutUI.questTab,hq)sQ(q.layoutUI.systemTab,sY)q.layoutUI.interfaceSideTab.BackgroundColor3=sZ and lw.SurfaceAlt or lw.Panel;
 local t0=q.layoutUI.interfaceSideTab:FindFirstChild("NeonEdge")if t0 then t0.Color=sZ and lw.Accent or lw.Border;
 t0.Transparency=sZ and 0.25 or 0.62 end;
 local bw=q.layoutUI.sectionInfo[u]if bw then nc.Text="ROCK BUG HUB"ne.Text="The Great Bastra"nK.Text=q.layoutUI.staticText(bw.title)q.layoutUI.quickHint.Text=q.layoutUI.staticText(bw.hint)end;
@@ -3325,7 +4442,7 @@ if r4 and not q.machineScanned and not q.machineScanInFlight then q.refreshMachi
 if r4 and type(q.refreshTeleportUI)=="function"then q.refreshTeleportUI()end;
 if hq and type(q.refreshQuestUI)=="function"then q.refreshQuestUI()end;
 if sZ and type(q.refreshAppearanceUI)=="function"then q.refreshAppearanceUI()end;
-if ku and type(q.refreshEggUI)=="function"then q.refreshEggUI()end end;
+if u=="boss"then q.layoutUI.bossPage.CanvasPosition=Vector2.zero;if q.refreshBossUI then q.refreshBossUI()end end;if ku and type(q.refreshEggUI)=="function"then q.refreshEggUI()end end;
 function q.layoutUI.applyLanguage(cJ,mC)cJ=cJ=="en"and"en"or"ru"q.language=cJ;
 n.RockBugLanguage=cJ;
 q.gameTranslators=q.gameTranslators or{}q.translationToken=(q.translationToken or 0)+1;
@@ -3336,13 +4453,15 @@ if q.layoutUI.saveSessionQuickButton then q.layoutUI.saveSessionQuickButton.Text
 if q.layoutUI.resumeSessionQuickButton then q.layoutUI.resumeSessionQuickButton.Text=q.layoutUI.staticText("ВОЗОБНОВИТЬ")end;
 p4.PlaceholderText=cJ=="en"and"Search..."or"Поиск..."if p0.Visible and q.closePicker then q.closePicker()end;
 if q.layoutUI.paintLanguage then q.layoutUI.paintLanguage()end;
-for o,ma in ipairs(cV)do local gy=q.leverRefs.train and q.leverRefs.train[ma.id]if gy and gy.NameLabel and(cJ=="en"or q.gameTranslators.ru or q.gameLocalizationReady)then local aq=nil;
+if q.refreshUltraButton then q.refreshUltraButton()end;
+for o,ma in ipairs(q.trainModes)do local gy=q.leverRefs.train and q.leverRefs.train[ma.id]if gy and gy.NameLabel and(cJ=="en"or q.gameTranslators.ru or q.gameLocalizationReady)then local aq=nil;
 if type(d7)=="function"then local D,cO=pcall(d7,ma)if D then aq=cO end end;
 local bA=aq and aq.Name or({Punch="Punch",Weight="Weight",Push="Pushups",Sit="Situps",Hand="Handstands",Tread="Treadmill"})[ma.id]if bA then gy.NameLabel.Text=q.layoutUI.officialName(bA,aq)end end end;
 if q.leverRefs.proteinEgg and q.leverRefs.proteinEgg.NameLabel and(cJ=="en"or q.gameTranslators.ru or q.gameLocalizationReady)then q.leverRefs.proteinEgg.NameLabel.Text=q.layoutUI.officialName("Protein Egg",q.layoutUI.gameObjectContext("Protein Egg"))end;
 if q.refreshMachineUI then q.refreshMachineUI()end;
 if q.refreshExtraUI then q.refreshExtraUI()end;
 if q.refreshEggUI then q.refreshEggUI()end;
+if q.refreshEggGiftUI then q.refreshEggGiftUI()end;
 if q.refreshTeleportUI then q.refreshTeleportUI()end;
 if q.refreshQuestUI then q.refreshQuestUI()end;
 if q.refreshAppearanceUI then q.refreshAppearanceUI()end;
@@ -3396,7 +4515,7 @@ q.layoutUI.showHome()end))aJ(ng.Activated:Connect(function()if q.closePicker the
 t7(true)end))aJ(nG.Activated:Connect(function()if sK=="farm"then q.refreshMachineCatalog(true)return end;
 aP("ОБНОВЛЯЮ КАМНИ...")bE()q.autoRockSelection=true;
 q.lastAutoRockRebs=nil;
-cH(true)aP("КАМЕНЬ: "..tostring(q.selectedRock and q.selectedRock.label or"не найден"))end))aJ(nH.Activated:Connect(function()jT()end))local ti=false;
+cH(true)aP("КАМЕНЬ: "..tostring(q.selectedRock and q.selectedRock.label or"не найден"))end))aJ(nH.Activated:Connect(function()jT()end));(function()local ti=false;
 local tj=false;
 local tk=false;
 local tl=false;
@@ -3418,13 +4537,14 @@ tk=false end end))aJ(f.InputChanged:Connect(function(f9)if tm and(f9.UserInputTy
 if ti and tn then local a2=UDim2.fromOffset(tn.X.Offset+tr.X,tn.Y.Offset+tr.Y)n7.Position=t4(a2,n7.Size)elseif tj and tn then if tr.Magnitude>5 then tl=true end;
 local a2=UDim2.fromOffset(tn.X.Offset+tr.X,tn.Y.Offset+tr.Y)n_.Position=t4(a2,n_.Size)elseif tk and to then local mT=mQ()local ts,tt,tu,tv=mS(mT)local tb=math.min(tu,math.max(ts,mT.X-n7.Position.X.Offset-4))local tc=math.min(tv,math.max(tt,mT.Y-n7.Position.Y.Offset-4))local nA=math.clamp(to.X.Offset+tr.X,ts,tb)local nB=math.clamp(to.Y.Offset+tr.Y,tt,tc)n7.Size=UDim2.fromOffset(nA,nB)sM=n7.Size end end end))aJ(n_.Activated:Connect(function()if tl then tl=false;
 return end;
-t7(false)end))function q:Stop(cF)if not self.alive then return end;
+t7(false)end))end)()function q:Stop(cF)if not self.alive then return end;
 if type(self.sessionLeave)=="function"and not self.sessionLeaveSent then self.sessionLeaveSent=true;
 task.spawn(function()pcall(self.sessionLeave)end)end;
 if self.layoutUI and type(self.layoutUI.closeFuseMachineSession)=="function"then pcall(self.layoutUI.closeFuseMachineSession,false)end;
+if type(self.setUltraBlack)=="function"then pcall(self.setUltraBlack,false,true)end;
 self.alive=false;
 self.manualNetworkHold=false;
-dL(os.clock(),"STOP")jT()p_()aL()if self.layoutUI and self.layoutUI.motionBlurEffect then pcall(function()self.layoutUI.motionBlurEffect:Destroy()end)self.layoutUI.motionBlurEffect=nil end;
+dL(os.clock(),"STOP")jT()jG(false)p_()aL()if self.layoutUI and self.layoutUI.motionBlurEffect then pcall(function()self.layoutUI.motionBlurEffect:Destroy()end)self.layoutUI.motionBlurEffect=nil end;
 if l7 and l7.Parent then l7:Destroy()end;
 if n.RockBugRuntime==self then n.RockBugRuntime=nil end end;
 aJ(nf.Activated:Connect(function()if q.layoutUI.closing then return end;
@@ -3479,7 +4599,7 @@ local tO,tP=xpcall(l6,function(hg)local kQ=""if debug and type(debug.traceback)=
 return tostring(hg)..kQ end)if not tO then q.alive=false;
 aL()if n.RockBugRuntime==q then n.RockBugRuntime=nil end;
 if q.uiRoot and q.uiRoot.Parent then B(function()q.uiRoot:Destroy()end)end;
-warn("[RockBugHub] UI startup failed: "..tostring(tP))pcall(function()g:SetCore("SendNotification",{Title="RockBugHub",Text="UI error: "..tostring(tP):sub(1,120),Duration=10})end)error(tostring(tP),0)end;
+warn("[RockBugHub] UI startup failed: "..tostring(tP))pcall(function()g:SetCore("SendNotification",{Title="RockBugHub",Text="UI error: "..tostring(tP):sub(1,120),Duration=10})end)return end;
 q.sessionApiUrl="https://szfjrpkdbccsveklkwyy.supabase.co/functions/v1/rockbug-online"q.sessionApiKey="b071080d347e5e9aac86deaa4f0567b3ca04f0048aa945761d1c2f31121ed5ae"q.sessionHttpService=game:GetService("HttpService");
 local br,bs=pcall(function()return q.sessionHttpService:GenerateGUID(false)end);
 q.sessionId=br and type(bs)=="string"and bs or string.format("rbh-%x-%x",os.time()%4294967296,math.random(0,2147483647));
@@ -3531,4 +4651,3 @@ if#tW>=4 then warn("RockBugHub scheduler stopped: "..tostring(hg))q:Stop("schedu
 dK("scheduler recovery",b6)aP(("SCHEDULER RECOVERY %d/3 | state preserved | %s"):format(#tW,tostring(hg):sub(1,70)))task.wait(math.min(0.5*#tW,1.5))end end)
 q.startupReady=true;
 return q
-end)()
