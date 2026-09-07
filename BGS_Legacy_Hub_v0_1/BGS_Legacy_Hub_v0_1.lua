@@ -1,6 +1,6 @@
--- BGS Legacy Hub loader -> v0.4 core + v0.4.1 canonical TP patch
+-- BGS Legacy Hub loader -> v0.4 core + v0.4.2 canonical Portal/Spawn TP patch
 local CORE_URL="https://raw.githubusercontent.com/bastra-gg/PetAlignHunb/main/BGS_Legacy_Hub_v0_1/BGS_Legacy_Hub_v0_4_core.lua"
-local PATCH_URL="https://raw.githubusercontent.com/bastra-gg/PetAlignHunb/main/BGS_Legacy_Hub_v0_1/BGS_Canonical_Islands_Patch_v0_4_1.lua"
+local PATCH_URL="https://raw.githubusercontent.com/bastra-gg/PetAlignHunb/main/BGS_Legacy_Hub_v0_1/BGS_Canonical_Islands_Patch_v0_4_2.lua"
 
 local okCore,coreSource=pcall(function() return game:HttpGet(CORE_URL) end)
 if not okCore then error("BGS loader HttpGet failed: "..tostring(coreSource),0) end
@@ -21,6 +21,10 @@ end
 local patch=patchChunk()
 if type(patch)=="function" then
     local okApply,result=pcall(patch,S)
-    if okApply and result then S=result elseif not okApply then warn("BGS canonical TP patch apply failed: "..tostring(result)) end
+    if okApply and result then
+        S=result
+    elseif not okApply then
+        warn("BGS canonical TP patch apply failed: "..tostring(result))
+    end
 end
 return S
