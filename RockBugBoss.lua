@@ -1159,6 +1159,19 @@ return function(runtime, api)
         runtime.boss.target=nil
         local origin=root.CFrame
         local moved=false
+        self.cleanup=function()
+            -- Also runs synchronously on close/reload, never after a new runtime takes over.
+            if moved and api.root()==root and root.Parent and humanoid.Health>0 then
+                pcall(function()
+                    root.CFrame=origin
+                    root.AssemblyLinearVelocity=api.vector.new(0,0,0)
+                    root.AssemblyAngularVelocity=api.vector.new(0,0,0)
+                end)
+            end
+            runtime.networkPaused=oldPause
+            self.busy=false
+            self.cleanup=nil
+        end
         entry.tries+=1 entry.nextAt=api.now()+({3,8,30})[entry.tries]
         local function current() return allowed() and api.root()==root and root.Parent and humanoid.Health>0 and matches(prompt) end
         local ok=pcall(function()
@@ -1185,11 +1198,7 @@ return function(runtime, api)
         end)
         -- Give replicated prompt state time to settle before a bounded retry.
         if state.alive then api.wait(0.4) end
-        if moved and api.root()==root and root.Parent and humanoid.Health>0 then
-            root.CFrame=origin root.AssemblyLinearVelocity=api.vector.new(0,0,0) root.AssemblyAngularVelocity=api.vector.new(0,0,0)
-        end
-        runtime.networkPaused=oldPause
-        self.busy=false
+        if self.cleanup then self.cleanup() end
         return ok
     end
     function state:Tick()
@@ -1209,6 +1218,7 @@ return function(runtime, api)
     end
     function state:Destroy()
         self.alive=false
+        if self.cleanup then self.cleanup() end
         for _,conn in ipairs(self.connections) do conn:Disconnect() end
         for _,entry in pairs(self.tracked) do for _,conn in ipairs(entry.connections) do conn:Disconnect() end end
         self.tracked={}
