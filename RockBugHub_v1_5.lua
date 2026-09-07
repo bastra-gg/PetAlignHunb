@@ -4,7 +4,7 @@ pcall(function()i=game:GetService("NetworkClient")end)if not game:IsLoaded()then
 local j=a.LocalPlayer;
 while not j do task.wait()j=a.LocalPlayer end;
 local k=j:WaitForChild("PlayerGui",60)if not k then warn("[RockBugHub] PlayerGui was not created")pcall(function()g:SetCore("SendNotification",{Title="RockBugHub",Text="Ошибка запуска: PlayerGui не найден",Duration=8})end)return end;
-local l="RockBugHub_TEST_v4_25_BOSS_T27"local m="4.25BOSS-T27"local n=type(getgenv)=="function"and getgenv()or _G;
+local l="RockBugHub_TEST_v4_25_BOSS_T28"local m="4.25BOSS-T28"local n=type(getgenv)=="function"and getgenv()or _G;
 do
     -- Retire the old experimental windows and their listeners on hot reload.
     for _, key in ipairs({"RockBugTradeDiagnostics", "RockBugMiniTransfer"}) do
@@ -2928,7 +2928,7 @@ do
 -- Orchestrates existing modes. Combat and movement belong to the unchanged adapter.
 return function(api)
     local s={enabled=false,phase="off",generation=0,nextScan=0,busy=false,seen=setmetatable({},{__mode="k"})}
-    local labels={off="Выключено",waiting="Жду босса · остальные функции работают",fighting="Бой с боссом",rewards="Собираю награду",returning="Возвращаю прежние занятия"}
+    local labels={off="Выключено",waiting="Жду босса · остальные функции работают",fighting="Бой с боссом",arena="На арене · 1 сек перед наградой",rewards="Собираю награду",returning="Возвращаю прежние занятия"}
     local function phase(value)
         s.phase=value
         api.show(labels[value],s.enabled)
@@ -2940,6 +2940,8 @@ return function(api)
         if self.snapshot then api.stop() end
         self.target=nil
         self.missingSince=nil
+        self.arenaSince=nil
+        self.arenaEntered=false
         if restore and self.snapshot then phase("returning") else self.snapshot=nil phase("off") end
     end
     function s:SetEnabled(value)
@@ -2954,7 +2956,7 @@ return function(api)
     local function step()
         if not api.alive() then s:Cancel(false) return end
         if not s.enabled and s.phase~="returning" then return end
-        if not api.ready() then return end
+        if not api.ready() then s.arenaSince=nil return end
         local now=api.now()
         local generation=s.generation
         local function current()return api.alive() and s.generation==generation end
@@ -2970,6 +2972,7 @@ return function(api)
             if not s.snapshot then return end
             s.target=target
             s.missingSince=nil
+            api.rememberArena(target,s.snapshot)
             phase("fighting")
             local started=api.start(current)
             if not current() then return end
@@ -2986,13 +2989,40 @@ return function(api)
                 phase("returning")
                 return
             end
-            if api.targetAlive(s.target) then s.missingSince=nil return end
+            if api.targetAlive(s.target) then
+                api.rememberArena(s.target,s.snapshot)
+                s.missingSince=nil
+                return
+            end
             s.missingSince=s.missingSince or now
             if now-s.missingSince<1 then return end
             s.seen[s.target]=true
-            api.stop()
-            s.claimDeadline=now+12
-            phase("rewards")
+            api.stop(false) -- release combat physics without returning to the old farm
+            s.arenaEntered=false
+            s.arenaSince=nil
+            s.arenaDeadline=now+12
+            phase("arena")
+        elseif s.phase=="arena" then
+            if api.conflict() then s:Cancel(false) return end
+            if now>=s.arenaDeadline then
+                api.report("Присутствие в центре арены не подтверждено — возвращаю прежние функции")
+                phase("returning")
+                return
+            end
+            if not s.arenaEntered then
+                s.arenaEntered=api.enterArena(s.snapshot,current)==true
+                if not current() then return end
+            end
+            if s.arenaEntered and api.onArena() then
+                s.arenaSince=s.arenaSince or now
+                if now-s.arenaSince>=1 then
+                    s.claimDeadline=now+12
+                    phase("rewards")
+                end
+            else
+                s.arenaSince=nil
+                s.arenaEntered=false
+            end
         elseif s.phase=="rewards" then
             if api.conflict() then s:Cancel(false) return end
             local result=api.claim(current)
@@ -3044,6 +3074,75 @@ end
         local snapshot={origin=root.CFrame,fields={},trains=copy(q.activeTrains),order=copy(q.trainOrder)}
         for _,key in ipairs(savedFields)do snapshot.fields[key]=q[key] end
         return snapshot
+    end
+    -- Remember actual arena geometry while its boss/body is still replicated.
+    -- This runs beside the existing combat adapter and never changes its hold point.
+    local arenaRoot,arenaPoint
+    local nextArenaProbe=0
+    local function arenaRay(target)
+        local params=RaycastParams.new()
+        params.FilterType=Enum.RaycastFilterType.Exclude
+        local exclude={}
+        for _,player in ipairs(a:GetPlayers())do if player.Character then table.insert(exclude,player.Character)end end
+        if target and target.bodyModel then table.insert(exclude,target.bodyModel)
+        elseif target and target.root then table.insert(exclude,target.root)end
+        params.FilterDescendantsInstances=exclude
+        pcall(function()params.RespectCanCollide=true end)
+        return params
+    end
+    local function rememberArena(model,snapshot)
+        if snapshot.arena or os.clock()<nextArenaProbe then return end
+        nextArenaProbe=os.clock()+1
+        local info=q.bossAdapter.info(model)
+        if not info then return end
+        local base=q.bossFollowPosition(info)
+        local ray=arenaRay(info)
+        local best,bestArea
+        for _,offset in ipairs({Vector3.zero,Vector3.new(9,0,0),Vector3.new(-9,0,0),Vector3.new(0,0,9),Vector3.new(0,0,-9)})do
+            local hit=workspace:Raycast(base+offset+Vector3.new(0,12,0),Vector3.new(0,-140,0),ray)
+            local part=hit and hit.Instance
+            if not part or not part:IsA("BasePart") or not part.Anchored or not part.CanCollide
+                or hit.Normal.Y<0.8 or hit.Position.Y>base.Y+4 then continue end
+            -- World-space spans also handle a cylinder rotated onto its side.
+            local size,cf=part.Size,part.CFrame
+            local width=math.abs(cf.RightVector.X)*size.X+math.abs(cf.UpVector.X)*size.Y+math.abs(cf.LookVector.X)*size.Z
+            local depth=math.abs(cf.RightVector.Z)*size.X+math.abs(cf.UpVector.Z)*size.Y+math.abs(cf.LookVector.Z)*size.Z
+            if width<24 or depth<24 or width>600 or depth>600 then continue end
+            local center=Vector3.new(part.Position.X,hit.Position.Y,part.Position.Z)
+            if (Vector3.new(base.X,center.Y,base.Z)-center).Magnitude>math.max(width,depth)*0.6 then continue end
+            local surface=workspace:Raycast(center+Vector3.new(0,20,0),Vector3.new(0,-40,0),ray)
+            if not surface or surface.Normal.Y<0.8 or math.abs(surface.Position.Y-hit.Position.Y)>4 then continue end
+            if not bestArea or width*depth>bestArea then
+                bestArea=width*depth
+                best={part=part,point=surface.Position}
+            end
+        end
+        if best then snapshot.arena=best end
+    end
+    local function enterArena(snapshot,current)
+        if not current()then return false end
+        local arena=snapshot.arena
+        local root,humanoid=aO(),aN()
+        if not arena or not root or not humanoid or humanoid.Health<=0 or not arena.part.Parent then return false end
+        -- The combat adapter has released its hold and restored collisions before this call.
+        local surface=workspace:Raycast(arena.point+Vector3.new(0,20,0),Vector3.new(0,-40,0),arenaRay())
+        if not surface or surface.Normal.Y<0.8 or math.abs(surface.Position.Y-arena.point.Y)>4 then return false end
+        local leg=aM():FindFirstChild("Left Leg")
+        local standingHeight=math.max(0,humanoid.HipHeight)+root.Size.Y*0.5
+        if humanoid.RigType==Enum.HumanoidRigType.R6 and leg then standingHeight+=leg.Size.Y end
+        arenaPoint=surface.Position+Vector3.new(0,standingHeight+0.15,0)
+        arenaRoot=root
+        root.Anchored=false
+        humanoid.Sit=false
+        root.CFrame=CFrame.new(arenaPoint)*(root.CFrame-root.Position)
+        root.AssemblyLinearVelocity=Vector3.zero
+        root.AssemblyAngularVelocity=Vector3.zero
+        return true
+    end
+    local function onArena()
+        local root=aO()
+        return root and root==arenaRoot and root.Parent and arenaPoint and not root.Anchored
+            and (root.Position-arenaPoint).Magnitude<=3
     end
     local function restore(snapshot,current)
         if not current() then return false end
@@ -3151,6 +3250,7 @@ end
         scan=q.bossAdapter.scan,
         targetAlive=function(model)local info=q.bossAdapter.info(model)return info and info.alive end,
         capture=capture,restore=restore,claim=claim,cancelClaim=cancelClaim,
+        rememberArena=rememberArena,enterArena=enterArena,onArena=onArena,
         start=function(current)
             for _,entry in pairs(prompts)do entry.tries=0 entry.nextAt=0 end
             q.bossCycle.internal=true
@@ -3160,12 +3260,23 @@ end
             if not ok then error(result)end
             return result
         end,
-        stop=function()q.boss:Stop("Автоцикл: возврат",true)end,
+        stop=function(retreat)q.boss:Stop("Автоцикл: возврат",retreat~=false)end,
         conflict=q.bossAdapter.conflict,running=function()return q.boss.enabled end,
         show=function(message,enabled)q.bossCycleStatus=message paint("bossCycle",enabled)end,
         report=function(problem)q.bossCycleError=problem aP("АВТОЦИКЛ: "..problem:sub(1,100))end,
     })
     local manualStart=q.StartBoss
+    -- The combat loop also releases immediately when its target disappears.
+    -- During the background cycle stay here for the upcoming arena visit.
+    local combatRelease=q.bossAdapter.release
+    q.bossAdapter.release=function(retreat)
+        local cycle=q.bossCycle
+        if retreat and cycle.enabled and cycle.phase=="fighting" and cycle.snapshot and cycle.target then
+            local info=q.bossAdapter.info(cycle.target)
+            if not info or not info.alive then retreat=false end
+        end
+        return combatRelease(retreat)
+    end
     function q:StartBoss()self.bossCycle:Cancel(false)return manualStart(self)end
     local manualStop=q.StopBoss
     function q:StopBoss()self.bossCycle:Cancel(false)return manualStop(self)end
@@ -4037,7 +4148,7 @@ pq()end))aJ(p4:GetPropertyChangedSignal("Text"):Connect(function()if pm then pr(
 do
     local cycleCard,cycleBody=oj(q.layoutUI.bossPage,"БОСС И НАГРАДЫ",76,1)
     cycleCard.LayoutOrder=0
-    q.leverRefs.bossCycle=oC(cycleBody,"↻","БОСС В ФОНЕ","Бой → награда → прежние занятия",false,function(value)q.bossCycle:SetEnabled(value)end)
+    q.leverRefs.bossCycle=oC(cycleBody,"↻","БОСС В ФОНЕ","Бой → арена 1с → награда → возврат",false,function(value)q.bossCycle:SetEnabled(value)end)
     local cycleStatus=mt(q.layoutUI.bossPage,q.bossCycleStatus or "Выключено",10,Enum.Font.Gotham,lw.Muted)
     cycleStatus.Size=UDim2.new(1,-4,0,30) cycleStatus.TextWrapped=true cycleStatus.LayoutOrder=0
     local launch = kr(q.layoutUI.bossPage, "▶  ЗАПУСТИТЬ АВТОБОССА", lw.Success)
