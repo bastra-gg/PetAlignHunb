@@ -1,4 +1,9 @@
--- BGS Legacy Hub v0.1
+-- BGS Legacy Hub v0.1.1 SAFE
+-- For the user's own Bubble Gum Simulator-style game/server.
+-- Safety layer: no teleports, no anti-cheat bypass, remote budget, distance checks,
+-- respawn grace, error backoff and automatic hard stop after repeated failures.
+
+local VERSION="0.1.1-safe"
 local Players=game:GetService("Players")
 local RS=game:GetService("ReplicatedStorage")
 local UIS=game:GetService("UserInputService")
@@ -9,9 +14,29 @@ local PG=LP:WaitForChild("PlayerGui")
 
 local env=type(getgenv)=="function" and getgenv() or _G
 if env.BGSLegacy and env.BGSLegacy.Stop then pcall(function() env.BGSLegacy:Stop() end) end
+
 local S={
- alive=true, autoBubble=false, autoHatch=false, walkToEgg=false, autoCollect=false,
- selectedEgg=nil, eggs={}, eggIndex=1, collectRadius=220, status="готово", conns={}
+ alive=true,
+ safeMode=true,
+ autoBubble=false,
+ autoHatch=false,
+ walkToEgg=false,
+ autoCollect=false,
+ selectedEgg=nil,
+ eggs={},
+ eggIndex=1,
+ collectRadius=140,
+ status="SAFE готово",
+ conns={},
+ failures=0,
+ maxFailures=5,
+ pausedUntil=0,
+ respawnGraceUntil=0,
+ remoteTimes={},
+ maxRemotePerSecond=7,
+ lastFire={},
+ lastMove=0,
+ moveDelay=.28,
 }
 env.BGSLegacy=S
 
@@ -21,6 +46,29 @@ end
 local function hum()
  local c=LP.Character return c and c:FindFirstChildOfClass("Humanoid")
 end
+local function characterReady()
+ local h=hum() local r=root()
+ return h and r and h.Health>0
+end
+
+local function stopAutomation(reason)
+ S.autoBubble=false
+ S.autoHatch=false
+ S.walkToEgg=false
+ S.autoCollect=false
+ S.status="SAFE STOP: "..tostring(reason or "manual")
+end
+
+local function fail(reason)
+ S.failures=S.failures+1
+ S.status="ошибка "..S.failures.."/"..S.maxFailures..": "..tostring(reason)
+ S.pausedUntil=os.clock()+math.min(4,0.8*S.failures)
+ if S.failures>=S.maxFailures then stopAutomation("слишком много ошибок") end
+end
+local function success()
+ if S.failures>0 then S.failures=math.max(0,S.failures-1) end
+end
+
 local function net()
  local n=RS:FindFirstChild("NetworkRemoteEvent")
  if n and n:IsA("RemoteEvent") then return n end
@@ -29,23 +77,41 @@ local function net()
  end
 end
 local Network=net()
-local last={}
+
+local function pruneBudget(now)
+ local out={}
+ for _,t in ipairs(S.remoteTimes) do if now-t<1 then out[#out+1]=t end end
+ S.remoteTimes=out
+end
+local function budgetOK(now)
+ pruneBudget(now)
+ return #S.remoteTimes<S.maxRemotePerSecond
+end
+
 local function fire(action,delay,...)
+ local now=os.clock()
+ if now<S.pausedUntil or now<S.respawnGraceUntil then return false end
+ if not characterReady() then return false end
  Network=Network and Network.Parent and Network or net()
- if not Network then S.status="NetworkRemoteEvent не найден" return false end
- local t=os.clock()
- if t-(last[action] or 0)<delay then return false end
- last[action]=t
+ if not Network then fail("NetworkRemoteEvent не найден") return false end
+ if now-(S.lastFire[action] or 0)<delay then return false end
+ if S.safeMode and not budgetOK(now) then
+  S.status="SAFE: лимит remote/sec"
+  return false
+ end
+ S.lastFire[action]=now
+ if S.safeMode then S.remoteTimes[#S.remoteTimes+1]=now end
  local ok,e=pcall(function() Network:FireServer(action,...) end)
- if not ok then S.status=tostring(e) end
- return ok
+ if not ok then fail(e) return false end
+ success()
+ return true
 end
 
 local function hotkey(egg)
  if not egg then return nil end
  local h=egg:FindFirstChild("Hotkey",true)
  if h and h:IsA("BasePart") then return h end
- if h and h:IsA("Attachment") and h.Parent:IsA("BasePart") then return h.Parent end
+ if h and h:IsA("Attachment") and h.Parent and h.Parent:IsA("BasePart") then return h.Parent end
  return egg:IsA("BasePart") and egg or egg:FindFirstChildWhichIsA("BasePart",true)
 end
 
@@ -61,9 +127,10 @@ local function scanEggs()
   local found=false
   for i,n in ipairs(a) do if n==S.selectedEgg then S.eggIndex=i found=true break end end
   if not found then S.eggIndex=1 S.selectedEgg=a[1] end
-  S.status="яиц найдено: "..#a
+  S.status="SAFE | яиц найдено: "..#a
  else
-  S.selectedEgg=nil S.status="workspace.Eggs не найден/пуст"
+  S.selectedEgg=nil
+  S.status="workspace.Eggs не найден/пуст"
  end
 end
 
@@ -71,14 +138,24 @@ local function selectedEgg()
  local f=workspace:FindFirstChild("Eggs")
  return f and S.selectedEgg and f:FindFirstChild(S.selectedEgg)
 end
-
 local function dist(p)
  local r=root() return r and p and (r.Position-p.Position).Magnitude or math.huge
 end
 
 local function moveTo(pos)
- local h=hum()
- if h and h.Health>0 then pcall(function() h:MoveTo(pos) end) end
+ local now=os.clock()
+ if now<S.pausedUntil or now<S.respawnGraceUntil then return false end
+ if now-S.lastMove<S.moveDelay then return false end
+ local h=hum() local r=root()
+ if not h or not r or h.Health<=0 then return false end
+ if S.safeMode and (pos-r.Position).Magnitude>S.collectRadius+35 then
+  S.status="SAFE: цель слишком далеко"
+  return false
+ end
+ S.lastMove=now
+ local ok,e=pcall(function() h:MoveTo(pos) end)
+ if not ok then fail(e) return false end
+ return true
 end
 
 local function nearestPickup()
@@ -89,7 +166,8 @@ local function nearestPickup()
  for _,v in ipairs(f:GetChildren()) do
   if v:IsA("BasePart") and v.Transparency<1 then
    local d=(r.Position-v.Position).Magnitude
-   if d<bd and (v:FindFirstChild("TouchInterest") or v.Name=="Part" or string.lower(v.Name):find("coin",1,true)) then
+   local n=string.lower(v.Name)
+   if d<bd and (v:FindFirstChild("TouchInterest") or v.Name=="Part" or n:find("coin",1,true) or n:find("gem",1,true) or n:find("pickup",1,true)) then
     best,bd=v,d
    end
   end
@@ -97,26 +175,25 @@ local function nearestPickup()
  return best,bd
 end
 
--- UI
+-- UI ----------------------------------------------------------------------
 local old=PG:FindFirstChild("BGSLegacyHub") if old then old:Destroy() end
 local g=Instance.new("ScreenGui",PG) g.Name="BGSLegacyHub" g.ResetOnSpawn=false
-local m=Instance.new("Frame",g) m.Size=UDim2.fromOffset(380,350) m.Position=UDim2.new(.5,-190,.5,-175)
+local m=Instance.new("Frame",g) m.Size=UDim2.fromOffset(390,392) m.Position=UDim2.new(.5,-195,.5,-196)
 m.BackgroundColor3=Color3.fromRGB(16,17,22) m.BorderSizePixel=0 m.Active=true
 local c=Instance.new("UICorner",m) c.CornerRadius=UDim.new(0,14)
 local st=Instance.new("UIStroke",m) st.Color=Color3.fromRGB(84,105,255)
 local h=Instance.new("Frame",m) h.Size=UDim2.new(1,0,0,48) h.BackgroundColor3=Color3.fromRGB(24,25,33) h.BorderSizePixel=0
 local hc=Instance.new("UICorner",h) hc.CornerRadius=UDim.new(0,14)
 local t=Instance.new("TextLabel",h) t.BackgroundTransparency=1 t.Position=UDim2.fromOffset(13,0) t.Size=UDim2.new(1,-60,1,0)
-t.Text="BGS LEGACY HUB  v0.1" t.TextColor3=Color3.fromRGB(245,245,250) t.Font=Enum.Font.GothamBold t.TextSize=16 t.TextXAlignment=Enum.TextXAlignment.Left
+t.Text="BGS LEGACY HUB  "..VERSION t.TextColor3=Color3.fromRGB(245,245,250) t.Font=Enum.Font.GothamBold t.TextSize=15 t.TextXAlignment=Enum.TextXAlignment.Left
 local close=Instance.new("TextButton",h) close.Size=UDim2.fromOffset(32,30) close.Position=UDim2.new(1,-40,0,9)
 close.Text="×" close.TextSize=19 close.BackgroundColor3=Color3.fromRGB(45,47,60) close.TextColor3=Color3.new(1,1,1)
 local cc=Instance.new("UICorner",close) cc.CornerRadius=UDim.new(0,8)
-local status=Instance.new("TextLabel",m) status.BackgroundTransparency=1 status.Position=UDim2.fromOffset(13,52) status.Size=UDim2.new(1,-26,0,28)
-status.TextColor3=Color3.fromRGB(180,184,200) status.Font=Enum.Font.Gotham status.TextSize=11 status.TextXAlignment=Enum.TextXAlignment.Left
+local status=Instance.new("TextLabel",m) status.BackgroundTransparency=1 status.Position=UDim2.fromOffset(13,52) status.Size=UDim2.new(1,-26,0,34)
+status.TextColor3=Color3.fromRGB(180,184,200) status.Font=Enum.Font.Gotham status.TextSize=11 status.TextXAlignment=Enum.TextXAlignment.Left status.TextWrapped=true
 
-local body=Instance.new("Frame",m) body.BackgroundTransparency=1 body.Position=UDim2.fromOffset(12,84) body.Size=UDim2.new(1,-24,1,-96)
+local body=Instance.new("Frame",m) body.BackgroundTransparency=1 body.Position=UDim2.fromOffset(12,91) body.Size=UDim2.new(1,-24,1,-103)
 local lay=Instance.new("UIListLayout",body) lay.Padding=UDim.new(0,7)
-
 local redraw={}
 local function round(x) local u=Instance.new("UICorner",x) u.CornerRadius=UDim.new(0,9) end
 local function toggle(label,key)
@@ -132,6 +209,7 @@ local function action(text,cb)
  b.TextColor3=Color3.fromRGB(239,240,248) b.Font=Enum.Font.GothamBold b.TextSize=12 round(b) b.Activated:Connect(cb) return b
 end
 
+toggle("SAFE MODE","safeMode")
 toggle("Авто надувание","autoBubble")
 toggle("Авто открытие яйца","autoHatch")
 toggle("Самому идти к яйцу","walkToEgg")
@@ -143,8 +221,8 @@ eggBtn=action("ЯЙЦО: скан...",function()
 end)
 action("ПЕРЕСКАНИРОВАТЬ ЯЙЦА",function() scanEggs() eggBtn.Text=S.selectedEgg and ("ЯЙЦО: "..S.selectedEgg) or "ЯЙЦО: не найдено" end)
 action("HARD STOP",function()
- for _,k in ipairs({"autoBubble","autoHatch","walkToEgg","autoCollect"}) do S[k]=false if redraw[k] then redraw[k]() end end
- S.status="всё остановлено"
+ stopAutomation("manual")
+ for _,k in ipairs({"autoBubble","autoHatch","walkToEgg","autoCollect"}) do if redraw[k] then redraw[k]() end end
 end)
 
 local dragging,ds,sp=false,nil,nil
@@ -160,31 +238,57 @@ local lb,lh,lc=0,0,0
 S.conns[#S.conns+1]=Run.Heartbeat:Connect(function()
  if not S.alive then return end
  local n=os.clock()
- status.Text=S.status.." | remote "..(Network and "OK" or "нет").." | eggs "..#S.eggs
+ status.Text=S.status.." | remote "..(Network and "OK" or "нет").." | eggs "..#S.eggs.." | failures "..S.failures
+ if n<S.pausedUntil or n<S.respawnGraceUntil then return end
 
- if S.autoBubble and n-lb>=.12 then lb=n if fire("BlowBubble",.12) then S.status="надуваю" end end
+ if S.autoBubble and n-lb>=.20 then
+  lb=n
+  if fire("BlowBubble",.20) then S.status="SAFE | надуваю" end
+ end
 
- if S.autoHatch and n-lh>=.45 then
+ if S.autoHatch and n-lh>=.65 then
   lh=n
   if not S.selectedEgg then scanEggs() end
   local e=selectedEgg() local p=hotkey(e)
   if p then
    local d=dist(p)
-   if d<=14.5 then if fire("PurchaseEgg",.45,S.selectedEgg) then S.status="открываю "..S.selectedEgg end
-   elseif S.walkToEgg then moveTo(p.Position) S.status="иду к "..S.selectedEgg
-   else S.status="подойди к "..S.selectedEgg.." ("..math.floor(d).." studs)" end
+   -- The original BGS scripts also required being close to the egg; enforce it here.
+   if d<=14.5 then
+    if fire("PurchaseEgg",.65,S.selectedEgg) then S.status="SAFE | открываю "..S.selectedEgg end
+   elseif S.walkToEgg then
+    -- egg walk gets a slightly larger safe movement allowance without teleporting
+    local oldRadius=S.collectRadius
+    S.collectRadius=math.max(S.collectRadius,math.min(300,d+5))
+    moveTo(p.Position)
+    S.collectRadius=oldRadius
+    S.status="иду к "..S.selectedEgg.." | "..math.floor(d).." studs"
+   else
+    S.status="подойди к "..S.selectedEgg.." ("..math.floor(d).." studs)"
+   end
   end
  end
 
- if S.autoCollect and n-lc>=.18 then
+ if S.autoCollect and n-lc>=.30 then
   lc=n
   local p,d=nearestPickup()
-  if p then moveTo(p.Position) S.status="собираю валюту ("..math.floor(d).." studs)" else S.status="валюта рядом не найдена" end
+  if p then
+   moveTo(p.Position)
+   S.status="SAFE | собираю валюту ("..math.floor(d).." studs)"
+  else
+   S.status="валюта рядом не найдена"
+  end
  end
+end)
+
+S.conns[#S.conns+1]=LP.CharacterAdded:Connect(function()
+ S.respawnGraceUntil=os.clock()+2.5
+ S.pausedUntil=S.respawnGraceUntil
+ S.status="SAFE: пауза после респавна"
 end)
 
 function S:Stop()
  if not self.alive then return end
+ stopAutomation("closed")
  self.alive=false
  for _,x in ipairs(self.conns) do pcall(function() x:Disconnect() end) end
  pcall(function() g:Destroy() end)
@@ -198,5 +302,5 @@ task.delay(.7,function()
  if not Network then S.status="NetworkRemoteEvent не найден — нужна диагностика копии" end
 end)
 
-print("BGS Legacy Hub v0.1 loaded")
+print("BGS Legacy Hub "..VERSION.." loaded")
 return S
