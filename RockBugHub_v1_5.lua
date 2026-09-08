@@ -4,7 +4,7 @@ pcall(function()i=game:GetService("NetworkClient")end)if not game:IsLoaded()then
 local j=a.LocalPlayer;
 while not j do task.wait()j=a.LocalPlayer end;
 local k=j:WaitForChild("PlayerGui",60)if not k then warn("[RockBugHub] PlayerGui was not created")pcall(function()g:SetCore("SendNotification",{Title="RockBugHub",Text="Ошибка запуска: PlayerGui не найден",Duration=8})end)return end;
-local l="RockBugHub_TEST_v4_25_BOSS_T29"local m="4.25BOSS-T29"local n=type(getgenv)=="function"and getgenv()or _G;
+local l="RockBugHub_TEST_v4_25_BOSS_T30"local m="4.25BOSS-T30"local n=type(getgenv)=="function"and getgenv()or _G;
 do
     -- Retire the old experimental windows and their listeners on hot reload.
     for _, key in ipairs({"RockBugTradeDiagnostics", "RockBugMiniTransfer"}) do
@@ -2635,13 +2635,8 @@ do
         saved.nextDangerScan = 0
     end
     local function standingPoint(position, target)
-        local root, humanoid = saved.root, saved.humanoid
-        local ray = RaycastParams.new()
-        ray.FilterType = Enum.RaycastFilterType.Exclude
-        ray.FilterDescendantsInstances = {saved.character, target.model}
-        local hit = World:Raycast(position + Vector3.new(0, 45, 0), Vector3.new(0, -130, 0), ray)
-        local y = hit and (hit.Position.Y + humanoid.HipHeight + root.Size.Y * 0.5 + 0.08) or root.Position.Y
-        return Vector3.new(position.X, y, position.Z)
+        local standing=q.bossStandingCF(position,target.bodyModel or target.model)
+        return standing and standing.Position or nil
     end
     local function chooseDodgePoint(target, damageRevision)
         local root = saved.root
@@ -2695,11 +2690,51 @@ do
         best = standingPoint(best, target)
         return best, #dangers, currentUnsafe or damaged
     end
+    -- Resolve a standing point on real ground, with clearance for both R6 and R15.
+    function q.bossStandingCF(position, exclude)
+        local root, humanoid, character = aO(), aN(), aM()
+        if not root or not humanoid or not character or humanoid.Health <= 0 then return nil end
+        local ray = RaycastParams.new()
+        ray.FilterType = Enum.RaycastFilterType.Exclude
+        local exclusions = {}
+        for _, player in ipairs(Players:GetPlayers()) do
+            if player.Character then table.insert(exclusions, player.Character) end
+        end
+        if exclude then table.insert(exclusions, exclude) end
+        ray.FilterDescendantsInstances = exclusions
+        ray.RespectCanCollide = true
+        local hit = World:Raycast(position + Vector3.new(0, 45, 0), Vector3.new(0, -180, 0), ray)
+        if not hit or hit.Normal.Y < 0.8 then return nil end
+        local clearance = math.max(0, humanoid.HipHeight) + root.Size.Y * 0.5 + 0.25
+        local leg = character:FindFirstChild("Left Leg")
+        if humanoid.RigType == Enum.HumanoidRigType.R6 and leg then clearance += leg.Size.Y end
+        local standing = hit.Position + Vector3.new(0, clearance, 0)
+        if standing.Y <= World.FallenPartsDestroyHeight + 10 then return nil end
+        return CFrame.new(standing) * (root.CFrame - root.Position)
+    end
     local function release(retreat)
         local old = saved
         saved = nil
         q.bossDangerCount = 0
         if not old then return end
+        local living = old.root.Parent and old.character == aM() and old.humanoid.Health > 0
+        if living then
+            -- Freeze before removing BodyPosition. Teleport onto the surface in this
+            -- same call; never leave a living character falling below the arena.
+            old.root.Anchored = true
+            local exitCF = retreat and old.origin or nil
+            if not exitCF and old.positioned then
+                local position = old.root.Position
+                local probe = Vector3.new(position.X, old.arenaY or position.Y, position.Z)
+                local ok, standing = pcall(q.bossStandingCF, probe, old.targetBody)
+                exitCF = ok and standing or nil
+                exitCF = exitCF or old.surfaceCF or old.origin
+            end
+            if exitCF then old.root.CFrame = exitCF end
+            old.root.AssemblyLinearVelocity = Vector3.zero
+            old.root.AssemblyAngularVelocity = Vector3.zero
+            if q.networkHoldRoot == old.root then q.networkHoldCF = old.root.CFrame end
+        end
         if old.healthConnection then old.healthConnection:Disconnect() end
         if old.spawnConnection then old.spawnConnection:Disconnect() end
         if old.holdPosition and old.holdPosition.Parent then old.holdPosition:Destroy() end
@@ -2707,13 +2742,8 @@ do
             if part and part.Parent then part.CanCollide = canCollide end
         end
         if old.humanoid.Parent then old.humanoid.AutoRotate = old.autoRotate end
-        if old.root.Parent and old.character == aM() and old.humanoid.Health > 0 then
+        if living then
             old.root.Anchored = old.anchored
-            if retreat and old.origin then
-                old.root.CFrame = old.origin
-                old.root.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
-                old.root.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
-            end
         end
     end
     q.bossAdapter = {
@@ -2829,7 +2859,6 @@ do
             for _, part in ipairs(saved.character:GetDescendants()) do
                 if part:IsA("BasePart") then
                     saved.collisionState[part] = part.CanCollide
-                    part.CanCollide = false
                 end
             end
             saved.healthConnection = humanoid.HealthChanged:Connect(function(health)
@@ -2845,7 +2874,6 @@ do
                     saved.spawnedParts[node] = true saved.nextDangerScan = 0
                     if node:IsDescendantOf(saved.character) then
                         saved.collisionState[node] = node.CanCollide
-                        node.CanCollide = false
                     end
                 end
             end)
@@ -2857,6 +2885,7 @@ do
             saved.humanoid.AutoRotate = false
             local depth = math.clamp(tonumber(height) or 8, 8, 12)
             local base = q.bossFollowPosition(target)
+            saved.targetBody = target.bodyModel or target.model
             if not saved.arenaY then
                 if saved.nextFloorProbe and os.clock() < saved.nextFloorProbe then return false, "Ожидаю пол арены…" end
                 saved.nextFloorProbe = os.clock() + 0.5
@@ -2872,7 +2901,10 @@ do
                 local floorSamples = {}
                 for _, offset in ipairs({Vector3.new(9, 0, 0), Vector3.new(-9, 0, 0), Vector3.new(0, 0, 9), Vector3.new(0, 0, -9)}) do
                     local hit = World:Raycast(base + offset + Vector3.new(0, 12, 0), Vector3.new(0, -140, 0), ray)
-                    if hit and hit.Normal.Y > 0.8 and hit.Position.Y <= base.Y + 4 then table.insert(floorSamples, hit.Position.Y) end
+                    if hit and hit.Normal.Y > 0.8 and hit.Position.Y <= base.Y + 4 then
+                        table.insert(floorSamples, hit.Position.Y)
+                        saved.surfaceCF = saved.surfaceCF or q.bossStandingCF(hit.Position, saved.targetBody)
+                    end
                 end
                 table.sort(floorSamples)
                 if #floorSamples < 2 then return false, "Ожидаю пол под телом босса…" end
@@ -2883,6 +2915,9 @@ do
                 saved.underY = saved.arenaY - depth
             end
             local point = Vector3.new(base.X, saved.underY, base.Z)
+            if point.Y <= World.FallenPartsDestroyHeight + 10 then
+                return false, "Под ареной граница падения — жду безопасную точку"
+            end
             q.bossDangerCount = 0
             saved.root.Anchored = false
             if not saved.holdPosition or not saved.holdPosition.Parent then
@@ -3068,10 +3103,15 @@ return function(api)
                 phase("returning")
                 return
             end
-            api.stop(false) -- release combat physics; the chest is the next destination
+            api.stop(false) -- release moves onto the surface before removing combat physics
             s.nextRewardNotice=now+15
-            phase("rewards")
+            phase(api.rewardsEnabled and not api.rewardsEnabled() and "returning" or "rewards")
         elseif s.phase=="rewards" then
+            if api.rewardsEnabled and not api.rewardsEnabled() then
+                api.cancelClaim()
+                phase("returning")
+                return
+            end
             if api.conflict() then s:Cancel(false) return end
             local result=api.claim(function()return current() and not api.conflict()end,s.snapshot)
             if not current() then return end
@@ -3192,8 +3232,13 @@ return function(api)
         self.nextAt=0
         self.tries=0
         self.closed=false
+        self.character=nil
     end
     function state:Step(current,snapshot)
+        local character=api.character()
+        -- A disabled prompt after death is not acknowledgement for the new character.
+        if self.character and self.character~=character then self:Cancel() end
+        self.character=character
         if not current() or not api.ready() then return "pending" end
         if self.closed then return "closed" end
         if self.prompt and self.attempted and api.closed(self.prompt) then
@@ -3209,7 +3254,6 @@ return function(api)
         end
         local prompt=self.prompt
         if not prompt then return "missing" end
-        local character=api.character()
         local function valid()
             return current() and api.ready() and api.character()==character and self.prompt==prompt
         end
@@ -3252,14 +3296,26 @@ end
         if not root or not humanoid or humanoid.Health<=0 or not position then return false end
         local range=promptRange(prompt)
         if range<=0 then return false end
-        if (root.Position-position).Magnitude>range*0.7 then
-            humanoid.Sit=false
-            root.Anchored=false
-            local offset=Vector3.new(math.min(3,range*0.35),math.min(2,range*0.2),0)
-            root.CFrame=CFrame.new(position+offset)*(root.CFrame-root.Position)
-            root.AssemblyLinearVelocity=Vector3.zero
-            root.AssemblyAngularVelocity=Vector3.zero
+        local standing
+        local radius=math.min(4,range*0.45)
+        for _, offset in ipairs({Vector3.new(radius,0,0),Vector3.new(-radius,0,0),
+            Vector3.new(0,0,radius),Vector3.new(0,0,-radius),Vector3.zero})do
+            local candidate=q.bossStandingCF(position+offset)
+            if candidate and (candidate.Position-position).Magnitude<=range*0.95 then
+                standing=candidate
+                break
+            end
         end
+        -- Missing ground is a retry, not permission to teleport inside/below the map.
+        if not standing then return false end
+        if (root.Position-standing.Position).Magnitude<=0.75 then return inRange(prompt) end
+        local anchored=root.Anchored
+        root.Anchored=true
+        humanoid.Sit=false
+        root.CFrame=standing
+        root.AssemblyLinearVelocity=Vector3.zero
+        root.AssemblyAngularVelocity=Vector3.zero
+        root.Anchored=anchored
         return inRange(prompt)
     end
     local collector=createChestCollector({
@@ -4253,7 +4309,7 @@ do
     targetLabel.TextWrapped = true
     targetLabel.TextXAlignment = Enum.TextXAlignment.Left
     targetLabel.LayoutOrder = 1
-    local rangeLabel = mt(body, "РЕЖИМ: ПРОСТОЕ ФИЗИЧЕСКОЕ СЛЕЖЕНИЕ", 10, Enum.Font.GothamBold, lw.Success)
+    local rangeLabel = mt(body, "РЕЖИМ: БОЙ ПОД АРЕНОЙ → СУНДУК", 10, Enum.Font.GothamBold, lw.Success)
     rangeLabel.Size = UDim2.new(1, -4, 0, 28)
     rangeLabel.TextWrapped = true
     rangeLabel.TextXAlignment = Enum.TextXAlignment.Left
@@ -4273,7 +4329,7 @@ do
     damageSignal.Size = UDim2.new(1, -4, 0, 40)
     damageSignal.TextWrapped = true
     damageSignal.LayoutOrder = 4
-    local hint = mt(body, "Прямо под телом босса: X/Z обновляются каждый кадр, глубина — 8 под полом (до 12 при уроне). Направление персонажа фиксировано.", 9, Enum.Font.Gotham, lw.Muted)
+    local hint = mt(body, "Бой под ареной. После смерти босса — сразу на поверхность, затем сундук и возврат прежних занятий.", 9, Enum.Font.Gotham, lw.Muted)
     hint.Size = UDim2.new(1, -4, 0, 40)
     hint.TextWrapped = true
     hint.LayoutOrder = 6
@@ -4984,7 +5040,7 @@ q.layoutUI.auraSelection=sI;
 q.refreshExtraUI=function()local sJ=q.language=="en"and" players"or" игроков"sj.Set(fC(q.killWhitelist)..sJ)sk.Set(fC(q.killBlacklist)..sJ)sA.Set(q.layoutUI.officialName(q.selectedCrystal,q.layoutUI.gameObjectContext(q.selectedCrystal)))sE()sx.Set(sy())sH.Set(q.selectedPet and q.layoutUI.officialName(q.selectedPet,q.layoutUI.gameObjectContext(q.selectedPet))or q.layoutUI.staticText("ВЫБРАТЬ"))sI.Set(q.selectedAura and q.layoutUI.officialName(q.selectedAura,q.layoutUI.gameObjectContext(q.selectedAura))or q.layoutUI.staticText("ВЫБРАТЬ"))end;
 fG()local sK="bug"local sL=false;
 local sM=n7.Size;
-q.layoutUI.sectionInfo={boss={title="БОСС • ТЕСТ",hint="Слежение под телом босса на фиксированной глубине."},bug={title="КАМНИ",hint="Выбери камень и включи автоудар."},farm={title="ТРЕНАЖЁРЫ",hint="Выбери локацию и нужный тренажёр."},train={title="ТРЕНИРОВКА",hint="Настрой темп и выбери упражнение."},reb={title="РЕБИРТЫ",hint="Установи цель или запусти ребирты."},crystal={title="МАГАЗИН",hint="Выбери товар и включи покупку."},kill={title="АВТОКИЛ",hint="Выбери игроков и режим атаки."},egg={title="ПРОТЕИНОВЫЕ ЯЙЦА",hint="Только Protein Egg: ×2 к силе."},teleport={title="ТЕЛЕПОРТЫ",hint="Выбери остров и переместись."},quest={title="АВТОКВЕСТЫ",hint="Выбери NPC и запусти автоквест."},system={title="НАСТРОЙКИ",hint="Питомцы, графика, сеть и защита клиента."},interface={title="ИНТЕРФЕЙС",hint="Настрой цвета, неон и прозрачность."}}local function sN()local sO=n7.AbsoluteSize.X<420;
+q.layoutUI.sectionInfo={boss={title="БОСС • ТЕСТ",hint="Бой под ареной; после победы — поверхность, сундук и возврат."},bug={title="КАМНИ",hint="Выбери камень и включи автоудар."},farm={title="ТРЕНАЖЁРЫ",hint="Выбери локацию и нужный тренажёр."},train={title="ТРЕНИРОВКА",hint="Настрой темп и выбери упражнение."},reb={title="РЕБИРТЫ",hint="Установи цель или запусти ребирты."},crystal={title="МАГАЗИН",hint="Выбери товар и включи покупку."},kill={title="АВТОКИЛ",hint="Выбери игроков и режим атаки."},egg={title="ПРОТЕИНОВЫЕ ЯЙЦА",hint="Только Protein Egg: ×2 к силе."},teleport={title="ТЕЛЕПОРТЫ",hint="Выбери остров и переместись."},quest={title="АВТОКВЕСТЫ",hint="Выбери NPC и запусти автоквест."},system={title="НАСТРОЙКИ",hint="Питомцы, графика, сеть и защита клиента."},interface={title="ИНТЕРФЕЙС",hint="Настрой цвета, неон и прозрачность."}}local function sN()local sO=n7.AbsoluteSize.X<420;
 local sP=n7.AbsoluteSize.Y<440;
 nh.Size=UDim2.new(1,-16,0,sP and 34 or 38)nh.Position=UDim2.fromOffset(8,52)nI.Size=UDim2.new(1,-12,1,sP and-92 or-96)nI.Position=UDim2.fromOffset(6,sP and 90 or 94)do local count=#q.layoutUI.navigationTabs;local gap=3;local width=math.max(49,math.floor((ni.AbsoluteSize.X-(count-1)*gap)/count));q.layoutUI.navigationGrid.FillDirectionMaxCells=count;q.layoutUI.navigationGrid.CellSize=UDim2.new(0,width,1,-3);q.layoutUI.navigationGrid.CellPadding=UDim2.fromOffset(gap,0);ni.CanvasSize=UDim2.fromOffset(count*(width+gap)-gap,0);ni.ScrollBarThickness=2 end;
 nc.TextSize=sO and 12 or 14;
