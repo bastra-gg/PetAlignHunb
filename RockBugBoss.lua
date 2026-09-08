@@ -1,5 +1,5 @@
--- RockBug Boss 1.0: standalone UI + account-bound access.
--- Boss controller/adapter are copied verbatim from the user's tested core.
+-- RockBug Boss 1.1: standalone UI + account-bound access.
+-- Shares under-arena combat, a safe exit to the surface, strength warmup and the chest cycle with the test hub.
 -- A client-side Lua gate is not tamper-proof DRM. UserId alone never grants access.
 if not game:IsLoaded() then game.Loaded:Wait() end
 local a,b,c = game:GetService("Players"),game:GetService("ReplicatedStorage"),game:GetService("RunService")
@@ -155,6 +155,7 @@ end
 local errors={invalid="Ключ не подходит",bound="Этот ключ привязан к другому аккаунту",expired="Срок доступа истёк",revoked="Доступ отозван владельцем",rate_limit="Слишком часто. Подожди минуту"}
 local function showGate(reason)
     q.authorized=false
+    if q.bossCycle then q.bossCycle:Cancel(false)end
     if q.boss then q.boss:Stop(nil,true) end
     content.Visible=false gate.Visible=true gateNote.Text=reason
 end
@@ -180,6 +181,38 @@ local function activate(value,redeem)
 end
 aJ(unlock.Activated:Connect(function() activate(keyInput.Text,true) end))
 aJ(keyInput.FocusLost:Connect(function(enter) if enter then activate(keyInput.Text,true) end end))
+
+local function ca()
+    local groups={j}
+    local stats=j:FindFirstChild("leaderstats")
+    if stats then table.insert(groups,1,stats)end
+    for _,group in ipairs(groups)do
+        for _,node in ipairs(group:GetChildren())do
+            local name=node.Name:lower():gsub("[%s_%-]","")
+            if node:IsA("ValueBase") and (name=="strength" or name=="сила" or name=="musclepower")then
+                local value=tonumber(node.Value)
+                if value and value==value and value~=math.huge and value~=-math.huge then return math.max(0,value)end
+            end
+        end
+    end
+end
+q.trainModes={{id="Weight",label="Гантель",words={"weight","dumbbell","dumb","barbell","гантел","гир","штанг"}}}
+local function dk(mode)
+    local tool,equipped=cY(function(item)
+        return item:IsA("Tool") and cP(item.Name,mode.words)
+    end)
+    if not tool then return nil,"Гантель не найдена — жду перед вылетом"end
+    if not equipped and not c_(tool)then return nil,"Не удалось взять гантель"end
+    return tool
+end
+local function em()
+    if not q.alive or not q.authorized or q.networkPaused or q.remotePaused then return false end
+    local remote=eg()
+    if not remote then return false end
+    local ok=pcall(function()remote:FireServer("rep")end)
+    if ok then q.remoteSentWindow+=1 ei()end
+    return ok
+end
 
 q.bossFactory=(function()
 -- TEST ONLY: ordinary Punch/touch adapter, not a verified new-boss protocol.
@@ -251,6 +284,8 @@ return function(runtime, api)
         self.generation += 1
         if wasEnabled then pcall(api.release, retreat == true) end
         self.target = nil
+        self.warming = false
+        if api.stopTraining then api.stopTraining() end
         self.lastTick = nil
         if runtime.leverRefs and runtime.leverRefs.boss then
             runtime.leverRefs.boss.Set(false, true)
@@ -272,6 +307,9 @@ return function(runtime, api)
         self.enabled = true
         self.nextScan = 0
         self.nextAttack = 0
+        self.nextTraining = 0
+        self.warming = false
+        self.engagedTarget = nil
         self.lastTick = nil
         self.lastOwnHealth = health and health > 0 and health or nil
         self.retryAt = 0
@@ -330,6 +368,43 @@ return function(runtime, api)
                 show("Пауза сети — атаки не отправляются")
             end
             return
+        end
+        -- The cycle owns this defeated boss until its chest has been opened.
+        -- Never acquire another boss in the gap before the cycle's next tick.
+        if api.awaitingReward and api.awaitingReward() then
+            api.release(false)
+            state.target = nil
+            return
+        end
+        local strength = api.strength()
+        if not strength or strength <= 0 then
+            if not state.warming then api.release(true) end
+            state.warming = true
+            state.target = nil
+            state.nextScan = 0
+            state.nextAttack = now + state.interval
+            show(strength == nil and "Жду счётчик силы — вылет приостановлен"
+                or "Сила 0 — качаю гантель до прироста силы")
+            if strength ~= nil and now >= state.nextTraining then
+                state.nextTraining = now + 0.25
+                local generation = state.generation
+                local ok, reason = api.trainStrength(function()
+                    return runtime.alive and state.enabled and state.generation == generation
+                        and not runtime.networkPaused and not api.conflict()
+                end)
+                if state.generation ~= generation or not state.enabled then return end
+                if ok == false then
+                    state.nextTraining = now + 2
+                    show(reason or "Жду гантель — вылет приостановлен")
+                end
+            end
+            return
+        end
+        if state.warming then
+            state.warming = false
+            api.stopTraining()
+            state.retryAt = 0
+            state.nextScan = 0
         end
         if now < state.retryAt then return end
         local info = state.target and api.info(state.target)
@@ -408,6 +483,7 @@ return function(runtime, api)
                 return
             end
             state.attempts += 1
+            state.engagedTarget = target
         end
         if now >= state.nextUI then
             state.nextUI = now + 0.4
@@ -734,13 +810,8 @@ do
         saved.nextDangerScan = 0
     end
     local function standingPoint(position, target)
-        local root, humanoid = saved.root, saved.humanoid
-        local ray = RaycastParams.new()
-        ray.FilterType = Enum.RaycastFilterType.Exclude
-        ray.FilterDescendantsInstances = {saved.character, target.model}
-        local hit = World:Raycast(position + Vector3.new(0, 45, 0), Vector3.new(0, -130, 0), ray)
-        local y = hit and (hit.Position.Y + humanoid.HipHeight + root.Size.Y * 0.5 + 0.08) or root.Position.Y
-        return Vector3.new(position.X, y, position.Z)
+        local standing=q.bossStandingCF(position,target.bodyModel or target.model)
+        return standing and standing.Position or nil
     end
     local function chooseDodgePoint(target, damageRevision)
         local root = saved.root
@@ -794,11 +865,51 @@ do
         best = standingPoint(best, target)
         return best, #dangers, currentUnsafe or damaged
     end
+    -- Resolve a standing point on real ground, with clearance for both R6 and R15.
+    function q.bossStandingCF(position, exclude)
+        local root, humanoid, character = aO(), aN(), aM()
+        if not root or not humanoid or not character or humanoid.Health <= 0 then return nil end
+        local ray = RaycastParams.new()
+        ray.FilterType = Enum.RaycastFilterType.Exclude
+        local exclusions = {}
+        for _, player in ipairs(Players:GetPlayers()) do
+            if player.Character then table.insert(exclusions, player.Character) end
+        end
+        if exclude then table.insert(exclusions, exclude) end
+        ray.FilterDescendantsInstances = exclusions
+        ray.RespectCanCollide = true
+        local hit = World:Raycast(position + Vector3.new(0, 45, 0), Vector3.new(0, -180, 0), ray)
+        if not hit or hit.Normal.Y < 0.8 then return nil end
+        local clearance = math.max(0, humanoid.HipHeight) + root.Size.Y * 0.5 + 0.25
+        local leg = character:FindFirstChild("Left Leg")
+        if humanoid.RigType == Enum.HumanoidRigType.R6 and leg then clearance += leg.Size.Y end
+        local standing = hit.Position + Vector3.new(0, clearance, 0)
+        if standing.Y <= World.FallenPartsDestroyHeight + 10 then return nil end
+        return CFrame.new(standing) * (root.CFrame - root.Position)
+    end
     local function release(retreat)
         local old = saved
         saved = nil
         q.bossDangerCount = 0
         if not old then return end
+        local living = old.root.Parent and old.character == aM() and old.humanoid.Health > 0
+        if living then
+            -- Freeze before removing BodyPosition. Teleport onto the surface in this
+            -- same call; never leave a living character falling below the arena.
+            old.root.Anchored = true
+            local exitCF = retreat and old.origin or nil
+            if not exitCF and old.positioned then
+                local position = old.root.Position
+                local probe = Vector3.new(position.X, old.arenaY or position.Y, position.Z)
+                local ok, standing = pcall(q.bossStandingCF, probe, old.targetBody)
+                exitCF = ok and standing or nil
+                exitCF = exitCF or old.surfaceCF or old.origin
+            end
+            if exitCF then old.root.CFrame = exitCF end
+            old.root.AssemblyLinearVelocity = Vector3.zero
+            old.root.AssemblyAngularVelocity = Vector3.zero
+            if q.networkHoldRoot == old.root then q.networkHoldCF = old.root.CFrame end
+        end
         if old.healthConnection then old.healthConnection:Disconnect() end
         if old.spawnConnection then old.spawnConnection:Disconnect() end
         if old.holdPosition and old.holdPosition.Parent then old.holdPosition:Destroy() end
@@ -806,18 +917,36 @@ do
             if part and part.Parent then part.CanCollide = canCollide end
         end
         if old.humanoid.Parent then old.humanoid.AutoRotate = old.autoRotate end
-        if old.root.Parent and old.character == aM() and old.humanoid.Health > 0 then
+        if living then
             old.root.Anchored = old.anchored
-            if retreat and old.origin then
-                old.root.CFrame = old.origin
-                old.root.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
-                old.root.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
-            end
         end
     end
     q.bossAdapter = {
         now = os.clock,
         ownHealth = function() local humanoid = aN() return humanoid and humanoid.Health end,
+        strength = ca,
+        trainStrength = function(current)
+            if not current() then return false end
+            local character = aM()
+            local weight
+            for _, mode in ipairs(q.trainModes) do if mode.id == "Weight" then weight = mode break end end
+            if not weight then return false, "Гантель не найдена — жду перед боссом" end
+            local tool, reason = dk(weight, true)
+            -- Equipping can yield; do not activate after Stop, a new mode, or respawn.
+            local humanoid = aN()
+            if not current() or aM() ~= character or not humanoid or humanoid.Health <= 0 then return false end
+            if not tool or tool.Parent ~= aM() then return false, reason end
+            q.bossTrainingTool = tool
+            d4(tool)
+            tool:Activate()
+            if current() then em() end
+            return true
+        end,
+        stopTraining = function()
+            local tool = q.bossTrainingTool
+            q.bossTrainingTool = nil
+            if tool and tool.Parent then pcall(function() tool:Deactivate() end) end
+        end,
         prepare = function() jT() end,
         conflict = function()
             return q.bugActive or q.trainActive or q.machineActive or q.kingLock
@@ -905,7 +1034,6 @@ do
             for _, part in ipairs(saved.character:GetDescendants()) do
                 if part:IsA("BasePart") then
                     saved.collisionState[part] = part.CanCollide
-                    part.CanCollide = false
                 end
             end
             saved.healthConnection = humanoid.HealthChanged:Connect(function(health)
@@ -921,7 +1049,6 @@ do
                     saved.spawnedParts[node] = true saved.nextDangerScan = 0
                     if node:IsDescendantOf(saved.character) then
                         saved.collisionState[node] = node.CanCollide
-                        node.CanCollide = false
                     end
                 end
             end)
@@ -933,6 +1060,7 @@ do
             saved.humanoid.AutoRotate = false
             local depth = math.clamp(tonumber(height) or 8, 8, 12)
             local base = q.bossFollowPosition(target)
+            saved.targetBody = target.bodyModel or target.model
             if not saved.arenaY then
                 if saved.nextFloorProbe and os.clock() < saved.nextFloorProbe then return false, "Ожидаю пол арены…" end
                 saved.nextFloorProbe = os.clock() + 0.5
@@ -948,7 +1076,10 @@ do
                 local floorSamples = {}
                 for _, offset in ipairs({Vector3.new(9, 0, 0), Vector3.new(-9, 0, 0), Vector3.new(0, 0, 9), Vector3.new(0, 0, -9)}) do
                     local hit = World:Raycast(base + offset + Vector3.new(0, 12, 0), Vector3.new(0, -140, 0), ray)
-                    if hit and hit.Normal.Y > 0.8 and hit.Position.Y <= base.Y + 4 then table.insert(floorSamples, hit.Position.Y) end
+                    if hit and hit.Normal.Y > 0.8 and hit.Position.Y <= base.Y + 4 then
+                        table.insert(floorSamples, hit.Position.Y)
+                        saved.surfaceCF = saved.surfaceCF or q.bossStandingCF(hit.Position, saved.targetBody)
+                    end
                 end
                 table.sort(floorSamples)
                 if #floorSamples < 2 then return false, "Ожидаю пол под телом босса…" end
@@ -959,6 +1090,9 @@ do
                 saved.underY = saved.arenaY - depth
             end
             local point = Vector3.new(base.X, saved.underY, base.Z)
+            if point.Y <= World.FallenPartsDestroyHeight + 10 then
+                return false, "Под ареной граница падения — жду безопасную точку"
+            end
             q.bossDangerCount = 0
             saved.root.Anchored = false
             if not saved.holdPosition or not saved.holdPosition.Parent then
@@ -1046,9 +1180,10 @@ do
     end
     aJ(c.Heartbeat:Connect(function()
         -- Keep following on every frame even when equipping/punching has yielded.
-        if saved and q.boss.enabled and not q.networkPaused and not q.bossAdapter.conflict() then
+        if saved and q.boss.enabled and not q.networkPaused and not q.bossAdapter.conflict()
+            and (ca() or 0) > 0 and not (q.bossAdapter.awaitingReward and q.bossAdapter.awaitingReward()) then
             local target = q.boss.target and info(q.boss.target)
-            if target then pcall(q.bossAdapter.hold, target, q.boss.height, q.boss.damageEvents) end
+            if target and target.alive then pcall(q.bossAdapter.hold, target, q.boss.height, q.boss.damageEvents) end
         end
         q.boss:Tick(os.clock())
     end))
@@ -1066,23 +1201,25 @@ end
 function q.refreshBossUI()
     if not q.alive then return end
     local boss=q.boss
-    local message="Выключено"
+    local active=boss.enabled or q.bossCycle and (q.bossCycle.enabled or q.bossCycle.phase=="returning")
+    local message=q.bossCycleStatus or "Выключено"
     if boss.enabled then
         if q.networkPaused then message="Пауза"
         elseif not aN() or aN().Health<=0 then message="Жду персонажа"
-        elseif boss.target then message="Атака босса"
+        elseif boss.warming then message="Сила 0 — качаю гантель"
+        elseif boss.target then message="Бой под ареной"
         else message="Жду босса" end
     elseif tostring(boss.status):find("Ошибка",1,true) then message="Не удалось начать" end
     status.Text=message
     local info=boss.target and q.bossAdapter.info(boss.target)
     targetText.Text=info and info.name or "Автоматический поиск босса"
-    start.Text=boss.enabled and "Остановить" or "Запустить"
-    start.BackgroundColor3=boss.enabled and Color3.fromRGB(65,43,91) or purple
-    start.TextColor3=boss.enabled and white or Color3.fromRGB(24,13,40)
+    start.Text=active and "Остановить" or "Запустить"
+    start.BackgroundColor3=active and Color3.fromRGB(65,43,91) or purple
+    start.TextColor3=active and white or Color3.fromRGB(24,13,40)
 end
 aJ(start.Activated:Connect(function()
     if not q.authorized then return end
-    if q.boss.enabled then q:StopBoss() else
+    if q.boss.enabled or q.bossCycle and q.bossCycle.enabled then q:StopBoss() else
         local other=env.RockBugRuntime
         if other and other.alive and (other.boss and other.boss.enabled or other.bugActive or other.trainActive or other.kingLock or other.lockPosition or other.machineActive) then
             status.Text="Останови режим в основном Hub" return
@@ -1098,145 +1235,360 @@ aJ(reward.Activated:Connect(function()
     rewardDot.Position=UDim2.fromOffset(q.rewardsEnabled and 17 or 3,3)
 end))
 
--- Exact chest prompt only. No broad GUI scanning, fake success counter, or movement.
-local rewards=(function()
--- One collector per runtime. Only the observed Boss Chest / Claim Reward prompt.
--- Does not treat pcall success as evidence of a received reward.
-return function(runtime, api)
-    local state={alive=true,busy=false,tracked={},connections={},nextTick=0}
-    local function normalized(value) return tostring(value or ""):lower():gsub("^%s+",""):gsub("%s+$","") end
-    local function matches(prompt)
-        if not prompt or not prompt.Parent or not prompt:IsA("ProximityPrompt") or not prompt.Enabled then return false end
-        return normalized(prompt.ActionText)=="claim reward" and normalized(prompt.ObjectText):match("^%a+ boss chest$")~=nil
+-- Under-arena fight -> safe surface exit -> chest acknowledgement -> return.
+do
+    local createCycle=(function()
+-- Orchestrates existing modes. Combat and movement use the existing adapter; rewards own movement until acknowledgement.
+return function(api)
+    local s={enabled=false,phase="off",generation=0,nextScan=0,busy=false,seen=setmetatable({},{__mode="k"})}
+    local labels={off="Выключено",waiting="Жду босса · остальные функции работают",fighting="Бой с боссом · при силе 0 сначала гантель",rewards="Жду сундук · открываю награду",returning="Возвращаю прежние занятия"}
+    local function phase(value)
+        s.phase=value
+        api.show(labels[value],s.enabled)
     end
-    local function allowed()
-        return state.alive and runtime.alive and runtime.authorized and runtime.rewardsEnabled and not runtime.remotePaused
-            and runtime.boss and runtime.boss.enabled
+    function s:Cancel(restore)
+        self.generation+=1
+        self.enabled=false
+        api.cancelClaim()
+        if self.snapshot then api.stop() end
+        self.target=nil
+        self.missingSince=nil
+        if restore and self.snapshot then phase("returning") else self.snapshot=nil phase("off") end
     end
-    local function targetAlive()
-        local boss=runtime.boss
-        if not boss or not boss.target then return false end
-        local info=runtime.bossAdapter.info(boss.target)
-        return info and info.alive
+    function s:SetEnabled(value)
+        if value==self.enabled then return end
+        if not value then self:Cancel(true) return end
+        if self.snapshot then return end
+        self.generation+=1
+        self.enabled=true
+        self.nextScan=0
+        phase("waiting")
     end
-    local function anchorOf(prompt)
-        local obj=prompt.Parent
-        if obj:IsA("Attachment") then return obj.WorldPosition end
-        if obj:IsA("BasePart") then return obj.Position end
-        if obj:IsA("Model") then return obj:GetPivot().Position end
-        return nil
-    end
-    function state:Track(prompt)
-        if not prompt:IsA("ProximityPrompt") or self.tracked[prompt] then return end
-        local entry={tries=0,nextAt=0,wasEnabled=prompt.Enabled,connections={}}
-        self.tracked[prompt]=entry
-        table.insert(entry.connections,prompt:GetPropertyChangedSignal("Enabled"):Connect(function()
-            if prompt.Enabled and not entry.wasEnabled then entry.tries=0 entry.nextAt=0 end
-            entry.wasEnabled=prompt.Enabled
-        end))
-        table.insert(entry.connections,prompt.AncestryChanged:Connect(function()
-            if not prompt:IsDescendantOf(api.world) then
-                for _,conn in ipairs(entry.connections) do conn:Disconnect() end
-                self.tracked[prompt]=nil
+    local function step()
+        if not api.alive() then s:Cancel(false) return end
+        if not s.enabled and s.phase~="returning" then return end
+        if not api.ready() then return end
+        local now=api.now()
+        local generation=s.generation
+        local function current()return api.alive() and s.generation==generation end
+        if s.phase=="waiting" then
+            if now<s.nextScan or not api.idle() then return end
+            s.nextScan=now+3
+            local target
+            for _,candidate in ipairs(api.scan()) do
+                if not s.seen[candidate.model] and api.targetAlive(candidate.model) then target=candidate.model break end
             end
-        end))
+            if not target then return end
+            s.snapshot=api.capture()
+            if not s.snapshot then return end
+            s.target=target
+            s.missingSince=nil
+            api.rememberBoss(target,s.snapshot)
+            phase("fighting")
+            local started=api.start(current)
+            if not current() then return end
+            if not started then
+                s.enabled=false
+                api.stop()
+                phase("returning")
+            end
+        elseif s.phase=="fighting" then
+            -- Explicit user activity wins; never restore over a newly selected mode.
+            if api.conflict() then s:Cancel(false) return end
+            if not api.running() then
+                s.enabled=false
+                phase("returning")
+                return
+            end
+            if api.targetAlive(s.target) then
+                api.rememberBoss(s.target,s.snapshot)
+                s.missingSince=nil
+                return
+            end
+            s.missingSince=s.missingSince or now
+            if now-s.missingSince<1 then return end
+            s.seen[s.target]=true
+            -- A boss defeated while we were still warming up has no reward to collect.
+            if not api.engaged(s.target) then
+                api.stop()
+                phase("returning")
+                return
+            end
+            api.stop(false) -- release moves onto the surface before removing combat physics
+            s.nextRewardNotice=now+15
+            phase(api.rewardsEnabled and not api.rewardsEnabled() and "returning" or "rewards")
+        elseif s.phase=="rewards" then
+            if api.rewardsEnabled and not api.rewardsEnabled() then
+                api.cancelClaim()
+                phase("returning")
+                return
+            end
+            if api.conflict() then s:Cancel(false) return end
+            local result=api.claim(function()return current() and not api.conflict()end,s.snapshot)
+            if not current() then return end
+            -- Wait at the chest across retries and delayed server responses.
+            -- A timeout or successful pcall is never treated as an opened chest.
+            if result=="closed" then
+                phase("returning")
+            elseif now>=s.nextRewardNotice then
+                s.nextRewardNotice=now+15
+                api.show(result=="missing" and "Жду появления сундука босса"
+                    or "Сундук ещё не открылся — повторяю у сундука",s.enabled)
+            end
+        elseif s.phase=="returning" then
+            if api.conflict() then s:Cancel(false) return end
+            local snapshot=s.snapshot
+            s.snapshot=nil -- consume once, also if restoring encounters a failure
+            local restored=not snapshot or api.restore(snapshot,current)
+            if not current() then return end
+            if restored==false then s.enabled=false end
+            s.target=nil
+            s.nextScan=api.now()+3
+            phase(s.enabled and "waiting" or "off")
+        end
     end
-    function state:Try(prompt,entry)
-        if not allowed() or self.busy or not matches(prompt) or targetAlive() then return false end
-        if entry.tries>=3 or api.now()<entry.nextAt then return false end
-        local root=api.root()
-        local position=anchorOf(prompt)
-        local character=api.player.Character
-        local humanoid=character and character:FindFirstChildWhichIsA("Humanoid")
-        if not root or not position or not humanoid or humanoid.Health<=0 then return false end
-        local hold=tonumber(prompt.HoldDuration) or 0
-        if hold<0 or hold>5 then return false end
+    function s:Tick()
+        if self.busy then return end
         self.busy=true
-        local oldPause=runtime.networkPaused
-        -- Only after the fight. Pause acquisition briefly; the combat adapter is unchanged.
-        runtime.networkPaused=true
-        runtime.bossAdapter.release(false)
-        runtime.boss.target=nil
-        local origin=root.CFrame
-        local moved=false
-        self.cleanup=function()
-            -- Also runs synchronously on close/reload, never after a new runtime takes over.
-            if moved and api.root()==root and root.Parent and humanoid.Health>0 then
-                pcall(function()
-                    root.CFrame=origin
-                    root.AssemblyLinearVelocity=api.vector.new(0,0,0)
-                    root.AssemblyAngularVelocity=api.vector.new(0,0,0)
-                end)
-            end
-            runtime.networkPaused=oldPause
-            self.busy=false
-            self.cleanup=nil
-        end
-        entry.tries+=1 entry.nextAt=api.now()+({3,8,30})[entry.tries]
-        local function current() return allowed() and api.root()==root and root.Parent and humanoid.Health>0 and matches(prompt) end
-        local ok=pcall(function()
-            if not current() then return end
-            local range=math.max(1,tonumber(prompt.MaxActivationDistance) or 10)
-            if (root.Position-position).Magnitude>range then
-                -- Close enough to the actual chest, never a guessed arena coordinate.
-                local point=position+api.vector.new(0,math.min(2,range*0.25),0)
-                root.CFrame=api.frame.new(point)*(origin-origin.Position)
-                root.AssemblyLinearVelocity=api.vector.new(0,0,0)
-                moved=true
-                api.wait(0.2)
-            end
-            if not current() then return end
-            if api.fire then
-                -- Respect HoldDuration. No duplicate native fallback after a successful call.
-                local fired=pcall(api.fire,prompt,hold)
-                if fired then return end
-            end
-            prompt:InputHoldBegin()
-            local untilAt=api.now()+math.max(0.05,hold)
-            repeat api.wait(0.05) until api.now()>=untilAt or not current()
-            pcall(function()prompt:InputHoldEnd()end)
-        end)
-        -- Give replicated prompt state time to settle before a bounded retry.
-        if state.alive then api.wait(0.4) end
-        if self.cleanup then self.cleanup() end
-        return ok
-    end
-    function state:Tick()
-        if not allowed() or self.busy or api.now()<self.nextTick then return end
-        self.nextTick=api.now()+1
-        local living=targetAlive()
-        if living then self.sawBoss=true return end
-        if self.sawBoss then
-            self.sawBoss=false
-            for _,entry in pairs(self.tracked) do entry.tries=0 entry.nextAt=0 end
-        end
-        for prompt,entry in pairs(self.tracked) do
-            if matches(prompt) and entry.tries<3 and api.now()>=entry.nextAt then
-                if self:Try(prompt,entry) then break end
-            end
+        local ok,problem=pcall(step)
+        self.busy=false
+        if not ok then
+            self.enabled=false
+            api.cancelClaim()
+            api.stop()
+            if self.snapshot then phase("returning") else phase("off") end
+            api.report(tostring(problem))
         end
     end
-    function state:Destroy()
-        self.alive=false
-        if self.cleanup then self.cleanup() end
-        for _,conn in ipairs(self.connections) do conn:Disconnect() end
-        for _,entry in pairs(self.tracked) do for _,conn in ipairs(entry.connections) do conn:Disconnect() end end
-        self.tracked={}
-    end
-    for _,obj in ipairs(api.world:GetDescendants()) do state:Track(obj) end
-    table.insert(state.connections,api.world.DescendantAdded:Connect(function(obj)state:Track(obj)end))
-    api.spawn(function()
-        while state.alive and runtime.alive do
-            pcall(function()state:Tick()end)
-            api.wait(0.5)
-        end
-    end)
-    return state
+    return s
 end
 
-end)()
-q.rewardCollector=rewards(q,{world=workspace,player=j,now=os.clock,wait=task.wait,spawn=task.spawn,
-    connect=aJ,fire=type(fireproximityprompt)=="function" and fireproximityprompt or nil,root=aO,vector=Vector3,frame=CFrame})
+    end)()
+    local prompts=setmetatable({},{__mode="k"})
+    local function track(obj)
+        if obj:IsA("ProximityPrompt") and not prompts[obj]then prompts[obj]={tries=0,nextAt=0}end
+    end
+    for _,obj in ipairs(workspace:GetDescendants())do track(obj)end
+    aJ(workspace.DescendantAdded:Connect(track))
+    local function matches(prompt)
+        if not prompt.Parent or not prompt.Enabled then return false end
+        local action=tostring(prompt.ActionText):lower():gsub("^%s+",""):gsub("%s+$","")
+        local object=tostring(prompt.ObjectText):lower():gsub("^%s+",""):gsub("%s+$","")
+        return action=="claim reward" and (object=="boss chest" or object:match("^%a+ boss chest$")~=nil)
+    end
+    -- Kept separate so retry/cancellation behavior can be checked without a live game.
+    local createChestCollector=(function()
+return function(api)
+    local state={prompt=nil,attempted=false,nextAt=0,tries=0,closed=false}
+    function state:Cancel()
+        if self.prompt then pcall(api.endHold,self.prompt) end
+        self.prompt=nil
+        self.attempted=false
+        self.nextAt=0
+        self.tries=0
+        self.closed=false
+        self.character=nil
+    end
+    function state:Step(current,snapshot)
+        local character=api.character()
+        -- A disabled prompt after death is not acknowledgement for the new character.
+        if self.character and self.character~=character then self:Cancel() end
+        self.character=character
+        if not current() or not api.ready() then return "pending" end
+        if self.closed then return "closed" end
+        if self.prompt and self.attempted and api.closed(self.prompt) then
+            pcall(api.endHold,self.prompt)
+            self.closed=true
+            return "closed"
+        end
+        if not self.prompt or not api.matches(self.prompt) then
+            self.prompt=api.find(snapshot)
+            self.attempted=false
+            self.nextAt=0
+            self.tries=0
+        end
+        local prompt=self.prompt
+        if not prompt then return "missing" end
+        local function valid()
+            return current() and api.ready() and api.character()==character and self.prompt==prompt
+        end
+        -- Stay next to the actual prompt between attempts; restore runs once, after closure.
+        if not api.move(prompt) or not valid() then return "pending" end
+        if api.now()<self.nextAt then return "pending" end
+        api.wait(0.3) -- allow the server to observe the teleport before activation
+        if not valid() or not api.matches(prompt) or not api.inRange(prompt) then return "pending" end
+        self.tries+=1
+        self.nextAt=api.now()+2
+        self.attempted=true
+        local ok,problem=pcall(api.interact,prompt,self.tries,valid)
+        pcall(api.endHold,prompt)
+        if not valid() then return "pending" end
+        if not ok then
+            self.attempted=false
+            api.report(tostring(problem))
+        end
+        -- Closure can arrive on a later tick; retain the attempted prompt until then.
+        if self.attempted and api.closed(prompt) then self.closed=true return "closed" end
+        return "pending"
+    end
+    return state
+end
+    end)()
+    local function promptPosition(prompt)
+        local parent=prompt.Parent
+        if not parent then return nil end
+        if parent:IsA("Attachment") then return parent.WorldPosition end
+        if parent:IsA("BasePart") then return parent.Position end
+        if parent:IsA("Model") then return parent:GetPivot().Position end
+    end
+    local function promptRange(prompt)return math.max(0,tonumber(prompt.MaxActivationDistance)or 10)end
+    local function inRange(prompt)
+        local root,position=aO(),promptPosition(prompt)
+        return root and position and (root.Position-position).Magnitude<=promptRange(prompt)
+    end
+    local function moveToChest(prompt)
+        local root,humanoid,position=aO(),aN(),promptPosition(prompt)
+        if not root or not humanoid or humanoid.Health<=0 or not position then return false end
+        local range=promptRange(prompt)
+        if range<=0 then return false end
+        local standing
+        local radius=math.min(4,range*0.45)
+        for _, offset in ipairs({Vector3.new(radius,0,0),Vector3.new(-radius,0,0),
+            Vector3.new(0,0,radius),Vector3.new(0,0,-radius),Vector3.zero})do
+            local candidate=q.bossStandingCF(position+offset)
+            if candidate and (candidate.Position-position).Magnitude<=range*0.95 then
+                standing=candidate
+                break
+            end
+        end
+        -- Missing ground is a retry, not permission to teleport inside/below the map.
+        if not standing then return false end
+        if (root.Position-standing.Position).Magnitude<=0.75 then return inRange(prompt) end
+        local anchored=root.Anchored
+        root.Anchored=true
+        humanoid.Sit=false
+        root.CFrame=standing
+        root.AssemblyLinearVelocity=Vector3.zero
+        root.AssemblyAngularVelocity=Vector3.zero
+        root.Anchored=anchored
+        return inRange(prompt)
+    end
+    local collector=createChestCollector({
+        now=os.clock,wait=task.wait,character=aM,
+        ready=function()local h=aN()return q.alive and q.authorized and not q.remotePaused and not q.networkPaused and h and h.Health>0 and aO()~=nil end,
+        matches=matches,closed=function(prompt)return not prompt.Parent or not prompt.Enabled end,
+        find=function(snapshot)
+            local root=aO()
+            local origin=snapshot and snapshot.bossPosition or root and root.Position
+            local best,bestDistance=nil,math.huge
+            for prompt in pairs(prompts)do
+                if not prompt.Parent then prompts[prompt]=nil
+                elseif matches(prompt)then
+                    local position=promptPosition(prompt)
+                    local distance=position and origin and (position-origin).Magnitude
+                    if distance and distance<bestDistance then best,bestDistance=prompt,distance end
+                end
+            end
+            return best
+        end,
+        move=moveToChest,inRange=inRange,
+        endHold=function(prompt)prompt:InputHoldEnd()end,
+        interact=function(prompt,attempt,valid)
+            local hold=tonumber(prompt.HoldDuration)or 0
+            if hold~=hold or hold<0 or hold==math.huge then error("Некорректное время открытия сундука")end
+            local fired=false
+            -- Alternate with native holding when a helper call succeeds but opens nothing.
+            if attempt%2==1 and type(fireproximityprompt)=="function" then
+                fired=pcall(fireproximityprompt,prompt,hold)
+            end
+            if not valid() or not matches(prompt) then return end
+            if not fired then prompt:InputHoldBegin()end
+            local deadline=os.clock()+math.max(0.1,hold)+0.15
+            repeat
+                task.wait(0.05)
+                if not valid() or not matches(prompt) then return end
+                if not moveToChest(prompt) then return end
+            until os.clock()>=deadline
+        end,
+        report=function(problem)q.bossCycleError=problem end,
+    })
+    local function cancelClaim()collector:Cancel()end
+    local function claim(current,snapshot)return collector:Step(current,snapshot)end
+    local function conflict()
+        local other=env.RockBugRuntime
+        return q.bossAdapter.conflict() or other and other.alive and
+            (other.boss and other.boss.enabled or other.bossCycle and other.bossCycle.enabled
+                or other.bugActive or other.trainActive or other.kingLock or other.lockPosition or other.machineActive)
+    end
+    q.bossCycle=createCycle({
+        alive=function()return q.alive end,now=os.clock,
+        ready=function()local h=aN()return q.authorized and not q.remotePaused and not q.networkPaused and h and h.Health>0 and aO()~=nil end,
+        idle=function()return not q.boss.enabled and not q.equipInFlight and not conflict()end,
+        scan=q.bossAdapter.scan,
+        targetAlive=function(model)local info=q.bossAdapter.info(model)return info and info.alive end,
+        engaged=function(model)return q.boss.engagedTarget==model end,
+        rewardsEnabled=function()return q.rewardsEnabled end,
+        capture=function()
+            local root=aO()
+            if not root then return nil end
+            local tool=aM():FindFirstChildWhichIsA("Tool")
+            return {origin=root.CFrame,tool=tool}
+        end,
+        rememberBoss=function(model,snapshot)
+            local info=q.bossAdapter.info(model)
+            if info then snapshot.bossPosition=q.bossFollowPosition(info)end
+        end,
+        restore=function(snapshot,current)
+            local root=aO()
+            if not current() or not root then return false end
+            local anchored=root.Anchored
+            root.Anchored=true
+            root.CFrame=snapshot.origin
+            root.AssemblyLinearVelocity=Vector3.zero
+            root.AssemblyAngularVelocity=Vector3.zero
+            root.Anchored=anchored
+            if snapshot.tool and snapshot.tool.Parent and current()then c_(snapshot.tool)end
+            return current()
+        end,
+        claim=claim,cancelClaim=cancelClaim,
+        start=function(current)
+            collector:Cancel()
+            local started=q.boss:Start()
+            if not current()then q.boss:Stop(nil,true)return false end
+            return started
+        end,
+        stop=function(retreat)q.boss:Stop("Возврат после боя",retreat~=false)end,
+        conflict=conflict,running=function()return q.boss.enabled end,
+        show=function(message)q.bossCycleStatus=message if q.refreshBossUI then q.refreshBossUI()end end,
+        report=function(problem)q.bossCycleError=problem warn("[RockBugBoss] "..problem)end,
+    })
+    q.bossAdapter.awaitingReward=function()
+        local cycle=q.bossCycle
+        if not cycle.enabled or cycle.phase~="fighting" or not cycle.target then return false end
+        local info=q.bossAdapter.info(cycle.target)
+        return not info or not info.alive
+    end
+    function q:StartBoss()
+        if not self.authorized or self.remotePaused or conflict()then return false end
+        self.bossCycle:SetEnabled(true)
+        self.bossCycle:Tick()
+        return self.bossCycle.enabled
+    end
+    function q:StopBoss()
+        self.bossCycle:Cancel(true)
+        self.boss:Stop("Выключено",true)
+        self.bossCycle:Tick()
+    end
+    q.rewardCollector={Destroy=function()q.bossCycle:Cancel(false)collector:Cancel()end}
+    task.spawn(function()
+        while q.alive do
+            if not q.authorized or q.remotePaused then
+                if q.bossCycle.enabled or q.bossCycle.snapshot then q.bossCycle:Cancel(false)end
+            else q.bossCycle:Tick()end
+            task.wait(0.25)
+        end
+    end)
+end
 
 local function viewport() return workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize or Vector2.new(800,600) end
 local function clampPosition(frame,x,y)
@@ -1317,11 +1669,11 @@ task.spawn(function()
     local commandVersion=0
     while q.alive do
         if q.authorized then
-            local result=post(sessionEndpoint,{action="heartbeat",session_id=sessionId,player_user_id=j.UserId,player_name=j.Name,display_name=j.DisplayName,version="Boss 1.0",place_id=game.PlaceId,job_id=game.JobId,state=q.remotePaused and "paused" or "running",details={device=input.TouchEnabled and "mobile" or "desktop"}},sessionHeaders)
+            local result=post(sessionEndpoint,{action="heartbeat",session_id=sessionId,player_user_id=j.UserId,player_name=j.Name,display_name=j.DisplayName,version="Boss 1.1",place_id=game.PlaceId,job_id=game.JobId,state=q.remotePaused and "paused" or "running",details={device=input.TouchEnabled and "mobile" or "desktop"}},sessionHeaders)
             if not q.alive then return end
             if result and result.command and tonumber(result.command_version) and result.command_version>commandVersion then
                 commandVersion=result.command_version
-                if result.command=="pause" then q.resumeBoss=q.boss.enabled q:StopBoss() q.remotePaused=true
+                if result.command=="pause" then q.resumeBoss=q.boss.enabled or q.bossCycle.enabled q:StopBoss() q.remotePaused=true
                 elseif result.command=="resume" then q.remotePaused=false if q.resumeBoss and q.authorized then q:StartBoss() end q.resumeBoss=false
                 elseif result.command=="stop" then q:Destroy() end
                 post(sessionEndpoint,{action="ack",session_id=sessionId,command_version=commandVersion,state=not q.alive and "stopped" or q.remotePaused and "paused" or "running"},sessionHeaders)
