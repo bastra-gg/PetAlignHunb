@@ -1,44 +1,36 @@
--- BGS Legacy Hub loader -> v0.4 core + v0.4.6 feature patch + v0.4.7 version patch
+-- BGS Legacy Hub loader -> v0.4 core + v0.4.6 island patch + v0.4.8 coin farm fix
 local CORE_URL="https://raw.githubusercontent.com/bastra-gg/PetAlignHunb/main/BGS_Legacy_Hub_v0_1/BGS_Legacy_Hub_v0_4_core.lua"
-local PATCH_URL="https://raw.githubusercontent.com/bastra-gg/PetAlignHunb/main/BGS_Legacy_Hub_v0_1/BGS_RealTP_CurrentIslandCollect_v0_4_6.lua"
-local VERSION_PATCH_URL="https://raw.githubusercontent.com/bastra-gg/PetAlignHunb/main/BGS_Legacy_Hub_v0_1/BGS_VersionPatch_v0_4_7.lua"
+local ISLAND_PATCH_URL="https://raw.githubusercontent.com/bastra-gg/PetAlignHunb/main/BGS_Legacy_Hub_v0_1/BGS_RealTP_CurrentIslandCollect_v0_4_6.lua"
+local COIN_PATCH_URL="https://raw.githubusercontent.com/bastra-gg/PetAlignHunb/main/BGS_Legacy_Hub_v0_1/BGS_CoinFarmFix_v0_4_8.lua"
 
-local okCore,coreSource=pcall(function() return game:HttpGet(CORE_URL) end)
-if not okCore then error("BGS loader HttpGet failed: "..tostring(coreSource),0) end
-local coreChunk,coreCompileError=loadstring(coreSource)
-if not coreChunk then error("BGS core compile failed: "..tostring(coreCompileError),0) end
-local S=coreChunk()
-
-local okPatch,patchSource=pcall(function() return game:HttpGet(PATCH_URL) end)
-if okPatch then
-    local patchChunk,patchCompileError=loadstring(patchSource)
-    if patchChunk then
-        local patch=patchChunk()
-        if type(patch)=="function" then
-            local okApply,result=pcall(patch,S)
-            if okApply and result then S=result elseif not okApply then warn("BGS v0.4.6 patch apply failed: "..tostring(result)) end
-        end
-    else
-        warn("BGS v0.4.6 patch compile failed: "..tostring(patchCompileError))
+local function loadRemote(url,label,required)
+    local ok,source=pcall(function() return game:HttpGet(url) end)
+    if not ok then
+        if required then error(label.." HttpGet failed: "..tostring(source),0) end
+        warn(label.." HttpGet failed: "..tostring(source))
+        return nil
     end
-else
-    warn("BGS v0.4.6 patch HttpGet failed: "..tostring(patchSource))
+    local chunk,compileError=loadstring(source)
+    if not chunk then
+        if required then error(label.." compile failed: "..tostring(compileError),0) end
+        warn(label.." compile failed: "..tostring(compileError))
+        return nil
+    end
+    return chunk()
 end
 
-local okVersion,versionSource=pcall(function() return game:HttpGet(VERSION_PATCH_URL) end)
-if okVersion then
-    local versionChunk,versionCompileError=loadstring(versionSource)
-    if versionChunk then
-        local versionPatch=versionChunk()
-        if type(versionPatch)=="function" then
-            local okApply,result=pcall(versionPatch,S)
-            if okApply and result then S=result elseif not okApply then warn("BGS v0.4.7 version patch apply failed: "..tostring(result)) end
-        end
-    else
-        warn("BGS v0.4.7 version patch compile failed: "..tostring(versionCompileError))
-    end
-else
-    warn("BGS v0.4.7 version patch HttpGet failed: "..tostring(versionSource))
+local S=loadRemote(CORE_URL,"BGS core",true)
+
+local islandPatch=loadRemote(ISLAND_PATCH_URL,"BGS v0.4.6 island patch",false)
+if type(islandPatch)=="function" then
+    local ok,result=pcall(islandPatch,S)
+    if ok and result then S=result elseif not ok then warn("BGS v0.4.6 island patch apply failed: "..tostring(result)) end
+end
+
+local coinPatch=loadRemote(COIN_PATCH_URL,"BGS v0.4.8 coin patch",false)
+if type(coinPatch)=="function" then
+    local ok,result=pcall(coinPatch,S)
+    if ok and result then S=result elseif not ok then warn("BGS v0.4.8 coin patch apply failed: "..tostring(result)) end
 end
 
 return S
