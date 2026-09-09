@@ -1,4 +1,4 @@
--- RockBug Boss 1.1: standalone UI + account-bound access.
+-- RockBug Boss 1.2: standalone UI + account-bound access.
 -- Shares under-arena combat, a safe exit to the surface, strength warmup and the chest cycle with the test hub.
 -- A client-side Lua gate is not tamper-proof DRM. UserId alone never grants access.
 if not game:IsLoaded() then game.Loaded:Wait() end
@@ -1370,11 +1370,36 @@ end
     end
     for _,obj in ipairs(workspace:GetDescendants())do track(obj)end
     aJ(workspace.DescendantAdded:Connect(track))
+    local function hasAny(text,words)
+        text=tostring(text or ""):lower()
+        for _,word in ipairs(words)do
+            if text:find(word,1,true)then return true end
+        end
+        return false
+    end
+    local function promptContext(prompt)
+        local parts={tostring(prompt.Name),tostring(prompt.ActionText),tostring(prompt.ObjectText)}
+        local node=prompt.Parent
+        for _=1,7 do
+            if not node then break end
+            table.insert(parts,tostring(node.Name))
+            node=node.Parent
+        end
+        return table.concat(parts," ")
+    end
     local function matches(prompt)
         if not prompt.Parent or not prompt.Enabled then return false end
-        local action=tostring(prompt.ActionText):lower():gsub("^%s+",""):gsub("%s+$","")
-        local object=tostring(prompt.ObjectText):lower():gsub("^%s+",""):gsub("%s+$","")
-        return action=="claim reward" and (object=="boss chest" or object:match("^%a+ boss chest$")~=nil)
+        local action=tostring(prompt.ActionText)
+        local object=tostring(prompt.ObjectText)
+        local context=promptContext(prompt)
+        local reward=hasAny(action.." "..object,{"claim reward","claim","reward","collect","open","loot","prize"})
+            or context:find("Наград",1,true) or context:find("награ",1,true)
+            or context:find("Получ",1,true) or context:find("получ",1,true)
+            or context:find("Забра",1,true) or context:find("забра",1,true)
+        local chest=hasAny(object.." "..context,{"boss chest","chest","boss"})
+            or context:find("Сундук",1,true) or context:find("сундук",1,true)
+            or context:find("Босс",1,true) or context:find("босс",1,true)
+        return reward~=nil and chest~=nil
     end
     -- Kept separate so retry/cancellation behavior can be checked without a live game.
     local createChestCollector=(function()
@@ -1435,11 +1460,24 @@ return function(api)
 end
     end)()
     local function promptPosition(prompt)
-        local parent=prompt.Parent
-        if not parent then return nil end
-        if parent:IsA("Attachment") then return parent.WorldPosition end
-        if parent:IsA("BasePart") then return parent.Position end
-        if parent:IsA("Model") then return parent:GetPivot().Position end
+        local node=prompt.Parent
+        for _=1,7 do
+            if not node then return nil end
+            if node:IsA("Attachment") then return node.WorldPosition end
+            if node:IsA("BasePart") then return node.Position end
+            if node:IsA("Model") then return node:GetPivot().Position end
+            node=node.Parent
+        end
+        return nil
+    end
+    local function chestModel(prompt)
+        local node=prompt.Parent
+        for _=1,7 do
+            if not node then return nil end
+            if node:IsA("Model") and hasAny(node.Name,{"boss chest","chest"}) then return node end
+            node=node.Parent
+        end
+        return nil
     end
     local function promptRange(prompt)return math.max(0,tonumber(prompt.MaxActivationDistance)or 10)end
     local function inRange(prompt)
@@ -1451,17 +1489,32 @@ end
         if not root or not humanoid or humanoid.Health<=0 or not position then return false end
         local range=promptRange(prompt)
         if range<=0 then return false end
+        -- The surface exit often already leaves the character inside the prompt.
+        -- Do not require a second raycast before trying the interaction.
+        if inRange(prompt)then return true end
         local standing
         local radius=math.min(4,range*0.45)
+        local exclude=chestModel(prompt)
         for _, offset in ipairs({Vector3.new(radius,0,0),Vector3.new(-radius,0,0),
             Vector3.new(0,0,radius),Vector3.new(0,0,-radius),Vector3.zero})do
-            local candidate=q.bossStandingCF(position+offset)
+            local candidate=q.bossStandingCF(position+offset,exclude)
             if candidate and (candidate.Position-position).Magnitude<=range*0.95 then
                 standing=candidate
                 break
             end
         end
-        -- Missing ground is a retry, not permission to teleport inside/below the map.
+        -- If the chest blocks the floor ray, retain the already verified arena
+        -- height and move only horizontally. This cannot send the player below it.
+        if not standing and math.abs(root.Position.Y-position.Y)<=range+6 then
+            for _,offset in ipairs({Vector3.new(radius,0,0),Vector3.new(-radius,0,0),
+                Vector3.new(0,0,radius),Vector3.new(0,0,-radius),Vector3.zero})do
+                local point=Vector3.new(position.X+offset.X,root.Position.Y,position.Z+offset.Z)
+                if (point-position).Magnitude<=range*0.95 then
+                    standing=CFrame.new(point)*(root.CFrame-root.Position)
+                    break
+                end
+            end
+        end
         if not standing then return false end
         if (root.Position-standing.Position).Magnitude<=0.75 then return inRange(prompt) end
         local anchored=root.Anchored
@@ -1496,19 +1549,22 @@ end
         interact=function(prompt,attempt,valid)
             local hold=tonumber(prompt.HoldDuration)or 0
             if hold~=hold or hold<0 or hold==math.huge then error("Некорректное время открытия сундука")end
-            local fired=false
-            -- Alternate with native holding when a helper call succeeds but opens nothing.
-            if attempt%2==1 and type(fireproximityprompt)=="function" then
-                fired=pcall(fireproximityprompt,prompt,hold)
+            -- A successful pcall only means that the executor accepted the helper;
+            -- it does not prove the server claimed the chest. Try the native hold
+            -- too when the prompt remains enabled.
+            if type(fireproximityprompt)=="function" then
+                pcall(fireproximityprompt,prompt)
+                task.wait(0.12)
             end
             if not valid() or not matches(prompt) then return end
-            if not fired then prompt:InputHoldBegin()end
+            prompt:InputHoldBegin()
             local deadline=os.clock()+math.max(0.1,hold)+0.15
             repeat
                 task.wait(0.05)
                 if not valid() or not matches(prompt) then return end
                 if not moveToChest(prompt) then return end
             until os.clock()>=deadline
+            prompt:InputHoldEnd()
         end,
         report=function(problem)q.bossCycleError=problem end,
     })
