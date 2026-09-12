@@ -135,6 +135,79 @@ check("Out of range does not interact",function()
     local s,_,_,collector=chestCase()s.range=false
     collector:Step(function()return true end,{})assert(s.interactions==0)
 end)
+check("Rendered chest button is pressed before proximity helpers",function()
+    local s,p,api=chestCase()
+    api.click=function(target,current)assert(target==p and current())s.click=true s.ack=true end
+    api.fire=function()error("must not send after reward")end
+    interactChest(api,p,function()return true end)
+    assert(s.click and not s.begins)
+end)
+local function buttonCase()
+    local s={time=0,ack=false,valid=true,visible=true,down=0,up=0}
+    local button={}
+    local api={find=function()return button end,visible=function()return s.visible end,
+        center=function()return 417,382 end,acknowledged=function()return s.ack end,
+        matches=function()return true end,inRange=function()return true end,
+        now=function()return s.time end,wait=function(dt)s.time+=dt if s.onwait then s.onwait()end end,
+        down=function(x,y)assert(x==417 and y==382)s.down+=1 if s.throw then error("input blocked")end end,
+        up=function(x,y)assert(x==417 and y==382)s.up+=1 end,
+        setRelease=function(fn)s.release=fn end,clearRelease=function(fn)if s.release==fn then s.release=nil end end}
+    return s,api,{HoldDuration=0.6},function()return s.valid end
+end
+check("Screen press holds for prompt duration and releases once",function()
+    local s,api,p,valid=buttonCase()
+    assert(pressChestButton(api,p,valid))
+    assert(s.down==1 and s.up==1 and s.time>=1.05 and not s.release and not s.ack)
+end)
+check("Stop immediately releases an in-flight screen press",function()
+    local s,api,p,valid=buttonCase()
+    s.onwait=function()s.valid=false s.release()end
+    pressChestButton(api,p,valid)
+    assert(s.down==1 and s.up==1 and s.time<0.1 and not s.release)
+end)
+check("Reward acknowledgement ends screen hold without double release",function()
+    local s,api,p,valid=buttonCase()
+    s.onwait=function()s.ack=true end
+    pressChestButton(api,p,valid)
+    assert(s.down==1 and s.up==1 and s.time<0.6)
+end)
+check("Input failure still sends mouse-up and clears cancellation hook",function()
+    local s,api,p,valid=buttonCase()s.throw=true
+    assert(not pcall(pressChestButton,api,p,valid))
+    assert(s.down==1 and s.up==1 and not s.release)
+end)
+check("Hidden or missing reward button is never clicked",function()
+    local s,api,p,valid=buttonCase()s.visible=false
+    assert(not pressChestButton(api,p,valid) and s.down==0)
+    s.visible=true api.find=function()return nil end
+    assert(not pressChestButton(api,p,valid) and s.down==0)
+end)
+check("Find mobile button by chest adornee, excluding other chests and own UI",function()
+    local function gui(class,parent)
+        local obj=node(class,parent)
+        obj.Visible=true obj.Enabled=true obj.Active=true obj.AbsoluteSize={X=150,Y=60}
+        function obj:IsA(kind)
+            return self.ClassName==kind or kind=="GuiButton" and (class=="TextButton" or class=="ImageButton")
+                or kind=="GuiObject" and (class=="TextButton" or class=="ImageButton" or class=="TextLabel" or class=="Frame")
+                or kind=="LayerCollector" and (class=="BillboardGui" or class=="ScreenGui")
+        end
+        return obj
+    end
+    local root=node("CoreGui",nil)
+    local owner=node("Part",workspace)
+    local p={Parent=owner,ActionText="Claim Reward"}
+    local wrong=gui("BillboardGui",root)wrong.Adornee=node("Part",workspace)
+    local other=gui("TextButton",wrong)other.Text="Claim Reward"
+    local card=gui("BillboardGui",root)card.Adornee=owner
+    local frame=gui("Frame",card)
+    local label=gui("TextLabel",frame)label.Text="Получить награду"
+    local button=gui("TextButton",frame)button.Text=""
+    assert(findChestButton({root},p,nil)==button)
+    frame.Visible=false assert(not findChestButton({root},p,nil))frame.Visible=true
+    assert(not findChestButton({root},p,card))
+    card.Enabled=false assert(not findChestButton({root},p,nil))card.Enabled=true
+    button.Parent=nil assert(not findChestButton({root},p,nil))
+end)
 local function cycleCase()
     local state={time=0,restores=0,reports=0}
     local api={now=function()return state.time end,alive=function()return true end,ready=function()return true end,
