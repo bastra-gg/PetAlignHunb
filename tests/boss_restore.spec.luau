@@ -40,4 +40,11 @@ check("Completed rebirth target remains stopped",function()
     local snapshot=reset(true)snapshot.fields.rebirthGoalEnabled=true snapshot.fields.rebirthGoalCompleted=true
     assert(restore(snapshot,function()return running end))assert(not q.autoRebirth)
 end)
+check("Progressing strength warmup may exceed the old seating timeout",function()
+    local snapshot=reset(true)seatAt=35
+    q.machineRecovery={phase="warming",progressAt=0}
+    mutation=function()q.machineRecovery.progressAt=time end
+    assert(restore(snapshot,function()return running end))
+    assert(q.autoRebirth and time>=35.4 and q.machineActive)
+end)
 print(tostring(count).." restore integration scenarios passed")

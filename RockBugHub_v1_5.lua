@@ -4,7 +4,7 @@ pcall(function()i=game:GetService("NetworkClient")end)if not game:IsLoaded()then
 local j=a.LocalPlayer;
 while not j do task.wait()j=a.LocalPlayer end;
 local k=j:WaitForChild("PlayerGui",60)if not k then warn("[RockBugHub] PlayerGui was not created")pcall(function()g:SetCore("SendNotification",{Title="RockBugHub",Text="Ошибка запуска: PlayerGui не найден",Duration=8})end)return end;
-local l="RockBugHub_TEST_v4_25_BOSS_T31"local m="4.25BOSS-T31"local n=type(getgenv)=="function"and getgenv()or _G;
+local l="RockBugHub_TEST_v4_25_BOSS_T32"local m="4.25BOSS-T32"local n=type(getgenv)=="function"and getgenv()or _G;
 do
     -- Retire the old experimental windows and their listeners on hot reload.
     for _, key in ipairs({"RockBugTradeDiagnostics", "RockBugMiniTransfer"}) do
@@ -493,6 +493,32 @@ local eh=eg()if not eh then return false end;
 q.remoteTokens=q.remoteTokens-1;
 local D=B(function()if en then eh:FireServer("rep",en)else eh:FireServer("rep")end end)if D then ej()return true end;
 local o,ef=e5()q.remoteTokens=math.min(ef,q.remoteTokens+1)dN("train remote error")return false end;
+do
+    -- BOSS_MACHINE_PRESENCE_BEGIN
+    local function machinePresence(machine,character,humanoid)
+        if not machine or not machine.seat or not machine.seat.Parent or not character
+            or not humanoid or humanoid.Health<=0 then return false end
+        local function machinePart(part)
+            return part and (part==machine.seat or machine.model and part:IsDescendantOf(machine.model))
+        end
+        if machinePart(humanoid.SeatPart) then return true end
+        -- interactSeat may be a Part, so Humanoid.Sit alone is insufficient.
+        for _,container in ipairs({character,machine.seat,machine.model})do
+            if container then
+                for _,joint in ipairs(container:GetDescendants())do
+                    if joint:IsA("Weld") or joint:IsA("WeldConstraint") or joint:IsA("Motor6D") then
+                        local p0,p1=joint.Part0,joint.Part1
+                        if p0 and p1 and ((p0:IsDescendantOf(character) and machinePart(p1))
+                            or (p1:IsDescendantOf(character) and machinePart(p0))) then return true end
+                    end
+                end
+            end
+        end
+        return false
+    end
+    -- BOSS_MACHINE_PRESENCE_END
+q.machinePresence=machinePresence
+end
 local eo;
 local ep;
 local eq;
@@ -539,7 +565,7 @@ if eT<eP then eP=eT;
 eO=eM end end end;
 if eO then return eO end end;
 return{id="Other",order=99}end;
-local function eU(bx)for o,M in ipairs({"neededStrength","requiredStrength","strengthRequired","strengthRequirement","neededRebirths","requiredRebirths"})do local D,L=B(function()return bx:FindFirstChild(M,true)end)if D and L then local ez,N=B(function()return tonumber(L.Value)end)if ez and N and N>0 then return N end end;
+local function eU(bx)for o,M in ipairs({"neededStrength","requiredStrength","strengthRequired","strengthRequirement"})do local D,L=B(function()return bx:FindFirstChild(M,true)end)if D and L then local ez,N=B(function()return tonumber(L.Value)end)if ez and N and N>0 then return N end end;
 local ez,N=B(function()return tonumber(bx:GetAttribute(M))end)if ez and N and N>0 then return N end end;
 return nil end;
 eo=function(cI)if q.machineScanInFlight then return q.machineCatalog end;
@@ -595,27 +621,80 @@ local function f7()local I=b:FindFirstChild("rEvents")local cc={}if I then table
 table.insert(cc,b)for o,cd in ipairs(cc)do for o,L in ipairs(cd:GetChildren())do if L:IsA("RemoteFunction")or L:IsA("RemoteEvent")then local u=tostring(L.Name):lower()if u:find("machine",1,true)or u:find("interact",1,true)then return L end end end end;
 return nil end;
 local function f8()return B(function()local f9=game:GetService("VirtualInputManager")f9:SendKeyEvent(true,Enum.KeyCode.E,false,game)task.wait(0.08)f9:SendKeyEvent(false,Enum.KeyCode.E,false,game)end)end;
-local function fa(f2)local ew=f2.seat;
-local eh=f7()if eh then local D,W=B(function()if eh:IsA("RemoteFunction")then return eh:InvokeServer("useMachine",ew)end;
-eh:FireServer("useMachine",ew)return true end)if D and W~=false then return true end end;
-local fb=ew:FindFirstChildWhichIsA("ProximityPrompt",true)or f2.model:FindFirstChildWhichIsA("ProximityPrompt",true)if fb and type(fireproximityprompt)=="function"then local D=B(function()fireproximityprompt(fb)end)if D then return true end end;
-if fb then local D=B(function()fb:InputHoldBegin()fb:InputHoldEnd()end)if D then return true end end;
-local D=f8()if D then return true end;
-local fc=aN()if fc and(ew:IsA("Seat")or ew:IsA("VehicleSeat"))then return B(function()ew:Sit(fc)end)end;
-return false end;
-ep=function(f2,fd)if q.machineAttachInFlight or not f2 or not f2.seat then return end;
-q.machineAttachInFlight=true;
-local fe=q.machineCharacterBefore;
-local ff=q.machineAnimationsBefore;
-task.spawn(function()task.wait(0.2)if not q.alive or not q.machineActive or q.machineToken~=fd then if q.machineToken==fd then q.machineAttachInFlight=false end;
-return end;
-local fg=fa(f2)if q.machineToken~=fd or not q.machineActive then
-if fg and eq and not q.machineActive then eq(f2,fe,ff,false)end;
-if q.machineToken==fd then q.machineAttachInFlight=false end;
-return end;
-q.machineAttachInFlight=false;
-q.machineAttached=fg;
-q.machineNextAttach=os.clock()+(fg and 1.5 or 1)if not fg then aP("ТРЕНАЖЁР: не удалось нажать E")end end)end;
+-- MACHINE_ATTACH_BEGIN
+local function fa(machine,valid,job)
+    local seat=machine.seat
+    local prompt=seat:FindFirstChildWhichIsA("ProximityPrompt",true) or machine.model:FindFirstChildWhichIsA("ProximityPrompt",true)
+    local methods={}
+    local remote=f7()
+    if remote then methods[#methods+1]=function()
+        -- A hung InvokeServer occupies only this transport; other input methods can retry.
+        if q.machineRemoteFlight then return end
+        local flight={} q.machineRemoteFlight=flight
+        task.spawn(function()
+            if valid() then pcall(function()
+                if remote:IsA("RemoteFunction") then remote:InvokeServer("useMachine",seat)
+                else remote:FireServer("useMachine",seat) end
+            end) end
+            if q.machineRemoteFlight==flight then q.machineRemoteFlight=nil end
+        end)
+    end end
+    if prompt and type(fireproximityprompt)=="function" then methods[#methods+1]=function()fireproximityprompt(prompt)end end
+    if prompt then methods[#methods+1]=function()
+        local hold=tonumber(prompt.HoldDuration)or 0
+        if hold~=hold or hold<0 or hold>10 then return end
+        job.release=function()prompt:InputHoldEnd()end
+        prompt:InputHoldBegin()
+        local untilAt=os.clock()+math.max(0.1,hold)+0.1
+        while valid() and os.clock()<untilAt and not q.machinePresence(machine,aM(),aN()) do task.wait(0.05)end
+        job.release()job.release=nil
+    end end
+    methods[#methods+1]=function()
+        local manager=game:GetService("VirtualInputManager")
+        job.release=function()manager:SendKeyEvent(false,Enum.KeyCode.E,false,game)end
+        manager:SendKeyEvent(true,Enum.KeyCode.E,false,game)
+        task.wait(0.12)
+        job.release()job.release=nil
+    end
+    if seat:IsA("Seat") or seat:IsA("VehicleSeat") then methods[#methods+1]=function()seat:Sit(aN())end end
+    q.machineAttachAttempt=(q.machineAttachAttempt or 0)+1
+    local index=(q.machineAttachAttempt-1)%#methods+1
+    if valid() then methods[index]()end
+end
+function q.cancelMachineAttach()
+    local job=q.machineAttachJob q.machineAttachJob=nil q.machineAttachInFlight=false
+    if job then
+        if job.release then pcall(job.release)job.release=nil end
+        if job.thread and job.thread~=coroutine.running() then pcall(task.cancel,job.thread)end
+    end
+end
+ep=function(machine,token)
+    if q.machineAttachInFlight or not machine or not machine.seat or not machine.seat.Parent then return end
+    local character=aM()
+    local job={started=os.clock()}
+    q.machineAttachJob=job q.machineAttachInFlight=true
+    local function valid()
+        return q.alive and q.machineActive and q.machineToken==token and q.selectedMachine==machine
+            and aM()==character and q.machineAttachJob==job and not q.networkPaused
+            and aN() and aN().Health>0 and machine.seat.Parent~=nil
+    end
+    job.thread=task.spawn(function()
+        local ok,problem=pcall(function()
+            if not valid() then return end
+            fa(machine,valid,job)
+            local deadline=os.clock()+0.8
+            while valid() and not q.machinePresence(machine,character,aN()) and os.clock()<deadline do task.wait(0.05)end
+        end)
+        if job.release then pcall(job.release)job.release=nil end
+        if q.machineAttachJob~=job then return end
+        q.machineAttachJob=nil q.machineAttachInFlight=false
+        if q.machineToken~=token or not q.machineActive or aM()~=character then return end
+        q.machineAttached=q.machinePresence(machine,character,aN())
+        q.machineNextAttach=os.clock()+0.35
+        if not ok then q.machineRecoveryError=tostring(problem) end
+    end)
+end
+-- MACHINE_ATTACH_END
 eq=function(f2,fe,ff,fh)if not f2 then return end;
 local fi=aM()local fj={}local fk={}local fl=(tostring(f2.kind or"").." "..tostring(f2.name or"")):lower()local fm=f2.kind=="Boulder"or fl:find("boulder",1,true)~=nil;
 local fn=f2.kind=="Lift"or fl:find("lift",1,true)~=nil;
@@ -1117,7 +1196,7 @@ if q.closeDeleteConfirmation then B(q.closeDeleteConfirmation)end;
 if gx then aP(gx)end end;
 q.kingTarget=CFrame.new(-8625.93262,17.2325287,-5730.47217,0.765763462,-1.84813775e-09,0.643122315,-1.32089262e-09,1,4.44647785e-09,-0.643122315,-4.25444568e-09,0.765763462)local function ig()local I=b:FindFirstChild("rEvents")local eh=I and I:FindFirstChild("rebirthRemote")if eh and(eh:IsA("RemoteFunction")or eh:IsA("RemoteEvent"))then return eh end;
 return nil end;
-local function ih(eh)if q.bossRestorePending then return false,"waiting for machine seat"end;
+local function ih(eh)if q.bossRestorePending or q.machineRebirthAllowed and not q.machineRebirthAllowed() then return false,"waiting for machine seat"end;
 if q.networkPaused then return false,"network hold"end;
 eh=eh or ig()if not eh then return false,"rebirthRemote не найден"end;
 local gL=nil;
@@ -1159,7 +1238,7 @@ local function it(H,cl,iu)local iv=q.pingAvailable and math.max(0,tonumber(q.pin
 local i7=math.clamp(0.35+iv*3,0.65,1.5)if cl-H<=2 then i7=math.max(i7,2.0)end;
 if not iu then i7=math.max(i7,1.0)end;
 return math.min(i7,2.5)end;
-local function iw(ix)local function iy()return q.alive and not q.bossRestorePending and q.autoRebirth and q.rebirthToken==ix end;
+local function iw(ix)local function iy()return q.alive and not q.bossRestorePending and (not q.machineRebirthAllowed or q.machineRebirthAllowed()) and q.autoRebirth and q.rebirthToken==ix end;
 local fe=nil;
 local io=nil;
 local cl=nil;
@@ -1580,7 +1659,10 @@ local gy=q.leverRefs.train and q.leverRefs.train[cX.id]if gy then gy.Set(true,tr
 if cO then d4(cO)B(function()cO:Activate()end)em()else aP("КАЧ: "..tostring(cX.label).." включён • ожидание предмета: "..tostring(jV or"нет предмета"))return true end;
 aP(q.bugActive and"БАГ + КАЧ: "..tostring(cX.label).." включены вместе"or"КАЧ: "..tostring(cX.label).." включён")return true end;
 local function jX(cF)local f2=q.selectedMachine;
-local jY=q.machineAttached;
+q.cancelMachineAttach()
+if q.machineRecovery then q.machineRecovery:Reset()end
+q.machineRecovering=false;
+local jY=q.machineAttached or q.machinePresence(f2,aM(),aN());
 local fe=q.machineCharacterBefore;
 local ff=q.machineAnimationsBefore;
 q.machineToken=q.machineToken+1;
@@ -1609,6 +1691,9 @@ q.positionCF=nil;
 if q.leverRefs.lockPosition then q.leverRefs.lockPosition.Set(false,true)end end;
 q.machineToken=q.machineToken+1;
 q.machineActive=true;
+q.machineRecovering=true;
+q.machineAttachAttempt=0;
+if q.machineRecovery then q.machineRecovery:Reset()end
 q.machineAttached=false;
 q.machineAttachInFlight=false;
 q.selectedMachine=f2;
@@ -1623,7 +1708,201 @@ local attachToken=q.machineToken;
 task.wait(0.18);
 if not q.alive or not q.machineActive or q.machineToken~=attachToken then return false end;
 local o,ec=e5()q.remoteTokens=math.max(q.remoteTokens or 0,ec)if q.leverRefs.machineFarm then q.leverRefs.machineFarm.Set(true,true)end;
-ep(f2,q.machineToken)aP("ФАРМ: "..tostring(f2.zone).." • "..tostring(f2.name))return true end;
+q.runMachineRecovery()aP("ФАРМ: "..tostring(f2.zone).." • "..tostring(f2.name))return true end;
+do (function()
+-- MACHINE_REQUIREMENTS_BEGIN
+local function readMachineRequirement(machine,kind,parse)
+    local fields=kind=="strength" and {neededstrength=true,requiredstrength=true,strengthrequired=true,strengthrequirement=true,strengthneeded=true,minstrength=true}
+        or {neededrebirths=true,requiredrebirths=true,rebirthsrequired=true,rebirthrequirement=true,minrebirths=true}
+    local function key(name)return tostring(name):lower():gsub("[%s_%-]","")end
+    local function number(value)
+        local n=tonumber(value) or type(value)=="string" and parse(value)
+        if n and n==n and n>=0 and n<math.huge then return n end
+    end
+    for _,container in ipairs({machine.seat,machine.model,machine.identity})do
+        if container and container.Parent then
+            for name,value in pairs(container:GetAttributes())do if fields[key(name)] then local n=number(value)if n then return n end end end
+            for _,node in ipairs(container:GetDescendants())do
+                if fields[key(node.Name)] and node:IsA("ValueBase") then local n=number(node.Value)if n then return n end end
+            end
+        end
+    end
+    -- Some machines expose the cost only on their own sign. Rebirth signs are separate.
+    if kind=="strength" then for _,container in ipairs({machine.model,machine.identity})do
+        if container and container.Parent then for _,node in ipairs(container:GetDescendants())do
+            if node:IsA("TextLabel") or node:IsA("TextButton") then
+                local text=tostring(node.Text or ""):gsub("<[^>]*>","")
+                local lower=text:lower()
+                local strength=lower:find("strength",1,true) or text:find("Сил",1,true) or text:find("сил",1,true)
+                local required=lower:find("require",1,true) or lower:find("need",1,true) or text:find("Треб",1,true) or text:find("треб",1,true)
+                if strength and (required or fields[key(node.Name)]) and not lower:find("rebirth",1,true) then local n=number(text)if n then return n end end
+            end
+        end end
+    end end
+end
+-- MACHINE_REQUIREMENTS_END
+-- MACHINE_RECOVERY_BEGIN
+local function createMachineRecovery(api)
+    local s={generation=0,phase="idle",nextWeight=0,nextAttach=0,attempts=0}
+    function s:Reset()
+        self.generation+=1 self.phase="idle" self.stableSince=nil self.nextWeight=0 self.nextAttach=0
+        self.attempts=0 self.warmUntil=nil self.lastStrength=nil self.progressAt=nil
+        api.releaseWeight()
+    end
+    function s:CanRebirth()
+        if not api.active() then return true end
+        return self.phase=="seated" and self.stableSince~=nil and api.now()-self.stableSince>=0.4
+            and api.ready() and not api.attachBusy() and api.attached()
+    end
+    function s:Step()
+        if not api.active() then if self.phase~="idle" then self:Reset()end return end
+        if not api.ready() then self.stableSince=nil self.phase="waiting" api.show(self.phase) return end
+        local generation=self.generation
+        local function current()return self.generation==generation and api.active() and api.ready()end
+        local now=api.now()
+        if api.attached() then
+            self.phase="seated" self.stableSince=self.stableSince or now self.attempts=0 self.warmUntil=nil
+            api.releaseWeight()api.show(self.phase)
+            return
+        end
+        self.stableSince=nil
+        if api.rebirthBusy() or api.attachBusy() then self.phase="attaching" api.show(self.phase)return end
+        local strength,needed,rebirthBlocked=api.requirements()
+        if rebirthBlocked then self.phase="locked" api.releaseWeight()api.show(self.phase,strength,needed)return end
+        if strength==nil then self.phase="stats" api.show(self.phase)return end
+        if self.lastStrength==nil or strength>self.lastStrength then self.progressAt=now end
+        self.lastStrength=strength
+        local warm=strength<=0 or needed~=nil and strength<needed or needed==nil and (self.warmUntil and now<self.warmUntil)
+        if warm then
+            if self.phase=="tool" and now<self.nextWeight then api.show(self.phase,strength,needed)return end
+            self.phase="warming"api.show(self.phase,strength,needed)
+            if now>=self.nextWeight then
+                self.nextWeight=now+0.16
+                local equipped=api.weight(current)
+                if not current() then return end
+                if not equipped then self.phase="tool"self.nextWeight=api.now()+0.75 api.show(self.phase,strength,needed)end
+            end
+            return
+        end
+        api.releaseWeight()
+        self.phase="attaching"api.show(self.phase,strength,needed)
+        if now>=self.nextAttach and current() then
+            if needed==nil and self.attempts>=3 then
+                self.attempts=0 self.warmUntil=now+3
+                return
+            end
+            self.attempts+=1 self.nextAttach=now+1.25
+            api.attach(current)
+        end
+    end
+    return s
+end
+-- MACHINE_RECOVERY_END
+local warmupTool=nil
+local ownerToken,ownerCharacter,ownerMachine=nil,nil,nil
+local nextGui=0
+local requirementAt,requiredStrength,requiredRebirths=0,nil,nil
+local nextStatus=0
+local weightMode={id="Weight",label="ГАНТЕЛЬ",words={"weight","dumbbell","dumb","гантел"}}
+local function releaseWeight()
+    local tool=warmupTool warmupTool=nil
+    local character=aM()
+    if tool and tool.Parent==character then
+        local backpack=j:FindFirstChildOfClass("Backpack")
+        if backpack then pcall(function()tool.Parent=backpack end)end
+    end
+end
+local function owned()
+    return q.alive and q.machineActive and q.machineToken==ownerToken and q.selectedMachine==ownerMachine
+        and aM()==ownerCharacter and ownerMachine and ownerMachine.seat and ownerMachine.seat.Parent~=nil
+end
+q.machineRecovery=createMachineRecovery({
+    now=os.clock,active=owned,
+    ready=function()local human=aN()return not q.networkPaused and not q.toolTransition and human and human.Health>0 and aO()~=nil end,
+    attached=function()return q.machinePresence(ownerMachine,aM(),aN())end,
+    attachBusy=function()return q.machineAttachInFlight end,rebirthBusy=function()return q.rebirthInFlight end,
+    requirements=function()
+        if os.clock()>=requirementAt then
+            requirementAt=os.clock()+0.5
+            requiredStrength=readMachineRequirement(ownerMachine,"strength",bO)
+            requiredRebirths=readMachineRequirement(ownerMachine,"rebirths",bO)
+        end
+        local rebirths=requiredRebirths and c1() or nil
+        return ca(),requiredStrength,requiredRebirths and (rebirths==nil or rebirths<requiredRebirths)
+    end,
+    releaseWeight=releaseWeight,
+    weight=function(current)
+        local tool,equipped=d7(weightMode)
+        if not tool and os.clock()>=nextGui then
+            nextGui=os.clock()+2.5
+            if current() then dg(weightMode)end
+            if not current() then return false end
+            tool,equipped=d7(weightMode)
+        end
+        if not tool or not current() then return false end
+        if not equipped then
+            if q.equipInFlight then return false end
+            warmupTool=tool
+            local human=aN()
+            if not human or not current() then return false end
+            pcall(function()human:EquipTool(tool)end)
+            task.wait(0.05)
+        end
+        if not current() or tool.Parent~=aM() then return false end
+        warmupTool=tool
+        pcall(function()tool:Activate()end)
+        if current() then em()end
+        return true
+    end,
+    attach=function(current)
+        if not current() then return end
+        local root=aO()
+        if not root then return end
+        -- Reposition only while detached, once per paced attempt.
+        if (root.Position-ownerMachine.seat.Position).Magnitude>6 then
+            root.Anchored=false root.CFrame=ownerMachine.seat.CFrame*CFrame.new(0,3,0)
+            root.AssemblyLinearVelocity=Vector3.zero root.AssemblyAngularVelocity=Vector3.zero
+        end
+        if current() then ep(ownerMachine,ownerToken)end
+    end,
+    show=function(phase,strength,needed)
+        q.machineAttached=phase=="seated"
+        q.machineRecovering=phase~="seated"
+        if phase=="seated" then return end
+        if os.clock()<nextStatus then return end
+        nextStatus=os.clock()+1
+        local text=phase=="warming" and ("ГАНТЕЛЬ: "..ch(strength or 0)..(needed and " / "..ch(needed) or " · добираю силу"))
+            or phase=="tool" and "ТРЕНАЖЁР: ищу и надеваю гантель"
+            or phase=="stats" and "ТРЕНАЖЁР: жду счётчик силы"
+            or phase=="locked" and "ТРЕНАЖЁР: не хватает ребиртов для доступа"
+            or phase=="waiting" and "ТРЕНАЖЁР: ожидаю персонажа / сеть"
+            or "ТРЕНАЖЁР: подтверждаю посадку · повторная попытка"
+        q.machineRecoveryStatus=text
+        if q.bossRestorePending then q.bossCycleStatus=text.." · ребирты ждут посадку"end
+        aP(text)
+    end,
+})
+function q.machineRebirthAllowed()
+    if not q.machineActive then return true end
+    return owned() and q.machineRecovery:CanRebirth()
+end
+function q.runMachineRecovery()
+    if q.machineRecoveryBusy then return end
+    if q.machineActive and (ownerToken~=q.machineToken or ownerCharacter~=aM() or ownerMachine~=q.selectedMachine) then
+        q.cancelMachineAttach()q.machineRecovery:Reset()
+        ownerToken,ownerCharacter,ownerMachine=q.machineToken,aM(),q.selectedMachine
+        requirementAt=0 nextGui=0 nextStatus=0 q.machineAttachAttempt=0
+        q.machineRecovering=true
+    end
+    if q.machineAttachJob and os.clock()-q.machineAttachJob.started>12 then q.cancelMachineAttach()end
+    if q.machineActive and (not ownerMachine or not ownerMachine.seat or not ownerMachine.seat.Parent) then jX("ТРЕНАЖЁР: больше недоступен")return end
+    if os.clock()<(q.machineRecoveryStepAt or 0) then return end
+    q.machineRecoveryStepAt=os.clock()+0.08 q.machineRecoveryBusy=true
+    local ok,problem=pcall(function()q.machineRecovery:Step()end)
+    q.machineRecoveryBusy=false
+    if not ok then q.machineRecovering=q.machineActive q.machineRecoveryError=tostring(problem)end
+end
+end)() end
 do q.teleportDestinations={{id="Tiny Island",position={-34,7,1903},aliases={"tinyisland","tiny"}},{id="Starter Island",position={2,8,115},aliases={"starterisland","starter","mainisland"}},{id="Legend Beach",position={470,7,-321},aliases={"legendbeach","beach"}},{id="Frost Gym",position={-2600.00244,3.67686558,-403.884369},aliases={"frostgym","frozengym","frozenisland","frost","frozen"}},{id="Mythical Gym",position={2255,7,1071},aliases={"mythicalgym","mythicalisland","mythical","mystic"}},{id="Eternal Gym",position={-6768,7,-1287},aliases={"eternalgym","eternalisland","infernogym","eternal","inferno"}},{id="Legend Gym",position={4604,991,-3887},aliases={"legendsgym","legendgym","legendsisland","legendisland"}},{id="Muscle King Gym",position={-8646,17,-5738},aliases={"musclekinggym","muscleking","kinggym","kingisland","kingarena"}},{id="Jungle Gym",position={-8659,6,2384},aliases={"ancientjungle","junglegym","jungleisland","jungle"}},{id="Industrial Gym"}}q.teleportPortalCache=q.teleportPortalCache or{}local k0={}k0.metadataFields={"Destination","destination","TeleportDestination","teleportDestination","TeleportTo","teleportTo","Target","target","Location","location","Zone","zone","Gym","gym","Island","island","Spawn","spawn"}function k0.key(N)return string.lower(tostring(N or"")):gsub("[^%w]","")end;
 function k0.isA(L,k1)local D,W=pcall(function()return L:IsA(k1)end)return D and W or false end;
 function k0.ancestry(L)local eL={}local H=L;
@@ -1876,7 +2155,7 @@ q.turboRepLastStrength=nil;
 q.turboRepLastDurability=nil;
 q.turboRepStalls=0;
 q.turboRepActive=false end;
-function q.getTurboRepTarget()if q.machineActive then local f2=q.selectedMachine;
+function q.getTurboRepTarget()if q.machineActive then if q.machineRecovering or not q.machinePresence(q.selectedMachine,aM(),aN()) then return false,nil end;local f2=q.selectedMachine;
 if f2 and f2.seat and f2.seat.Parent then return true,f2.seat end;
 return false,nil end;
 if not q.trainActive or#q.trainOrder==0 then return false,nil end;
@@ -1915,7 +2194,7 @@ l6=l6+1 end end)if D then q.turboRepTokens=q.turboRepTokens-l6;
 q.remoteSentWindow=q.remoteSentWindow+l6;
 ei()else q.turboRepTokens=0;
  dN("turbo rep remote error")end end;
-function q.runFastPunch(b6)if not q.directRemoteEnabled or q.networkPaused or q.toolTransition then q.fastPunchTokens=0;
+function q.runFastPunch(b6)if q.machineRecovering or not q.directRemoteEnabled or q.networkPaused or q.toolTransition then q.fastPunchTokens=0;
  q.fastPunchEffectiveRate=0;
  q.fastPunchLastLoop=b6;
  return end;
@@ -1946,7 +2225,8 @@ if b6>=q.nextNetUpdate then q.nextNetUpdate=b6+0.5;
 dO(b6)ei()q.updateSessionStats(b6)b2()end;
 if q.networkPaused and b6>=q.nextNetworkHoldTick then q.nextNetworkHoldTick=b6+0.05;
 dG()end;
-if not q.networkPaused and not q.bossRestorePending and q.autoRebirth and not q.rebirthInFlight and b6>=q.nextRebirth then q.nextRebirth=b6+0.05;
+q.runMachineRecovery()
+if not q.networkPaused and not q.bossRestorePending and q.machineRebirthAllowed() and q.autoRebirth and not q.rebirthInFlight and b6>=q.nextRebirth then q.nextRebirth=b6+0.05;
 q.rebirthInFlight=true;
 local ix=q.rebirthToken;
 task.spawn(function()local D,hg=xpcall(function()iw(ix)end,function(j1)local kQ=""if debug and type(debug.traceback)=="function"then kQ="\n"..tostring(debug.traceback())end;
@@ -1988,9 +2268,9 @@ dH.AssemblyLinearVelocity=Vector3.new(0,0,0)dH.AssemblyAngularVelocity=Vector3.n
 if q.lockRock and not q.networkPaused and b6>=q.nextNearCheck then q.nextNearCheck=b6+0.35;
 local kW,jB=jC()if not kW then local kV=e2("rockNear",b6,2.5)if kV then jQ("ФИКСАЦИЯ: "..tostring(jB))end else e1("rockNear")end end end;
 if q.machineActive and not q.networkPaused and not q.toolTransition then local f2=q.selectedMachine;
-if not f2 or not f2.seat or not f2.seat.Parent then jX("ТРЕНАЖЁР: больше недоступен")else if b6>=q.machineNextRep then local e9=e5()q.machineNextRep=b6+math.max(0.05,math.min(0.16,2/e9))em(f2.seat)end end end;
-local kX=q.bugActive;
-local kY=q.trainActive and#q.trainOrder>0;
+if not f2 or not f2.seat or not f2.seat.Parent then jX("ТРЕНАЖЁР: больше недоступен")else if q.machineAttached and q.machinePresence(f2,aM(),aN()) and b6>=q.machineNextRep then local e9=e5()q.machineNextRep=b6+math.max(0.05,math.min(0.16,2/e9))em(f2.seat)end end end;
+local kX=q.bugActive and not q.machineRecovering;
+local kY=q.trainActive and not q.machineRecovering and#q.trainOrder>0;
 local e9,ec=e5()local kZ=kX and kY and q.directRemoteEnabled and ec>=3;
 if kX and q.machineActive and q.directRemoteEnabled and ec>=3 then kZ=true end;
 if kZ and not q.networkPaused and not q.toolTransition and b6>=q.nextBackgroundPunch then q.nextBackgroundPunch=b6+math.max(0.055,math.min(0.18,2/e9))ee()if q.remoteTokens>=2 then q.punchCycle=q.punchCycle+1;
@@ -3168,7 +3448,7 @@ end
         while current() and api.owned() do
             local now=api.now()
             if api.ready() then
-                elapsed+=math.max(0,now-previous)
+                if api.recovering and api.recovering() then elapsed=0 else elapsed+=math.max(0,now-previous)end
                 if api.attached() and not api.inFlight() then
                     stableSince=stableSince or now
                     if now-stableSince>=0.4 then return true end
@@ -3186,29 +3466,7 @@ end
         return false,"cancelled"
     end
     -- BOSS_SEAT_WAIT_END
-    -- BOSS_MACHINE_PRESENCE_BEGIN
-    local function machinePresence(machine,character,humanoid)
-        if not machine or not machine.seat or not machine.seat.Parent or not character
-            or not humanoid or humanoid.Health<=0 then return false end
-        local function machinePart(part)
-            return part and (part==machine.seat or machine.model and part:IsDescendantOf(machine.model))
-        end
-        if machinePart(humanoid.SeatPart) then return true end
-        -- interactSeat may be a Part, so Humanoid.Sit alone is insufficient.
-        for _,container in ipairs({character,machine.seat,machine.model})do
-            if container then
-                for _,joint in ipairs(container:GetDescendants())do
-                    if joint:IsA("Weld") or joint:IsA("WeldConstraint") or joint:IsA("Motor6D") then
-                        local p0,p1=joint.Part0,joint.Part1
-                        if p0 and p1 and ((p0:IsDescendantOf(character) and machinePart(p1))
-                            or (p1:IsDescendantOf(character) and machinePart(p0))) then return true end
-                    end
-                end
-            end
-        end
-        return false
-    end
-    -- BOSS_MACHINE_PRESENCE_END
+    local machinePresence=q.machinePresence
     local function cancelRestore()
         local pending=q.bossRestorePending
         q.bossRestorePending=nil
@@ -3246,15 +3504,12 @@ end
                 ready=function()return not q.networkPaused end,
                 attached=function()return machinePresence(machine,aM(),aN()) end,
                 inFlight=function()return q.machineAttachInFlight end,
+                recovering=function()
+                    local recovery=q.machineRecovery
+                    return recovery and recovery.phase=="warming" and recovery.progressAt and os.clock()-recovery.progressAt<12
+                end,
                 retry=function()
-                    if os.clock()>=q.machineNextAttach then
-                        q.machineNextAttach=os.clock()+1.5
-                        if (root.Position-machine.seat.Position).Magnitude>6 then
-                            root.CFrame=machine.seat.CFrame*CFrame.new(0,3,0)
-                            root.AssemblyLinearVelocity=Vector3.zero root.AssemblyAngularVelocity=Vector3.zero
-                        end
-                        ep(machine,pending.machineToken)
-                    end
+                    if q.runMachineRecovery then q.runMachineRecovery()else ep(machine,pending.machineToken)end
                 end,
             },current)
             if not seated or not current() or not owned() then

@@ -1,4 +1,4 @@
--- RockBug Boss 1.2: standalone UI + account-bound access.
+-- RockBug Boss 1.3: standalone UI + account-bound access.
 -- Shares under-arena combat, a safe exit to the surface, strength warmup and the chest cycle with the test hub.
 -- A client-side Lua gate is not tamper-proof DRM. UserId alone never grants access.
 if not game:IsLoaded() then game.Loaded:Wait() end
@@ -1268,6 +1268,7 @@ return function(api)
         if not api.alive() then s:Cancel(false) return end
         if not s.enabled and s.phase~="returning" then return end
         if not api.ready() then return end
+        if api.observeReward then api.observeReward()end
         local now=api.now()
         local generation=s.generation
         local function current()return api.alive() and s.generation==generation end
@@ -1364,101 +1365,123 @@ return function(api)
 end
 
     end)()
-    local prompts=setmetatable({},{__mode="k"})
-    local function track(obj)
-        if obj:IsA("ProximityPrompt") and not prompts[obj]then prompts[obj]={tries=0,nextAt=0}end
-    end
-    for _,obj in ipairs(workspace:GetDescendants())do track(obj)end
-    aJ(workspace.DescendantAdded:Connect(track))
+    local k,e=pg,game:GetService("VirtualUser")
+    q.uiRoot=gui
     local function hasAny(text,words)
         text=tostring(text or ""):lower()
-        for _,word in ipairs(words)do
-            if text:find(word,1,true)then return true end
-        end
+        for _,word in ipairs(words)do if text:find(word,1,true)then return true end end
         return false
     end
-    local function promptContext(prompt)
-        local parts={tostring(prompt.Name),tostring(prompt.ActionText),tostring(prompt.ObjectText)}
-        local node=prompt.Parent
-        for _=1,7 do
-            if not node then break end
-            table.insert(parts,tostring(node.Name))
-            node=node.Parent
-        end
-        return table.concat(parts," ")
+    local prompts=setmetatable({},{__mode="k"})
+    local rewardLabels=setmetatable({},{__mode="k"})
+    local previousRewardLabels=setmetatable({},{__mode="k"})
+    local rewardAcknowledged=false
+    local function track(obj)
+        if obj:IsA("ProximityPrompt") then prompts[obj]=true
+        elseif (obj:IsA("TextLabel") or obj:IsA("TextButton")) and obj:IsDescendantOf(k) then rewardLabels[obj]=true end
+    end
+    for _,container in ipairs({workspace,k})do
+        for _,obj in ipairs(container:GetDescendants())do track(obj)end
+        aJ(container.DescendantAdded:Connect(track))
+    end
+    -- BOSS_REWARD_TEXT_BEGIN
+    local function rewardText(text)
+        local value=tostring(text or ""):gsub("<[^>]*>",""):gsub("%s+"," "):lower()
+        return value:find("chest rewards",1,true)~=nil
+            or value:find("Награды сундуков",1,true)~=nil or value:find("награды сундуков",1,true)~=nil
+            or value:find("you already claimed your reward",1,true)~=nil
     end
     local function matches(prompt)
         if not prompt.Parent or not prompt.Enabled then return false end
         local action=tostring(prompt.ActionText)
         local object=tostring(prompt.ObjectText)
-        local context=promptContext(prompt)
-        local reward=hasAny(action.." "..object,{"claim reward","claim","reward","collect","open","loot","prize"})
-            or context:find("Наград",1,true) or context:find("награ",1,true)
-            or context:find("Получ",1,true) or context:find("получ",1,true)
-            or context:find("Забра",1,true) or context:find("забра",1,true)
-        local chest=hasAny(object.." "..context,{"boss chest","chest","boss"})
-            or context:find("Сундук",1,true) or context:find("сундук",1,true)
-            or context:find("Босс",1,true) or context:find("босс",1,true)
-        return reward~=nil and chest~=nil
+        local parts={object,tostring(prompt.Name)}
+        local node=prompt.Parent
+        for _=1,6 do
+            if not node or node==workspace then break end
+            table.insert(parts,tostring(node.Name)) node=node.Parent
+        end
+        local context=table.concat(parts," ")
+        local enAction,enContext=action:lower(),context:lower()
+        local reward=enAction:find("claim",1,true) or enAction:find("collect",1,true) or enAction:find("reward",1,true)
+            or action:find("Получить награду",1,true) or action:find("получить награду",1,true)
+            or action:find("Собрать награду",1,true) or action:find("собрать награду",1,true)
+            or action:find("Забрать награду",1,true) or action:find("забрать награду",1,true)
+        local boss=enContext:find("boss",1,true) or context:find("Босс",1,true) or context:find("босс",1,true)
+        local chest=enContext:find("chest",1,true) or context:find("Сундук",1,true) or context:find("сундук",1,true)
+        return reward~=nil and boss~=nil and chest~=nil
     end
-    -- Kept separate so retry/cancellation behavior can be checked without a live game.
-    local createChestCollector=(function()
-return function(api)
-    local state={prompt=nil,attempted=false,nextAt=0,tries=0,closed=false}
-    function state:Cancel()
-        if self.prompt then pcall(api.endHold,self.prompt) end
-        self.prompt=nil
-        self.attempted=false
-        self.nextAt=0
-        self.tries=0
-        self.closed=false
-        self.character=nil
+    -- BOSS_REWARD_TEXT_END
+    local function visibleReward(label)
+        if not rewardText(label.Text) then return false end
+        local node=label
+        while node and node~=k and node~=workspace do
+            if node==q.uiRoot then return false end
+            if node:IsA("GuiObject") and not node.Visible then return false end
+            if node:IsA("LayerCollector") and not node.Enabled then return false end
+            node=node.Parent
+        end
+        return node~=nil and label.TextTransparency<1
     end
-    function state:Step(current,snapshot)
-        local character=api.character()
-        -- A disabled prompt after death is not acknowledgement for the new character.
-        if self.character and self.character~=character then self:Cancel() end
-        self.character=character
-        if not current() or not api.ready() then return "pending" end
-        if self.closed then return "closed" end
-        if self.prompt and self.attempted and api.closed(self.prompt) then
-            pcall(api.endHold,self.prompt)
-            self.closed=true
-            return "closed"
+    local function observeReward(reset)
+        if reset then rewardAcknowledged=false end
+        for label in pairs(rewardLabels)do
+            if not label.Parent then rewardLabels[label]=nil previousRewardLabels[label]=nil
+            else
+                local visible=visibleReward(label)
+                local text=visible and label.Text or nil
+                if not reset and text and previousRewardLabels[label]~=text then rewardAcknowledged=true end
+                previousRewardLabels[label]=text
+            end
         end
-        if not self.prompt or not api.matches(self.prompt) then
-            self.prompt=api.find(snapshot)
-            self.attempted=false
-            self.nextAt=0
-            self.tries=0
-        end
-        local prompt=self.prompt
-        if not prompt then return "missing" end
-        local function valid()
-            return current() and api.ready() and api.character()==character and self.prompt==prompt
-        end
-        -- Stay next to the actual prompt between attempts; restore runs once, after closure.
-        if not api.move(prompt) or not valid() then return "pending" end
-        if api.now()<self.nextAt then return "pending" end
-        api.wait(0.3) -- allow the server to observe the teleport before activation
-        if not valid() or not api.matches(prompt) or not api.inRange(prompt) then return "pending" end
-        self.tries+=1
-        self.nextAt=api.now()+2
-        self.attempted=true
-        local ok,problem=pcall(api.interact,prompt,self.tries,valid)
-        pcall(api.endHold,prompt)
-        if not valid() then return "pending" end
-        if not ok then
-            self.attempted=false
-            api.report(tostring(problem))
-        end
-        -- Closure can arrive on a later tick; retain the attempted prompt until then.
-        if self.attempted and api.closed(prompt) then self.closed=true return "closed" end
-        return "pending"
     end
-    return state
-end
-    end)()
+    -- BOSS_CHEST_COLLECTOR_BEGIN
+    local function createChestCollector(api)
+        local state={generation=0,nextAt=0}
+        function state:Cancel()
+            self.generation+=1
+            if self.prompt then pcall(api.endHold,self.prompt) end
+            self.prompt=nil self.attempted=false self.nextAt=0 self.closed=false self.character=nil
+        end
+        function state:Step(current,snapshot)
+            if not current() or not api.ready() then return "pending" end
+            local character=api.character()
+            if self.character and self.character~=character then self:Cancel() end
+            self.character=character
+            local generation=self.generation
+            if api.acknowledged() then
+                if self.prompt then pcall(api.endHold,self.prompt) end
+                self.closed=true
+            end
+            if self.closed then return "closed" end
+            if self.prompt and api.closed(self.prompt) then
+                -- A prompt may expire or be replaced by streaming; neither confirms credit.
+                pcall(api.endHold,self.prompt)
+                self.prompt=nil self.attempted=false self.nextAt=0
+            end
+            if not self.prompt then self.prompt=api.find(snapshot) end
+            local prompt=self.prompt
+            if not prompt or not api.matches(prompt) then self.prompt=nil return "missing" end
+            local function valid()
+                return current() and self.generation==generation and api.ready()
+                    and api.character()==character and self.prompt==prompt
+            end
+            if not api.move(prompt) or not valid() then return "pending" end
+            if api.now()<self.nextAt then return "pending" end
+            api.wait(0.3)
+            if not valid() or not api.matches(prompt) or not api.inRange(prompt) then return "pending" end
+            self.nextAt=api.now()+2
+            self.attempted=true
+            local ok,problem=pcall(api.interact,prompt,valid)
+            pcall(api.endHold,prompt)
+            if not valid() then return "pending" end
+            if not ok then api.report(tostring(problem)) end
+            if api.acknowledged() then self.closed=true return "closed" end
+            return "pending"
+        end
+        return state
+    end
+    -- BOSS_CHEST_COLLECTOR_END
     local function promptPosition(prompt)
         local node=prompt.Parent
         for _=1,7 do
@@ -1526,45 +1549,174 @@ end
         root.Anchored=anchored
         return inRange(prompt)
     end
+    -- BOSS_CHEST_BUTTON_BEGIN
+    local function chestButtonVisible(button,excluded)
+        if not button.Parent or not button:IsA("GuiButton") then return false end
+        if button.Active==false then return false end
+        local node=button
+        while node do
+            if node==excluded then return false end
+            if node:IsA("GuiObject") and not node.Visible then return false end
+            if node:IsA("LayerCollector") and not node.Enabled then return false end
+            node=node.Parent
+        end
+        local size=button.AbsoluteSize
+        return size and size.X>1 and size.Y>1
+    end
+    local function findChestButton(roots,prompt,excluded)
+        local function clean(text)return tostring(text or ""):gsub("<[^>]*>",""):gsub("^%s+",""):gsub("%s+$",""):lower()end
+        local function action(text)
+            text=clean(text)
+            return text~="" and (text==clean(prompt.ActionText) or text=="claim reward" or text=="collect reward"
+                or text=="Получить награду" or text=="получить награду")
+        end
+        local seen={}
+        for _,root in ipairs(roots)do
+            local ok,nodes=pcall(function()return root:GetDescendants()end)
+            if ok then for _,gui in ipairs(nodes)do
+                if gui:IsA("BillboardGui") and gui.Enabled and not seen[gui] then
+                    seen[gui]=true
+                    local adornee=gui.Adornee or gui.Parent
+                    local owner=prompt.Parent
+                    -- Match the physical chest, never another visible reward card.
+                    local linked=adornee and owner and (adornee==owner or owner:IsDescendantOf(adornee)
+                        or adornee:IsDescendantOf(owner))
+                    if linked then
+                        local candidates,hasAction={},false
+                        for _,node in ipairs(gui:GetDescendants())do
+                            if (node:IsA("TextLabel") or node:IsA("TextButton")) and node.Visible and action(node.Text) then hasAction=true end
+                            if node:IsA("GuiButton") and chestButtonVisible(node,excluded) then
+                                local text=node:IsA("TextButton") and clean(node.Text) or ""
+                                if action(text) then return node end
+                                if text=="" then table.insert(candidates,node) end
+                            end
+                        end
+                        if hasAction and #candidates==1 then return candidates[1] end
+                    end
+                end
+            end end
+        end
+    end
+    local function pressChestButton(api,prompt,valid)
+        local button=api.find(prompt)
+        if not button then return false end
+        local function current()
+            return valid() and not api.acknowledged() and api.matches(prompt) and api.inRange(prompt) and api.visible(button)
+        end
+        if not current() then return false end
+        local x,y=api.center(button)
+        if not x or not y then return false end
+        local released=false
+        local function release()
+            if released then return end
+            released=true
+            api.up(x,y)
+        end
+        api.setRelease(release)
+        local ok,problem=pcall(function()
+            api.down(x,y)
+            local deadline=api.now()+math.max(0.1,tonumber(prompt.HoldDuration)or 0)+0.15
+            repeat api.wait(0.05) until not current() or api.now()>=deadline
+        end)
+        local releaseOK,releaseProblem=pcall(release)
+        api.clearRelease(release)
+        if not ok then error(problem) end
+        if not releaseOK then error(releaseProblem) end
+        if valid() then api.wait(0.3) end
+        return true
+    end
+    -- BOSS_CHEST_BUTTON_END
+    local chestRelease=nil
+    local function releaseChestInput()
+        local release=chestRelease chestRelease=nil
+        if release then pcall(release) end
+    end
+    local function clickChest(prompt,valid)
+        local roots={k,workspace}
+        pcall(function()table.insert(roots,game:GetService("CoreGui"))end)
+        local manager=nil
+        pcall(function()manager=game:GetService("VirtualInputManager")end)
+        local usedManager,forceVirtual=false,false
+        local input={
+            find=function()return findChestButton(roots,prompt,q.uiRoot)end,
+            visible=function(button)return chestButtonVisible(button,q.uiRoot)end,
+            center=function(button)
+                local point=button.AbsolutePosition+button.AbsoluteSize*0.5
+                local gui=button:FindFirstAncestorWhichIsA("ScreenGui")
+                if gui and not gui.IgnoreGuiInset then point+=game:GetService("GuiService"):GetGuiInset() end
+                local camera=workspace.CurrentCamera
+                if not camera or point.X<0 or point.Y<0 or point.X>=camera.ViewportSize.X or point.Y>=camera.ViewportSize.Y then return nil end
+                return point.X,point.Y
+            end,
+            down=function(x,y)
+                usedManager=not forceVirtual and manager and pcall(function()manager:SendMouseButtonEvent(x,y,0,true,game,0)end) or false
+                if not usedManager then
+                    e:CaptureController()
+                    e:Button1Down(Vector2.new(x,y),workspace.CurrentCamera.CFrame)
+                end
+                q.bossCycleStatus="Сундук: нажимаю кнопку награды"
+            end,
+            up=function(x,y)
+                if usedManager then manager:SendMouseButtonEvent(x,y,0,false,game,0)
+                else e:Button1Up(Vector2.new(x,y),workspace.CurrentCamera.CFrame) end
+            end,
+            setRelease=function(release)releaseChestInput()chestRelease=release end,
+            clearRelease=function(release)if chestRelease==release then chestRelease=nil end end,
+            now=os.clock,wait=task.wait,matches=matches,inRange=inRange,acknowledged=function()observeReward(false)return rewardAcknowledged end,
+        }
+        local clicked=pressChestButton(input,prompt,valid)
+        if usedManager and valid() and not input.acknowledged() then
+            forceVirtual=true
+            clicked=pressChestButton(input,prompt,valid) or clicked
+        end
+        return clicked
+    end
+    -- BOSS_CHEST_INTERACT_BEGIN
+    local function interactChest(api,prompt,valid)
+        local hold=tonumber(prompt.HoldDuration)or 0
+        if hold~=hold or hold<0 or hold>10 then error("Некорректное время удержания награды") end
+        if not valid() or api.acknowledged() then return end
+        -- Press the actual rendered chest button first; mobile helpers can be no-ops.
+        if api.click then pcall(api.click,prompt,valid) end
+        if not valid() or api.acknowledged() or not api.matches(prompt) then return end
+        if api.fire then pcall(api.fire,prompt) api.wait(0.15) end
+        if not valid() or api.acknowledged() or not api.matches(prompt) then return end
+        -- Some mobile executors accept fireproximityprompt but do nothing.
+        prompt:InputHoldBegin()
+        local deadline=api.now()+math.max(0.1,hold)+0.15
+        repeat
+            api.wait(0.05)
+            if not valid() or api.acknowledged() or not api.matches(prompt) or not api.inRange(prompt) then return end
+        until api.now()>=deadline
+        prompt:InputHoldEnd()
+        api.wait(0.3)
+    end
+    -- BOSS_CHEST_INTERACT_END
+    local function acknowledged()observeReward(false)return rewardAcknowledged end
     local collector=createChestCollector({
-        now=os.clock,wait=task.wait,character=aM,
+        now=os.clock,wait=task.wait,character=aM,acknowledged=acknowledged,
         ready=function()local h=aN()return q.alive and q.authorized and not q.remotePaused and not q.networkPaused and h and h.Health>0 and aO()~=nil end,
         matches=matches,closed=function(prompt)return not prompt.Parent or not prompt.Enabled end,
         find=function(snapshot)
             local root=aO()
             local origin=snapshot and snapshot.bossPosition or root and root.Position
-            local best,bestDistance=nil,math.huge
+            if not origin then return nil end
+            local best,distance=nil,120
             for prompt in pairs(prompts)do
                 if not prompt.Parent then prompts[prompt]=nil
-                elseif matches(prompt)then
+                elseif matches(prompt) then
                     local position=promptPosition(prompt)
-                    local distance=position and origin and (position-origin).Magnitude
-                    if distance and distance<bestDistance then best,bestDistance=prompt,distance end
+                    local d=position and (position-origin).Magnitude
+                    if d and d<distance then best,distance=prompt,d end
                 end
             end
             return best
         end,
         move=moveToChest,inRange=inRange,
-        endHold=function(prompt)prompt:InputHoldEnd()end,
-        interact=function(prompt,attempt,valid)
-            local hold=tonumber(prompt.HoldDuration)or 0
-            if hold~=hold or hold<0 or hold==math.huge then error("Некорректное время открытия сундука")end
-            -- A successful pcall only means that the executor accepted the helper;
-            -- it does not prove the server claimed the chest. Try the native hold
-            -- too when the prompt remains enabled.
-            if type(fireproximityprompt)=="function" then
-                pcall(fireproximityprompt,prompt)
-                task.wait(0.12)
-            end
-            if not valid() or not matches(prompt) then return end
-            prompt:InputHoldBegin()
-            local deadline=os.clock()+math.max(0.1,hold)+0.15
-            repeat
-                task.wait(0.05)
-                if not valid() or not matches(prompt) then return end
-                if not moveToChest(prompt) then return end
-            until os.clock()>=deadline
-            prompt:InputHoldEnd()
+        endHold=function(prompt)releaseChestInput()prompt:InputHoldEnd()end,
+        interact=function(prompt,valid)
+            interactChest({click=clickChest,now=os.clock,wait=task.wait,matches=matches,inRange=inRange,acknowledged=acknowledged,
+                fire=type(fireproximityprompt)=="function" and fireproximityprompt or nil},prompt,valid)
         end,
         report=function(problem)q.bossCycleError=problem end,
     })
@@ -1607,8 +1759,10 @@ end
             return current()
         end,
         claim=claim,cancelClaim=cancelClaim,
+        observeReward=function()observeReward(false)end,
         start=function(current)
             collector:Cancel()
+            observeReward(true)
             local started=q.boss:Start()
             if not current()then q.boss:Stop(nil,true)return false end
             return started
