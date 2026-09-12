@@ -19,3 +19,8 @@ with tempfile.TemporaryDirectory(prefix='bgs-ui-tests-') as directory:
     test=Path(directory)/'UI.spec.luau'
     test.write_text(''.join(ui_parts))
     subprocess.run([args.luau,str(test)],check=True)
+
+with tempfile.TemporaryDirectory(prefix='bgs-update-tests-') as directory:
+    test=Path(directory)/'Update.spec.luau'
+    test.write_text(''.join(parts[:-1])+ (root/'Update.scenarios.luau').read_text())
+    subprocess.run([args.luau,str(test)],check=True)

@@ -20,6 +20,41 @@ function L.world(value)
         if L.norm(world.key)==key then return world.key end
     end
 end
+-- Each runtime owns its catalog; only replicated world names extend the defaults.
+function L.newWorldCatalog()
+    local worlds,byName={},{}
+    local function add(name,currency)
+        if type(name)~="string" or name=="" or #name>100 then return nil end
+        local key=L.world(name) or name
+        local normalized=L.norm(key)
+        if normalized=="" then return nil end
+        local entry=byName[normalized]
+        if not entry then
+            entry={key=key,display=key,currency=currency or "Валюта из игры"}
+            byName[normalized]=entry worlds[#worlds+1]=entry
+        elseif currency then entry.currency=currency end
+        return entry.key
+    end
+    for _,world in ipairs(L.worlds) do
+        add(world.key,world.currency) byName[L.norm(world.key)].display=world.display
+    end
+    local function resolve(value)
+        local canonical=L.world(value)
+        local entry=byName[L.norm(canonical or value)]
+        return entry and entry.key
+    end
+    return worlds,resolve,add
+end
+function L.eggCost(data)
+    if type(data)~="table" then return nil,nil end
+    local cost=data.Cost
+    if type(cost)~="table" then return nil,nil end
+    local currency=cost.Currency or cost[1]
+    local price=tonumber(cost.Amount or cost.Price or cost[2])
+    if type(currency)~="string" or currency=="" then currency=nil end
+    if price and (price~=price or price<0 or price==math.huge) then price=nil end
+    return currency,price
+end
 L.chests={
     {world="Overworld",name="The Floating Island",aliases={"Floating Island"}},
     {world="Overworld",name="The Skylands",aliases={"The Skyland","Skylands"}},

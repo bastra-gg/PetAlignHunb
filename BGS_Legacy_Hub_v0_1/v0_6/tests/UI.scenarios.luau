@@ -1,3 +1,8 @@
+local eventArea=object('Model','AutumnArea',worlds.Overworld)
+floor('Ground',eventArea,Vector3.new(160,0,0))
+local eventEgg=object('Model','Fixture Event Egg',object('Folder','Eggs',eventArea))
+floor('Hotkey',eventEgg,Vector3.new(160,10,0),Vector3.new(2,2,2)).CanCollide=false
+itemMods.EggModule.export['Fixture Event Egg']={Cost={'Leaves',100},World='Overworld',Limited=true}
 local S,api=createRuntime(L)
 local result=createUI(S,api)
 assert(result==S and S.startupReady and S.gui.Name=='BGSLegacyHub','full UI initialization')
@@ -10,6 +15,10 @@ local function choose(text)
     for _,o in ipairs(S.gui:GetDescendants())do if o.ClassName=='TextLabel' and o.Text==text then o.Parent.Activated:Fire()return end end
     error('Choice missing: '..text)
 end
+choose('Только яйца события')assert(S.eventEggsOnly,'event toggle wired')
+buttonText('ВЫБРАТЬ ЯЙЦО · 2  ›').Activated:Fire()
+assert(not pcall(choose,'01. Basic Egg'),'normal egg excluded from event picker')
+choose('02. Fixture Event Egg')assert(S.selectedEgg.name=='Fixture Event Egg','event picker selects actual entry')
 buttonText('Количество яиц: 1 / 3').Activated:Fire()
 choose('Открывать 3 яйца')assert(S.hatchCount==3,'triple picker wired')
 buttonText('Мир фарма: Overworld  ›').Activated:Fire()
@@ -22,4 +31,4 @@ buttonText('Выбор зелья').Activated:Fire()choose('Max Level')assert(S.
 buttonText('Выбор мини-игры').Activated:Fire()choose('Spin To Win')assert(S.minigame=='Spin To Win','minigame picker wired')
 buttonText('СТОП').Activated:Fire()assert(not S.autoCollect and not S.autoChestRoute,'header stop wired')
 S:Stop('test')assert(not S.alive and not S.gui.Parent,'UI cleanup')
-print('UI construction and control scenarios passed: 8')
+print('UI construction and control scenarios passed: 11')
