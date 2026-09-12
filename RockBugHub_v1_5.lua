@@ -4,7 +4,7 @@ pcall(function()i=game:GetService("NetworkClient")end)if not game:IsLoaded()then
 local j=a.LocalPlayer;
 while not j do task.wait()j=a.LocalPlayer end;
 local k=j:WaitForChild("PlayerGui",60)if not k then warn("[RockBugHub] PlayerGui was not created")pcall(function()g:SetCore("SendNotification",{Title="RockBugHub",Text="Ошибка запуска: PlayerGui не найден",Duration=8})end)return end;
-local l="RockBugHub_TEST_v4_25_BOSS_T28"local m="4.25BOSS-T28"local n=type(getgenv)=="function"and getgenv()or _G;
+local l="RockBugHub_TEST_v4_25_BOSS_T29"local m="4.25BOSS-T29"local n=type(getgenv)=="function"and getgenv()or _G;
 do
     -- Retire the old experimental windows and their listeners on hot reload.
     for _, key in ipairs({"RockBugTradeDiagnostics", "RockBugMiniTransfer"}) do
@@ -486,7 +486,7 @@ local eh=eg()if not eh then return false end;
 q.remoteTokens=q.remoteTokens-1;
 local el=q.punchCycle%2==0 and"rightHand"or"leftHand"local D=B(function()eh:FireServer("punch",el)end)if D then ej()return true end;
 local o,ef=e5()q.remoteTokens=math.min(ef,q.remoteTokens+1)dN("punch remote error")return false end;
-local function em(en)if not q.directRemoteEnabled then return false end;
+local function em(en)if q.enchantedRepEnabled or not q.directRemoteEnabled then return false end;
 if q.networkPaused then return false,"network hold"end;
 ee()if q.remoteTokens<1 then return false end;
 local eh=eg()if not eh then return false end;
@@ -1454,7 +1454,7 @@ q.trainActive=jL~=nil;
 if not q.selectedTrain or not q.activeTrains[q.selectedTrain.id]then q.selectedTrain=jL end;
 if q.bugActive and q.trainActive then q.mode="hybrid"elseif q.bugActive then q.mode="bug"elseif q.trainActive then q.mode="train"else q.mode=nil end;
 return q.mode end;
-local function jM(cF,jN)q.modeToken=q.modeToken+1;
+local function jM(cF,jN)if q.enchantedRepController then q.enchantedRepController:Reset(os.clock())end;q.modeToken=q.modeToken+1;
 q.mode=nil;
 q.bugActive=false;
 q.trainActive=false;
@@ -1507,6 +1507,7 @@ if q.lockPosition then q.positionCF=q.lockCF end;
 if q.leverRefs.lockRock then q.leverRefs.lockRock.Set(true,true)end;
 aP("ФИКСАЦИЯ: включена • "..tostring(q.selectedRock.label))return true end;
 local function jS(e7,cF)local cf=q.activeTrains[e7]if not cf then return end;
+if q.enchantedRepController then q.enchantedRepController:Reset(os.clock())end;
 q.modeToken=q.modeToken+1;
 q.activeTrains[e7]=nil;
 q.trainRetryAt[e7]=nil;
@@ -1577,7 +1578,7 @@ jK()local o,ec=e5()q.remoteTokens=ec;
 local gy=q.leverRefs.train and q.leverRefs.train[cX.id]if gy then gy.Set(true,true)end;
 if cO then d4(cO)B(function()cO:Activate()end)em()else aP("КАЧ: "..tostring(cX.label).." включён • ожидание предмета: "..tostring(jV or"нет предмета"))return true end;
 aP(q.bugActive and"БАГ + КАЧ: "..tostring(cX.label).." включены вместе"or"КАЧ: "..tostring(cX.label).." включён")return true end;
-local function jX(cF)local f2=q.selectedMachine;
+local function jX(cF)if q.enchantedRepController then q.enchantedRepController:Reset(os.clock())end;local f2=q.selectedMachine;
 local jY=q.machineAttached;
 local fe=q.machineCharacterBefore;
 local ff=q.machineAnimationsBefore;
@@ -1879,7 +1880,105 @@ if not q.trainActive or#q.trainOrder==0 then return false,nil end;
 local cO=q.activeTool;
 local fi=aM()if not cO or not fi or cO.Parent~=fi or tostring(cO.Name)=="Punch"then return false,nil end;
 return true,nil end;
-function q.runTurboRep(b6)if not q.turboRepEnabled or not q.directRemoteEnabled or q.networkPaused or q.toolTransition then if q.turboRepActive then q.resetTurboRep(b6)end;
+-- ENCHANTED_REP_CONTROLLER_BEGIN
+-- Original implementation of the public Enchanted request pattern: plain "rep"
+-- batches and a temporary tool repTime=0. No pet perk values are changed.
+q.createEnchantedRepController=function(api)
+    local state={generation=0,tokens=0,last=0,target=nil,field=nil,original=nil,sent=0}
+    function state:ReleaseField()
+        if self.field and self.original~=nil then
+            pcall(function()
+                -- Do not overwrite a newer value supplied by the game.
+                if self.field.Parent and self.field.Value==0 then self.field.Value=self.original end
+            end)
+        end
+        self.field=nil self.original=nil
+    end
+    function state:Reset(now)
+        self.generation=self.generation+1
+        self:ReleaseField()
+        self.target=nil self.tokens=0 self.last=now or 0
+    end
+    function state:Step(now)
+        if not api.allowed() then self:Reset(now) return end
+        local target,field=api.target()
+        if not target then self:Reset(now) return end
+        if target~=self.target then
+            self:Reset(now) self.target=target
+        end
+        if field~=self.field then self:ReleaseField() self.field=field end
+        if field then
+            pcall(function()
+                local value=field.Value
+                if type(value)=="number" and value==value and value>=0 and value<math.huge then
+                    if self.original==nil or value~=0 then self.original=value end
+                    field.Value=0
+                end
+            end)
+        end
+        local rate=api.rate()
+        local dt=math.min(0.1,math.max(0,now-self.last))
+        self.last=now
+        -- Ten requests at most per scheduler tick; no catch-up after lag.
+        self.tokens=math.min(10,self.tokens+dt*rate)
+        local count=math.floor(self.tokens)
+        local generation=self.generation
+        for _=1,count do
+            if generation~=self.generation then return end
+            if not api.allowed() or api.target()~=target then self:Reset(now) return end
+            local ok,problem=pcall(api.send)
+            if not ok then self:Reset(now) api.failed(problem) return end
+            self.sent=self.sent+1
+            if generation~=self.generation then return end
+            self.tokens=math.max(0,self.tokens-1)
+        end
+    end
+    return state
+end
+-- ENCHANTED_REP_CONTROLLER_END
+q.enchantedRepEnabled=false
+q.enchantedRepController=q.createEnchantedRepController({
+    allowed=function()
+        local humanoid=aN()
+        return q.alive and q.enchantedRepEnabled and not q.networkPaused
+            and not q.toolTransition and not q.equipInFlight and not q.machineAttachInFlight
+            and not(q.boss and q.boss.enabled) and humanoid and humanoid.Health>0
+    end,
+    target=function()
+        if q.machineActive then
+            local machine=q.selectedMachine
+            if q.machineAttached and machine and machine.seat and machine.seat.Parent then return machine.seat end
+            return nil
+        end
+        local tool=q.activeTool
+        if not q.trainActive or not tool or not aM() or tool.Parent~=aM() or cU(tool) then return nil end
+        local field=tool:FindFirstChild("repTime")
+        if field and not(field:IsA("NumberValue") or field:IsA("IntValue"))then field=nil end
+        return tool,field
+    end,
+    rate=function()
+        local ping=(q.pingAvailable and tonumber(q.pingMs)) or 0
+        if ping>=700 then return 50 elseif ping>=450 then return 100
+        elseif ping>=300 then return 200 elseif ping>=200 then return 400 end
+        return 600
+    end,
+    send=function()
+        local remote=eg()
+        if not remote then error("muscleEvent unavailable",0)end
+        remote:FireServer("rep")
+        ej()
+    end,
+    failed=function(problem)dN("Enchanted rep: "..tostring(problem))end,
+})
+function q.setEnchantedRep(enabled)
+    q.enchantedRepController:Reset(os.clock())
+    q.resetTurboRep(os.clock())
+    q.enchantedRepEnabled=enabled==true
+    if q.leverRefs.enchantedRep then q.leverRefs.enchantedRep.Set(q.enchantedRepEnabled,true)end
+end
+aJ(j.CharacterRemoving:Connect(function()q.enchantedRepController:Reset(os.clock())end))
+function q.runTurboRep(b6)if q.enchantedRepEnabled then q.enchantedRepController:Step(b6)return end;
+if not q.turboRepEnabled or not q.directRemoteEnabled or q.networkPaused or q.toolTransition then if q.turboRepActive then q.resetTurboRep(b6)end;
 return end;
 local kW,kX=q.getTurboRepTarget()if not kW then if q.turboRepActive then q.resetTurboRep(b6)end;
 return end;
@@ -3295,6 +3394,8 @@ q.layoutUI={}q.layoutUI.localizationNodes={}q.layoutUI.englishText={["КАМНИ
 return bA end;
 q.layoutUI.englishText["КОЛЕСО УДАЧИ"]="FORTUNE WHEEL"q.layoutUI.englishText["АВТОПРОКРУТКА"]="AUTO SPIN"q.layoutUI.englishText["крутит при доступной попытке"]="spins when a try is available"q.layoutUI.englishText["УЛЬТРА-РЕЖИМ"]="ULTRA MODE"q.layoutUI.englishText["чёрный экран и отключение 3D"]="black screen and disabled 3D"q.layoutUI.englishText["ВЕРНУТЬ ЭКРАН"]="RESTORE SCREEN";
 q.layoutUI.englishText["ТЕМП УДАРОВ"]="PUNCH RATE"q.layoutUI.englishText["ускорение с защитой от перегрузки"]="acceleration with overload protection";
+q.layoutUI.englishText["БЫСТРЫЕ ПОВТОРЫ"]="FAST REPS";
+q.layoutUI.englishText["метод Enchanted · включи кач или тренажёр"]="Enchanted method · start training or a machine";
 q.layoutUI.englishText["ПЕРЕДАЧА ЯИЦ"]="EGG GIFTING"q.layoutUI.englishText["ИГРОК"]="PLAYER"q.layoutUI.englishText["ВЫБОР ИГРОКА"]="SELECT PLAYER"q.layoutUI.englishText["КОЛИЧЕСТВО"]="AMOUNT"q.layoutUI.englishText["ПЕРЕДАТЬ"]="GIFT";
 function q.layoutUI.registerText(k9,aF)local bA=tostring(aF or"")if bA~=""then table.insert(q.layoutUI.localizationNodes,{node=k9,source=bA})end;
 k9.Text=q.layoutUI.staticText(bA)end;
@@ -3453,7 +3554,7 @@ task.delay(0.45,function()if q.alive and q.layoutUI and q.layoutUI.memoryWriteTo
 function q.layoutUI.captureLastSession()local m9={}for e7,ma in pairs(q.activeTrains or{})do if ma then m9[e7]=true end end;
 local mb={}for u,fF in pairs(q.petCleanupTargets or{})do if fF then mb[u]=true end end;
 local f2=q.selectedMachine;
-return{language=q.language=="en"and"en"or"ru",autoRockSelection=q.autoRockSelection~=false,rockId=q.selectedRock and q.selectedRock.id or nil,petGradeIndex=math.clamp(math.floor(tonumber(q.petGradeIndex)or 5),1,5),bugActive=q.bugActive==true,lockRock=q.lockRock==true,activeTrains=m9,machineActive=q.machineActive==true,machineZone=f2 and f2.zone or q.machineZone,machineName=f2 and f2.name or nil,machineKind=f2 and f2.kind or nil,machineVariant=f2 and f2.variant or nil,kingLock=q.kingLock==true,eggEnabled=q.eggEnabled==true,eggAmount=q.eggAmount,eggIntervalMultiplier=q.eggIntervalMultiplier,autoRebirth=q.autoRebirth==true,rebirthGoalEnabled=q.rebirthGoalEnabled==true,rebirthGoal=q.rebirthGoal,autoSize=q.autoSize==true,sizeTarget=q.sizeTarget,crystalMode=q.crystalMode,crystalAmount=q.crystalAmount,purchaseDelay=q.purchaseDelay,selectedCrystal=q.selectedCrystal,selectedPet=q.selectedPet,selectedAura=q.selectedAura,petCleanupEnabled=q.petCleanupEnabled==true,petCleanupTargets=mb,autoEvolvePurchasedPets=q.autoEvolvePurchasedPets~=false,autoEquipBestPets=q.autoEquipBestPets==true,autoQuest=q.autoQuest==true,autoWheel=q.autoWheel==true,selectedQuestNpc=q.selectedQuestNpc,selectedTeleport=q.selectedTeleport,antiAfkEnabled=q.antiAfkEnabled~=false,netGuardEnabled=q.netGuardEnabled~=false,directRemoteEnabled=q.directRemoteEnabled~=false,fastPunchRate=math.clamp(tonumber(q.fastPunchRate)or 60,5,120),visualLow=q.visualLow==true,savedAt=os.time()}end;
+return{language=q.language=="en"and"en"or"ru",autoRockSelection=q.autoRockSelection~=false,rockId=q.selectedRock and q.selectedRock.id or nil,petGradeIndex=math.clamp(math.floor(tonumber(q.petGradeIndex)or 5),1,5),bugActive=q.bugActive==true,lockRock=q.lockRock==true,activeTrains=m9,machineActive=q.machineActive==true,machineZone=f2 and f2.zone or q.machineZone,machineName=f2 and f2.name or nil,machineKind=f2 and f2.kind or nil,machineVariant=f2 and f2.variant or nil,kingLock=q.kingLock==true,eggEnabled=q.eggEnabled==true,eggAmount=q.eggAmount,eggIntervalMultiplier=q.eggIntervalMultiplier,autoRebirth=q.autoRebirth==true,rebirthGoalEnabled=q.rebirthGoalEnabled==true,rebirthGoal=q.rebirthGoal,autoSize=q.autoSize==true,sizeTarget=q.sizeTarget,crystalMode=q.crystalMode,crystalAmount=q.crystalAmount,purchaseDelay=q.purchaseDelay,selectedCrystal=q.selectedCrystal,selectedPet=q.selectedPet,selectedAura=q.selectedAura,petCleanupEnabled=q.petCleanupEnabled==true,petCleanupTargets=mb,autoEvolvePurchasedPets=q.autoEvolvePurchasedPets~=false,autoEquipBestPets=q.autoEquipBestPets==true,autoQuest=q.autoQuest==true,autoWheel=q.autoWheel==true,selectedQuestNpc=q.selectedQuestNpc,selectedTeleport=q.selectedTeleport,antiAfkEnabled=q.antiAfkEnabled~=false,netGuardEnabled=q.netGuardEnabled~=false,directRemoteEnabled=q.directRemoteEnabled~=false,enchantedRepEnabled=q.enchantedRepEnabled==true,fastPunchRate=math.clamp(tonumber(q.fastPunchRate)or 60,5,120),visualLow=q.visualLow==true,savedAt=os.time()}end;
 function q.layoutUI.saveLastSession()q.layoutUI.lastSavedSession=q.layoutUI.captureLastSession()n.RockBugLastSession=q.layoutUI.copyProfile(q.layoutUI.lastSavedSession)local m7=q.layoutUI.writeConfigs()aP(q.language=="en"and(m7 and"SETTINGS: SAVED"or"SETTINGS: FILE SAVE IS UNAVAILABLE")or(m7 and"НАСТРОЙКИ: сохранены"or"НАСТРОЙКИ: запись файла недоступна"))return m7 end;
 function q.layoutUI.resumeLastSession()if q.sessionResumeInFlight then aP(q.language=="en"and"SETTINGS: RESUME IN PROGRESS"or"НАСТРОЙКИ: уже восстанавливаются")return false end;
 local mc=q.layoutUI.lastSavedSession;
@@ -3477,6 +3578,7 @@ q.autoEvolvePurchasedPets=mc.autoEvolvePurchasedPets~=false;
 q.antiAfkEnabled=mc.antiAfkEnabled~=false;
 q.netGuardEnabled=mc.netGuardEnabled~=false;
 q.directRemoteEnabled=mc.directRemoteEnabled~=false;
+q.setEnchantedRep(mc.enchantedRepEnabled==true);
 q.fastPunchRate=math.clamp(tonumber(mc.fastPunchRate)or q.fastPunchRate or 60,5,120);
 q.autoRockSelection=mc.autoRockSelection~=false;
 local rockRestored=false;
@@ -4742,8 +4844,15 @@ local qf,qg=q.layoutUI.makePercentSlider(qB,"ТЕМП УДАРОВ",q.fastPunchR
 q.fastPunchAdaptiveRate=math.min(q.fastPunchRate,20)q.fastPunchLastStrength=nil;
 ox.ValueLabel.Text=tostring(q.fastPunchRate).."/с"end)qg.LayoutOrder=2;
 qf.ValueLabel.Text=tostring(q.fastPunchRate).."/с"q.layoutUI.fastPunchSlider=qf;
+do
+    local lever,row=oC(qB,"»","БЫСТРЫЕ ПОВТОРЫ","метод Enchanted · включи кач или тренажёр",q.enchantedRepEnabled,function(enabled)
+        q.setEnchantedRep(enabled)
+        aP(q.language=="en"and(enabled and"FAST REPS: ON"or"FAST REPS: OFF")or(enabled and"БЫСТРЫЕ ПОВТОРЫ: включены"or"БЫСТРЫЕ ПОВТОРЫ: выключены"))
+    end)
+    row.LayoutOrder=3 q.leverRefs.enchantedRep=lever
+end
 local rN={Punch="▷",Weight="▣",Push="▽",Sit="⌁",Hand="♢",Tread="↗"}local rO={Punch="УДАРЫ",Weight="ГАНТЕЛИ",Push="ОТЖИМАНИЯ",Sit="ПРЕСС",Hand="СТОЙКА",Tread="БЕГ"}local rP={Punch="сила",Weight="гантели и штанга",Push="обычные отжимания",Sit="упражнение на пресс",Hand="стойка на руках",Tread="скорость и ловкость"}for o,cX in ipairs(q.trainModes)do local qR,qS;
-qR,qS=oC(qB,rN[cX.id]or"◈",rO[cX.id]or cX.label,rP[cX.id]or cX.desc,false,function(jH,ox)if jH then if not jW(cX)then ox.Set(false,true)end else if q.activeTrains[cX.id]then jS(cX.id,cX.label..": OFF")end end end)qS.LayoutOrder=o+2;
+qR,qS=oC(qB,rN[cX.id]or"◈",rO[cX.id]or cX.label,rP[cX.id]or cX.desc,false,function(jH,ox)if jH then if not jW(cX)then ox.Set(false,true)end else if q.activeTrains[cX.id]then jS(cX.id,cX.label..": OFF")end end end)qS.LayoutOrder=o+3;
 q.leverRefs.train[cX.id]=qR end;
 local rQ,rR=oj(nW,"БЕЗ ОГРАНИЧЕНИЯ",106,2)rQ.LayoutOrder=2;
 local rS,rT=oq(nW,"РАЗМЕР ПЕРСОНАЖА",80)rS.LayoutOrder=3;
