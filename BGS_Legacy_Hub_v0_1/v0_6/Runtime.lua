@@ -1,4 +1,4 @@
--- BGS Legacy 0.6.0: one scheduler, one movement owner, cancellable excursions.
+-- BGS Legacy 0.6.1: one scheduler, one movement owner, cancellable excursions.
 return function(L)
     local Players=game:GetService("Players")
     local RS=game:GetService("ReplicatedStorage")
@@ -14,18 +14,19 @@ return function(L)
         local ok,value=pcall(getgenv)
         if ok and type(value)=="table" then env=value end
     end
-    local S={alive=true,startupReady=false,version="0.6.0",errors=0,
+    local worlds,worldKey,registerWorld=L.newWorldCatalog()
+    local S={alive=true,startupReady=false,version="0.6.1",errors=0,
         autoBubble=false,autoSell=false,autoCollect=false,autoHatch=false,
         autoChestRoute=false,autoShiny=false,autoPotions=false,autoMinigames=false,
         bubbleDelay=0.25,hatchDelay=1,sellCheckDelay=1,teleportHeights=5,
         collectMode="smart",currency="Все",farmWorld="Overworld",collectCurrentIslandOnly=true,
-        teleportOnSelect=false,hatchAnywhere=true,hatchCount=1,shinyFilter="Все",potionRecipe=1,
+        teleportOnSelect=false,eventEggsOnly=false,hatchAnywhere=true,hatchCount=1,shinyFilter="Все",potionRecipe=1,
         minigame="Match The Pet",eggs={},islands={},pickups={},currencies={"Все"},
         selectedEgg=nil,selectedIsland=nil,collectIslandLock=nil,anchor=nil,
         status="Готово",bubbleStatus="Выключено",sellStatus="Выключено",collectStatus="Выключено",
         hatchStatus="Выбери яйцо",chestStatus="Выключено",shinyStatus="Выключено",
         potionStatus="Выключено",minigameStatus="Выключено",travelUntil=0,selling=false,
-        lastBubble=-math.huge,lastHatch=-math.huge,lastSellCheck=0,nextScan=0,worlds=L.worlds,
+        lastBubble=-math.huge,lastHatch=-math.huge,lastSellCheck=0,nextScan=0,worlds=worlds,
         chestDefs=L.chests,chestEnabled={},chestResults={},confirmedChests=0,
     }
     for _,d in ipairs(L.chests) do S.chestEnabled[d.world.."/"..d.name]=true end
@@ -71,6 +72,7 @@ return function(L)
             if v==nil then local child=o:FindFirstChild(name) if child and child:IsA("ValueBase") then v=child.Value end end
             if v~=nil then return v end
         end
+        return nil
     end
     local modules={}
     local function path(base,names)
@@ -131,17 +133,31 @@ return function(L)
         if not request.done then return false,"Сервер не ответил за 5 сек" end
         return table.unpack(request.result,1,request.result.n)
     end
+    local function discoverWorlds()
+        for _,name in ipairs({"Worlds","FloatingIslands"}) do
+            local container=workspace:FindFirstChild(name)
+            if container then
+                for _,node in ipairs(container:GetChildren()) do
+                    if node:IsA("Model") or node:IsA("Folder") then
+                        registerWorld(meta(node,{"World","WorldName"}) or node.Name,meta(node,{"Currency","CurrencyType"}))
+                    end
+                end
+            end
+        end
+    end
     local function worldOf(o)
         local p=o
         while p and p~=workspace do
-            local w=L.world(meta(p,{"World","WorldName"})) or L.world(p.Name)
+            local w=worldKey(meta(p,{"World","WorldName"})) or worldKey(p.Name)
             if w then return w end
             p=p.Parent
         end
     end
     local function childWorld(container,key)
         if not container then return nil end
-        for _,o in ipairs(container:GetChildren()) do if L.world(o.Name)==key then return o end end
+        for _,o in ipairs(container:GetChildren()) do
+            if (worldKey(meta(o,{"World","WorldName"})) or worldKey(o.Name))==key then return o end
+        end
     end
     local function worldNode(key)
         return childWorld(workspace:FindFirstChild("Worlds"),key) or childWorld(workspace,key)
@@ -208,7 +224,7 @@ return function(L)
         return true
     end
     local function detectWorld()
-        local attribute=L.world(meta(player,{"World","CurrentWorld"}))
+        local attribute=worldKey(meta(player,{"World","CurrentWorld"}))
         if attribute then return attribute end
         local r=root() local best,dist=nil,math.huge
         if r then
@@ -234,7 +250,7 @@ return function(L)
             if not validTicket(t) then return false end
             if not ok or answer==false then S.status="Мир недоступен: "..key return false end
             if not waitTicket(t,0.7) then return false end
-            local attr=L.world(meta(player,{"World","CurrentWorld"}))
+            local attr=worldKey(meta(player,{"World","CurrentWorld"}))
             if attr and attr~=key then S.status="Переход в мир отклонён: "..key return false end
             if not worldNode(key) and not islandContainer(key) then S.status="Мир ещё не загрузился: "..key return false end
             currentWorld=key
@@ -300,6 +316,9 @@ return function(L)
         return true
     end
     local currencyMap={coin="Coins",coins="Coins",gem="Gems",gems="Gems",candy="Candy",block="Blocks",blocks="Blocks",shell="Shells",shells="Shells",pearl="Pearls",pearls="Pearls",star="Stars",stars="Stars",magma="Magma",crystal="Crystals",crystals="Crystals"}
+    local function rememberCurrency(value)
+        if type(value)=="string" and value~="" then currencyMap[L.norm(value)]=value end
+    end
     local function currencyOf(o)
         local p=o
         while p and p~=workspace do
@@ -352,22 +371,52 @@ return function(L)
         table.sort(S.currencies,function(a,b) if a==b then return false elseif a=="Все" then return true elseif b=="Все" then return false end return a<b end)
     end
     local catalogDirty=true
+    local areaByNode=setmetatable({},{__mode="k"})
+    local function eventArea(node)
+        if not node or not node.Parent or not (node:IsA("Model") or node:IsA("Folder")) then return false end
+        local name,parent=L.norm(node.Name),L.norm(node.Parent.Name)
+        return node:GetAttribute("IsEvent")==true or node:GetAttribute("AreaType")=="Event"
+            or parent=="events" or parent=="eventareas"
+            or name=="autumn" or name=="autumnarea" or name=="autumnevent"
+            or name=="fall" or name=="fallarea" or name=="fallevent"
+    end
+    local function areaOf(node)
+        while node and node~=workspace do
+            if areaByNode[node] then return areaByNode[node] end
+            node=node.Parent
+        end
+    end
     local function mapEntry(node,name,world,order,def)
         local floor=surface(node)
         return {object=node,part=floor,name=name,world=world,order=order,def=def,
             y=floor and floor.Position.Y or 0,kind=(world=="Heaven" or world=="Mystic Forest") and "gem" or "normal"}
     end
     local function refreshCatalog()
-        local islands,seen={},{}
-        for wi,w in ipairs(L.worlds) do
+        discoverWorlds()
+        local nodes=workspace:GetDescendants()
+        local islands,seen,seenObjects={},{},{}
+        areaByNode=setmetatable({},{__mode="k"})
+        for wi,w in ipairs(S.worlds) do
             local base=worldNode(w.key)
-            if base then islands[#islands+1]=mapEntry(base,"Спавн",w.key,wi*100,nil) end
+            if base then islands[#islands+1]=mapEntry(base,"Спавн",w.key,wi*100,nil) seenObjects[base]=true end
             local container=islandContainer(w.key)
             if container then
                 for _,node in ipairs(container:GetChildren()) do
                     local entry=mapEntry(node,node.Name,w.key,wi*100+1,{world=w.key,name=node.Name})
-                    if entry.part then islands[#islands+1]=entry seen[w.key.."/"..L.norm(node.Name)]=true end
+                    if entry.part then islands[#islands+1]=entry seen[w.key.."/"..L.norm(node.Name)]=true seenObjects[node]=true end
                 end
+            end
+        end
+        -- An event area inside Overworld is a local destination, not a guessed SetWorld argument.
+        for _,node in ipairs(nodes) do
+            if eventArea(node) and not seenObjects[node] then
+                local world=worldOf(node) or "Overworld"
+                local entry=mapEntry(node,node.Name,world,900,nil)
+                if entry.part then
+                    entry.event=true islands[#islands+1]=entry seenObjects[node]=true areaByNode[node]=entry
+                end
+            elseif eventArea(node) then
+                areaByNode[node]={name=node.Name,world=worldOf(node) or "Overworld",event=true}
             end
         end
         -- Show all requested destinations even if the corresponding world is unloaded.
@@ -378,7 +427,7 @@ return function(L)
         end
         table.sort(islands,function(a,b)
             if a.world~=b.world then
-                local ai,bi=99,99 for i,w in ipairs(L.worlds) do if a.world==w.key then ai=i end if b.world==w.key then bi=i end end
+                local ai,bi=99,99 for i,w in ipairs(S.worlds) do if a.world==w.key then ai=i end if b.world==w.key then bi=i end end
                 return ai<bi
             end
             if math.abs(a.y-b.y)>1 then return a.y<b.y end
@@ -388,49 +437,85 @@ return function(L)
         S.islands=islands
         local eggs,byKey={},{}
         local eggData=itemModule("EggModule")
-        local folders={}
-        local direct=workspace:FindFirstChild("Eggs") if direct then folders[#folders+1]=direct end
-        local worlds=workspace:FindFirstChild("Worlds")
-        if worlds then
-            for _,w in ipairs(worlds:GetChildren()) do local f=w:FindFirstChild("Eggs") if f then folders[#folders+1]=f end end
+        if type(eggData)=="table" then
+            for _,data in pairs(eggData) do local currency=L.eggCost(data) rememberCurrency(currency) end
         end
-        local function addEgg(o)
-            local hot=o:FindFirstChild("Hotkey",true)
-            if not hot and not L.norm(o.Name):find("egg",1,true) then return end
-            if not o:IsA("Model") and not o:IsA("BasePart") then return end
-            local p=partOf(hot) or partOf(o)
-            if not p then return end
-            local data=type(eggData)=="table" and eggData[o.Name] or nil
-            local world=worldOf(o) or (type(data)=="table" and L.world(data.World)) or currentWorld or detectWorld()
-            local key=world.."/"..o.Name
+        local function eggFolder(node)
+            while node and node~=workspace do
+                if L.norm(node.Name)=="eggs" then return node end
+                node=node.Parent
+            end
+        end
+        local function eggIdentity(node)
+            local explicit=meta(node,{"EggName"})
+            if type(explicit)=="string" and explicit~="" then return explicit end
+            if type(eggData)=="table" and type(eggData[node.Name])=="table" then return node.Name end
+            if L.norm(node.Name):match("egg$") then return node.Name end
+        end
+        local function addEgg(node,hotkey)
+            if not node:IsA("Model") and not node:IsA("BasePart") then return end
+            local name=eggIdentity(node)
+            if not name then return end
+            local hot=hotkey or node:FindFirstChild("Hotkey",true)
+            local folder=eggFolder(node.Parent)
+            -- A decorative model named Egg outside an egg folder is not a hatch target.
+            if not hot and not folder then return end
+            local part=partOf(hot) or partOf(node)
+            if not part then return end
+            local data=type(eggData)=="table" and eggData[name] or nil
+            local area=areaOf(node)
+            -- Use the physical world or replicated egg metadata, never the player's current world.
+            local world=worldOf(node) or (type(data)=="table" and worldKey(data.World))
+                or (area and area.world) or "Overworld"
+            local key=world.."/"..name
             if byKey[key] then return end
-            local currency=meta(o,{"Currency","CurrencyType"})
-            local price=meta(o,{"Price","Cost","EggPrice"})
-            if type(data)=="table" and type(data.Cost)=="table" then
-                currency=currency or data.Cost[1] price=price or tonumber(data.Cost[2])
-            end
-            local e={object=o,part=p,name=o.Name,world=world,y=p.Position.Y,currency=currency,price=price,kind=isGemCurrency(currency) and "gem" or "normal"}
-            byKey[key]=e eggs[#eggs+1]=e
+            local currency=meta(node,{"Currency","CurrencyType"})
+            local price=tonumber(meta(node,{"Price","Cost","EggPrice"}))
+            local dataCurrency,dataPrice=L.eggCost(data)
+            currency=currency or dataCurrency price=price or dataPrice
+            rememberCurrency(currency)
+            local event=area~=nil or node:GetAttribute("IsEvent")==true
+                or (type(data)=="table" and (data.Limited==true or data.Event~=nil and data.Event~=false))
+            local entry={object=node,part=part,name=name,world=world,y=part.Position.Y,currency=currency,price=price,
+                event=event,area=area and area.name,available=true,kind=isGemCurrency(currency) and "gem" or "normal"}
+            byKey[key]=entry eggs[#eggs+1]=entry
         end
-        for _,folder in ipairs(folders) do
-            for _,o in ipairs(folder:GetDescendants()) do
-                if o.Name=="Hotkey" then
-                    local owner=o.Parent
-                    while owner and owner~=folder do
-                        if L.norm(owner.Name):find("egg",1,true) then addEgg(owner) break end
-                        owner=owner.Parent
-                    end
+        -- One workspace snapshot, including nested event folders and relocated Hotkeys.
+        -- Only metadata / the existing EggModule supplies protocol names and prices.
+        for _,node in ipairs(nodes) do
+            if node.Name=="Hotkey" then
+                local owner=node.Parent
+                while owner and owner~=workspace do
+                    if (owner:IsA("Model") or owner:IsA("BasePart")) and eggIdentity(owner) then addEgg(owner,node) break end
+                    owner=owner.Parent
                 end
+            elseif (node:IsA("Model") or node:IsA("BasePart")) and eggFolder(node.Parent) then
+                addEgg(node)
             end
-            for _,o in ipairs(folder:GetChildren()) do addEgg(o) end
         end
-        table.sort(eggs,function(a,b) if a.world~=b.world then return a.world<b.world end return a.name<b.name end)
+        table.sort(eggs,function(a,b)
+            if a.world~=b.world then return a.world<b.world end
+            if math.abs(a.y-b.y)>1 then return a.y<b.y end
+            return a.name<b.name
+        end)
         S.eggs=eggs
-        if S.selectedEgg then local e=S.selectedEgg S.selectedEgg=byKey[e.world.."/"..e.name] or e end
+        if S.selectedEgg then
+            local old=S.selectedEgg
+            local replacement=byKey[old.world.."/"..old.name]
+            if replacement then S.selectedEgg=replacement
+            else old.available=false old.object=nil old.part=nil S.hatchStatus="Выбранное яйцо больше не загружено" end
+        end
+        if S.selectedIsland then
+            local old=S.selectedIsland
+            for _,entry in ipairs(islands) do
+                if entry.world==old.world and entry.name==old.name then S.selectedIsland=entry break end
+            end
+        end
         catalogDirty=false
     end
     function S:Refresh()
         refreshCatalog() compactPickups() self.nextScan=os.clock()+10
+        if not lease.current and ready() then currentWorld=detectWorld() end
     end
     local function nearestIsland(pos)
         local best,dist=nil,math.huge
@@ -516,8 +601,8 @@ return function(L)
         S.collectStatus=item.currency.." · "..math.floor(d).." studs"
     end
     function S:SetFarmWorld(key)
-        if not L.world(key) then return false end
-        self.farmWorld=L.world(key) self.collectCurrentIslandOnly=false
+        if not worldKey(key) then return false end
+        self.farmWorld=worldKey(key) self.collectCurrentIslandOnly=false
         return self:GoFarmWorld()
     end
     function S:GoFarmWorld()
@@ -568,6 +653,12 @@ return function(L)
         local now=os.clock() local e=self.selectedEgg
         if not ready() or lease.current or now<self.travelUntil or hatchPending then return false end
         if not e then self.hatchStatus="Выбери яйцо" return false end
+        if e.available==false or not validObject(e.object) then
+            local known=itemModule("EggModule")
+            if not self.hatchAnywhere or type(known)~="table" or type(known[e.name])~="table" then
+                self.hatchStatus="Яйцо недоступно · жду появления на карте" return false
+            end
+        end
         if network("Function") and (not inventory or now-inventoryAt>8) then
             if not automatic then self.manualHatchRequested=true end
             self.hatchStatus="Жду данные инвентаря перед открытием" return false
@@ -913,16 +1004,23 @@ return function(L)
     end
     function S:Diagnostic()
         local reports={"BGS Legacy "..self.version,"PlaceId="..game.PlaceId,"World="..tostring(currentWorld),
-            "Pickups="..#self.pickups,"Eggs="..#self.eggs,"Islands="..#self.islands,
+            "Worlds="..#self.worlds,"Pickups="..#self.pickups,"Eggs="..#self.eggs,"Islands="..#self.islands,
             "Movement="..(lease.current and lease.current.kind or "idle"),"Errors="..self.errors,
             "Hatch="..self.hatchStatus,"Shiny="..self.shinyStatus,"Potions="..self.potionStatus,"Minigame="..self.minigameStatus,"Chest="..self.chestStatus}
+        for _,egg in ipairs(self.eggs) do
+            reports[#reports+1]="Egg="..egg.name.." | "..egg.world.." | "..tostring(egg.area or "")
+                .." | "..tostring(egg.currency or "?").." | "..tostring(egg.price or "?")
+        end
         local text=table.concat(reports,"\n")
         if type(setclipboard)=="function" then pcall(setclipboard,text) end
         self.status="Диагностика скопирована" print(text) return text
     end
+    local nextCatalogRefresh=0
     local function step(now)
         if not ready() then return end
-        if now>=S.nextScan or catalogDirty then S:Refresh() end
+        if now>=S.nextScan or (catalogDirty and now>=nextCatalogRefresh) then
+            nextCatalogRefresh=now+1 S:Refresh()
+        end
         if now>=nextCompact then compactPickups() nextCompact=now+1 end
         updateData(now) hatchFeedback(now)
         if S.autoBubble and now-S.lastBubble>=S.bubbleDelay then
@@ -952,9 +1050,14 @@ return function(L)
         self:Refresh() currentWorld=detectWorld() self.farmWorld=currentWorld
         connect(workspace.DescendantAdded,function(o)
             if o:IsA("BasePart") then addPart(o) end
-            if o.Name=="FloatingIslands" or o.Name=="Worlds" or o.Name=="Eggs" or o.Name=="Hotkey" then catalogDirty=true end
+            if not pickupContainer(o) and (o:IsA("Model") or o:IsA("Folder") or o.Name=="Hotkey"
+                or o.Name=="Collision" or o.Name=="Ground" or o.Name=="EggName") then catalogDirty=true end
         end)
-        connect(workspace.DescendantRemoving,function(o) pickupByPart[o]=nil end)
+        connect(workspace.DescendantRemoving,function(o)
+            pickupByPart[o]=nil
+            if not pickupContainer(o) and (o:IsA("Model") or o:IsA("Folder") or o.Name=="Hotkey"
+                or o.Name=="Collision" or o.Name=="Ground") then catalogDirty=true end
+        end)
         connect(player.CharacterAdded,function()
             cancelMovement() miniGeneration+=1 dataGeneration+=1
             for thread in pairs(threads) do
@@ -979,7 +1082,7 @@ return function(L)
                 user:Button2Up(Vector2.new(0,0),workspace.CurrentCamera and workspace.CurrentCamera.CFrame or CFrame.new())
             end)
         end)
-        self.startupReady=true self.status="BGS Legacy 0.6.0 · готово"
+        self.startupReady=true self.status="BGS Legacy 0.6.1 · готово"
     end
     local ui={Players=Players,RS=RS,Run=Run,Input=Input,player=player,playerGui=playerGui,root=root,
         connect=connect,clearTarget=clearTarget,stopMove=stopMove,isGemCurrency=isGemCurrency}

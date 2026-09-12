@@ -134,11 +134,10 @@ local function borderForKind(kind,currency)
 end
 local function eggDetail(e)
     local price=e.price and (tostring(e.price).." "..tostring(e.currency or "")) or "цена из игры"
-    return e.world.." · "..price
+    return (e.area or e.world).." · "..price..(e.event and " · событие" or "")..(e.available==false and " · ожидаю загрузку" or "")
 end
 local function islandDetail(i)
-    local tag=i.kind=="gem" and "GEMS" or "обычный"
-    return i.world.." · "..(i.part and "на карте" or "загрузится при переходе")
+    return i.world..(i.event and " · событие" or "").." · "..(i.part and "на карте" or "загрузится при переходе")
 end
 
 -- ФАРМ
@@ -150,13 +149,14 @@ local farmInfo=textRow(pages[1],"",32,C.accent)
 local sellInfo=textRow(pages[1],"",32,C.good)
 
 -- ЯЙЦА
-textRow(pages[2],"Список: от самого низкого яйца к самому высокому.",26,C.muted)
+toggle(pages[2],"Только яйца события","Показывать яйца загруженного события",function() return S.eventEggsOnly end,function(v) S.eventEggsOnly=v end)
+textRow(pages[2],"Сортировка внутри мира: снизу → вверх.",26,C.muted)
 textRow(pages[2],"Фиолетовая рамка = Gems · зелёная = обычная валюта.",26,C.muted)
 local eggButton=button(pages[2],"ВЫБРАТЬ ЯЙЦО  ›",function()
     S:Refresh()
     local items={}
     for idx,e in ipairs(S.eggs) do
-        items[#items+1]={title=string.format("%02d. %s",idx,e.name),detail=eggDetail(e),value=e,selected=S.selectedEgg and S.selectedEgg.object==e.object,borderColor=borderForKind(e.kind,e.currency)}
+        if not S.eventEggsOnly or e.event then items[#items+1]={title=string.format("%02d. %s",idx,e.name),detail=eggDetail(e),value=e,selected=S.selectedEgg and S.selectedEgg.object==e.object,borderColor=borderForKind(e.kind,e.currency)} end
     end
     picker("Яйца · снизу → вверх · "..#items,items,function(e) S:SelectEgg(e) end)
 end,46) stroke(eggButton,C.accent,0.25)
@@ -165,7 +165,7 @@ local eggActions=make("Frame",pages[2],{Size=UDim2.new(1,-6,0,35),BackgroundTran
 local goEgg=button(eggActions,"К яйцу",function() S:GoToEgg() end,35) goEgg.Size=UDim2.new(0.5,-4,1,0)
 local once=button(eggActions,"Открыть ×1",function() S:HatchOnce() end,35) once.Size=UDim2.new(0.5,-4,1,0) once.Position=UDim2.new(0.5,4,0,0)
 toggle(pages[2],"Автооткрытие","Открывает именно выбранное имя яйца",function() return S.autoHatch end,function(v) S:SetMode("autoHatch",v) end)
-toggle(pages[2],"ТП при выборе","Сразу переносит к Hotkey яйца",function() return S.teleportOnSelect end,function(v) S.teleportOnSelect=v end)
+toggle(pages[2],"ТП при выборе","Переносит к выбранному яйцу",function() return S.teleportOnSelect end,function(v) S.teleportOnSelect=v end)
 slider(pages[2],"Интервал открытий","hatchDelay",0.65,3,0.05,"сек")
 local hatchInfo=textRow(pages[2],"",30,C.accent)
 
@@ -203,7 +203,7 @@ textRow(pages[4],"Если одна точка не берётся 4 сек — 
 button(pages[5],"Обновить всё",function() S:Refresh() S.status="Списки обновлены" end,36)
 local hard2=button(pages[5],"Остановить всё",function() S:HardStop() end,36) hard2.TextColor3=C.danger
 textRow(pages[5],"Окно таскается за верх, меняет размер за угол и сворачивается кнопкой «—».",44)
-textRow(pages[5],"BGS Legacy Hub 0.6.0",24,C.accent)
+textRow(pages[5],"BGS Legacy Hub 0.6.1",24,C.accent)
 
 -- 0.6 controls share the same picker and redraw loop as the existing UI.
 local function addPickerButton(page,title,items,choose)
@@ -215,6 +215,7 @@ addPickerButton(pages[2],"Количество яиц: 1 / 3",function()
 end,function(v) S.hatchCount=v end)
 toggle(pages[2],"Яйца из любого места","Фарм монет продолжает работать; доступ проверяет игра",function() return S.hatchAnywhere end,function(v) S.hatchAnywhere=v end)
 local worldButton=addPickerButton(pages[4],"Выбрать мир фарма",function()
+    S:Refresh()
     local items={}
     for _,w in ipairs(S.worlds) do items[#items+1]={title=w.display,detail=w.currency,value=w.key,selected=S.farmWorld==w.key} end
     return items

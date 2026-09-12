@@ -9,3 +9,11 @@ The runtime is original implementation. These public, older BGS code examples we
 These examples concern the original BGS, not proof of current Legacy server compatibility. Runtime checks require replicated instances/data for the corresponding adapter. In particular, no assertion is made that `DoggyJumpWin` is accepted by the current Legacy server, or that distant/multi hatching bypasses server restrictions. Unsupported schemas are reported, not searched via remote-command guessing.
 
 Regression fixtures model these observed contracts. They validate cancellation, request arguments, bounded retries, exact return to the farm, grouping, and UI construction; they do not validate Roblox physics or the live server.
+
+## Fall compatibility update (0.6.1)
+
+On 2026-09-12, the [official original Bubble Gum Simulator page](https://www.roblox.com/games/2512643572/Bubble-Gum-Simulator) displayed the FALL update: an Autumn area, three eggs, a redesigned lobby, Bubble Pass season 26, Autumn Challenges/shop, and new pets. This identifies the game/update; it does not establish its instance hierarchy or introduce verified new remote contracts.
+
+The update extends map discovery using replicated `Worlds`/`FloatingIslands` children, nested `Eggs`, `Hotkey` ownership, `EggName`, and the existing `EggModule`. Event areas are recognized by replicated event attributes/containers and Autumn/Fall area names; areas inside a world are local destinations. Names, currencies, and prices come from loaded objects/data. No new event quest/shop remote was guessed. The fixture's three Fall egg names and prices are deliberately synthetic.
+
+Streaming replacement preserves the selected egg by world/name. Hatch-anywhere can still use a known `EggModule` entry when its model is unloaded; an egg absent from both sources waits for discovery. Tests cover the new layout, dynamic currency, event filtering, model replacement, a newly loaded world, and exact AFK return to an event location. Live game/executor compatibility remains unverified.

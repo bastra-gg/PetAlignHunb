@@ -3,7 +3,7 @@
 from pathlib import Path
 
 root = Path(__file__).resolve().parent
-parts = ["-- BGS Legacy Hub 0.6.0; generated with v0_6/build.py.\n"]
+parts = ["-- BGS Legacy Hub 0.6.1; generated with v0_6/build.py.\n"]
 for name, variable in [("Logic.lua", "logic"), ("Runtime.lua", "createRuntime"), ("UI.lua", "createUI")]:
     parts.append(f"local {variable}=(function()\n{(root/name).read_text()}\nend)()\n")
 parts.append('''local S,api=createRuntime(logic)
