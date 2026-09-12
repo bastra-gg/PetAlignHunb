@@ -4,7 +4,7 @@ pcall(function()i=game:GetService("NetworkClient")end)if not game:IsLoaded()then
 local j=a.LocalPlayer;
 while not j do task.wait()j=a.LocalPlayer end;
 local k=j:WaitForChild("PlayerGui",60)if not k then warn("[RockBugHub] PlayerGui was not created")pcall(function()g:SetCore("SendNotification",{Title="RockBugHub",Text="Ошибка запуска: PlayerGui не найден",Duration=8})end)return end;
-local l="RockBugHub_TEST_v4_25_BOSS_T28"local m="4.25BOSS-T28"local n=type(getgenv)=="function"and getgenv()or _G;
+local l="RockBugHub_TEST_v4_25_BOSS_T30"local m="4.25BOSS-T30"local n=type(getgenv)=="function"and getgenv()or _G;
 do
     -- Retire the old experimental windows and their listeners on hot reload.
     for _, key in ipairs({"RockBugTradeDiagnostics", "RockBugMiniTransfer"}) do
@@ -609,8 +609,9 @@ local fe=q.machineCharacterBefore;
 local ff=q.machineAnimationsBefore;
 task.spawn(function()task.wait(0.2)if not q.alive or not q.machineActive or q.machineToken~=fd then if q.machineToken==fd then q.machineAttachInFlight=false end;
 return end;
-local fg=fa(f2)if q.machineToken~=fd or not q.machineActive then if fg and eq then eq(f2,fe,ff,q.machineActive)end;
-if q.machineToken~=fd then q.machineAttachInFlight=false end;
+local fg=fa(f2)if q.machineToken~=fd or not q.machineActive then
+if fg and eq and not q.machineActive then eq(f2,fe,ff,false)end;
+if q.machineToken==fd then q.machineAttachInFlight=false end;
 return end;
 q.machineAttachInFlight=false;
 q.machineAttached=fg;
@@ -1116,7 +1117,8 @@ if q.closeDeleteConfirmation then B(q.closeDeleteConfirmation)end;
 if gx then aP(gx)end end;
 q.kingTarget=CFrame.new(-8625.93262,17.2325287,-5730.47217,0.765763462,-1.84813775e-09,0.643122315,-1.32089262e-09,1,4.44647785e-09,-0.643122315,-4.25444568e-09,0.765763462)local function ig()local I=b:FindFirstChild("rEvents")local eh=I and I:FindFirstChild("rebirthRemote")if eh and(eh:IsA("RemoteFunction")or eh:IsA("RemoteEvent"))then return eh end;
 return nil end;
-local function ih(eh)if q.networkPaused then return false,"network hold"end;
+local function ih(eh)if q.bossRestorePending then return false,"waiting for machine seat"end;
+if q.networkPaused then return false,"network hold"end;
 eh=eh or ig()if not eh then return false,"rebirthRemote не найден"end;
 local gL=nil;
 local D,hg=B(function()if eh:IsA("RemoteFunction")then gL=eh:InvokeServer("rebirthRequest")else eh:FireServer("rebirthRequest")end end)return D,hg,eh:IsA("RemoteFunction"),gL end;
@@ -1157,7 +1159,7 @@ local function it(H,cl,iu)local iv=q.pingAvailable and math.max(0,tonumber(q.pin
 local i7=math.clamp(0.35+iv*3,0.65,1.5)if cl-H<=2 then i7=math.max(i7,2.0)end;
 if not iu then i7=math.max(i7,1.0)end;
 return math.min(i7,2.5)end;
-local function iw(ix)local function iy()return q.alive and q.autoRebirth and q.rebirthToken==ix end;
+local function iw(ix)local function iy()return q.alive and not q.bossRestorePending and q.autoRebirth and q.rebirthToken==ix end;
 local fe=nil;
 local io=nil;
 local cl=nil;
@@ -1617,7 +1619,9 @@ q.machineCharacterBefore={}q.machineAnimationsBefore={}local fi=aM()if fi then f
 B(function()local fc=aN()local fy=fc:FindFirstChildOfClass("Animator")local fz=fy and fy:GetPlayingAnimationTracks()or fc:GetPlayingAnimationTracks()for o,fA in ipairs(fz)do q.machineAnimationsBefore[fA]=true end end)local j_,hg=B(function()fB.Anchored=false;
 if not keepPosition then fB.CFrame=f2.seat.CFrame*CFrame.new(0,3,0)end;
 fB.AssemblyLinearVelocity=Vector3.new(0,0,0)fB.AssemblyAngularVelocity=Vector3.new(0,0,0)end)if not j_ then jX(nil)aP("ТРЕНАЖЁР: "..tostring(hg):sub(1,85))return false end;
+local attachToken=q.machineToken;
 task.wait(0.18);
+if not q.alive or not q.machineActive or q.machineToken~=attachToken then return false end;
 local o,ec=e5()q.remoteTokens=math.max(q.remoteTokens or 0,ec)if q.leverRefs.machineFarm then q.leverRefs.machineFarm.Set(true,true)end;
 ep(f2,q.machineToken)aP("ФАРМ: "..tostring(f2.zone).." • "..tostring(f2.name))return true end;
 do q.teleportDestinations={{id="Tiny Island",position={-34,7,1903},aliases={"tinyisland","tiny"}},{id="Starter Island",position={2,8,115},aliases={"starterisland","starter","mainisland"}},{id="Legend Beach",position={470,7,-321},aliases={"legendbeach","beach"}},{id="Frost Gym",position={-2600.00244,3.67686558,-403.884369},aliases={"frostgym","frozengym","frozenisland","frost","frozen"}},{id="Mythical Gym",position={2255,7,1071},aliases={"mythicalgym","mythicalisland","mythical","mystic"}},{id="Eternal Gym",position={-6768,7,-1287},aliases={"eternalgym","eternalisland","infernogym","eternal","inferno"}},{id="Legend Gym",position={4604,991,-3887},aliases={"legendsgym","legendgym","legendsisland","legendisland"}},{id="Muscle King Gym",position={-8646,17,-5738},aliases={"musclekinggym","muscleking","kinggym","kingisland","kingarena"}},{id="Jungle Gym",position={-8659,6,2384},aliases={"ancientjungle","junglegym","jungleisland","jungle"}},{id="Industrial Gym"}}q.teleportPortalCache=q.teleportPortalCache or{}local k0={}k0.metadataFields={"Destination","destination","TeleportDestination","teleportDestination","TeleportTo","teleportTo","Target","target","Location","location","Zone","zone","Gym","gym","Island","island","Spawn","spawn"}function k0.key(N)return string.lower(tostring(N or"")):gsub("[^%w]","")end;
@@ -1942,7 +1946,7 @@ if b6>=q.nextNetUpdate then q.nextNetUpdate=b6+0.5;
 dO(b6)ei()q.updateSessionStats(b6)b2()end;
 if q.networkPaused and b6>=q.nextNetworkHoldTick then q.nextNetworkHoldTick=b6+0.05;
 dG()end;
-if not q.networkPaused and q.autoRebirth and not q.rebirthInFlight and b6>=q.nextRebirth then q.nextRebirth=b6+0.05;
+if not q.networkPaused and not q.bossRestorePending and q.autoRebirth and not q.rebirthInFlight and b6>=q.nextRebirth then q.nextRebirth=b6+0.05;
 q.rebirthInFlight=true;
 local ix=q.rebirthToken;
 task.spawn(function()local D,hg=xpcall(function()iw(ix)end,function(j1)local kQ=""if debug and type(debug.traceback)=="function"then kQ="\n"..tostring(debug.traceback())end;
@@ -2921,9 +2925,11 @@ do
 end
 
 -- Integrated background boss/reward cycle. No separately loaded addon or extra GUI.
-do
+-- Function scope keeps this module below Luau's 200-local register limit.
+do (function()
     pcall(function() if n.RockBugBossReward and n.RockBugBossReward.Stop then n.RockBugBossReward.Stop() end end)
     pcall(function() local old=j.PlayerGui:FindFirstChild("RockBugBossRewardToggle") if old then old:Destroy() end end)
+    -- BOSS_CYCLE_BEGIN
     local createCycle=(function()
 -- Orchestrates existing modes. Combat and movement belong to the unchanged adapter.
 return function(api)
@@ -2937,6 +2943,7 @@ return function(api)
         self.generation+=1
         self.enabled=false
         api.cancelClaim()
+        api.cancelRestore()
         if self.snapshot then api.stop() end
         self.target=nil
         self.missingSince=nil
@@ -2958,6 +2965,7 @@ return function(api)
         if not s.enabled and s.phase~="returning" then return end
         if not api.ready() then s.arenaSince=nil return end
         local now=api.now()
+        if s.phase=="fighting" or s.phase=="arena" or s.phase=="rewards" then api.observeReward() end
         local generation=s.generation
         local function current()return api.alive() and s.generation==generation end
         if s.phase=="waiting" then
@@ -3016,7 +3024,7 @@ return function(api)
             if s.arenaEntered and api.onArena() then
                 s.arenaSince=s.arenaSince or now
                 if now-s.arenaSince>=1 then
-                    s.claimDeadline=now+12
+                    s.claimDeadline=now+30
                     phase("rewards")
                 end
             else
@@ -3025,16 +3033,22 @@ return function(api)
             end
         elseif s.phase=="rewards" then
             if api.conflict() then s:Cancel(false) return end
-            local result=api.claim(current)
+            local result=api.claim(current,s.snapshot)
             if not current() then return end
-            -- Disabled/removed prompt is acknowledgement, not proof of inventory credit.
-            if result=="closed" or now>=s.claimDeadline then phase("returning") end
+            if result=="closed" then
+                api.cancelClaim()
+                phase("returning")
+            elseif api.now()>=s.claimDeadline then
+                api.cancelClaim()
+                api.report("Получение награды не подтверждено — возвращаю прежние занятия")
+                phase("returning")
+            end
         elseif s.phase=="returning" then
             if api.conflict() then s:Cancel(false) return end
             local snapshot=s.snapshot
-            s.snapshot=nil -- consume once, also if restoring encounters a failure
             local restored=not snapshot or api.restore(snapshot,current)
             if not current() then return end
+            s.snapshot=nil
             if restored==false then s.enabled=false end
             s.target=nil
             s.nextScan=api.now()+3
@@ -3049,7 +3063,9 @@ return function(api)
         if not ok then
             self.enabled=false
             api.cancelClaim()
+            api.cancelRestore()
             api.stop()
+            if self.phase=="returning" then self.snapshot=nil end
             if self.snapshot then phase("returning") else phase("off") end
             api.report(tostring(problem))
         end
@@ -3058,6 +3074,7 @@ return function(api)
 end
 
     end)()
+    -- BOSS_CYCLE_END
     local function paint(key,value)
         local lever=q.leverRefs[key]
         if lever then lever.Set(value,true) end
@@ -3144,7 +3161,62 @@ end
         return root and root==arenaRoot and root.Parent and arenaPoint and not root.Anchored
             and (root.Position-arenaPoint).Magnitude<=3
     end
-    local function restore(snapshot,current)
+    -- BOSS_SEAT_WAIT_BEGIN
+    local function waitForSeat(api,current)
+        local elapsed,stableSince=0,nil
+        local previous=api.now()
+        while current() and api.owned() do
+            local now=api.now()
+            if api.ready() then
+                elapsed+=math.max(0,now-previous)
+                if api.attached() and not api.inFlight() then
+                    stableSince=stableSince or now
+                    if now-stableSince>=0.4 then return true end
+                else
+                    stableSince=nil
+                    if not api.inFlight() then api.retry() end
+                end
+                if elapsed>=20 then return false,"Посадка не подтверждена — ребирты оставлены выключенными" end
+            else
+                stableSince=nil
+            end
+            previous=now
+            api.wait(0.1)
+        end
+        return false,"cancelled"
+    end
+    -- BOSS_SEAT_WAIT_END
+    -- BOSS_MACHINE_PRESENCE_BEGIN
+    local function machinePresence(machine,character,humanoid)
+        if not machine or not machine.seat or not machine.seat.Parent or not character
+            or not humanoid or humanoid.Health<=0 then return false end
+        local function machinePart(part)
+            return part and (part==machine.seat or machine.model and part:IsDescendantOf(machine.model))
+        end
+        if machinePart(humanoid.SeatPart) then return true end
+        -- interactSeat may be a Part, so Humanoid.Sit alone is insufficient.
+        for _,container in ipairs({character,machine.seat,machine.model})do
+            if container then
+                for _,joint in ipairs(container:GetDescendants())do
+                    if joint:IsA("Weld") or joint:IsA("WeldConstraint") or joint:IsA("Motor6D") then
+                        local p0,p1=joint.Part0,joint.Part1
+                        if p0 and p1 and ((p0:IsDescendantOf(character) and machinePart(p1))
+                            or (p1:IsDescendantOf(character) and machinePart(p0))) then return true end
+                    end
+                end
+            end
+        end
+        return false
+    end
+    -- BOSS_MACHINE_PRESENCE_END
+    local function cancelRestore()
+        local pending=q.bossRestorePending
+        q.bossRestorePending=nil
+        if pending and pending.machineToken and q.machineToken==pending.machineToken
+            and q.selectedMachine==pending.machine then jX(nil) end
+    end
+    -- BOSS_RESTORE_BEGIN
+    local function restoreBody(snapshot,current)
         if not current() then return false end
         local root=aO()
         if not root then return false end
@@ -3153,7 +3225,43 @@ end
         root.AssemblyLinearVelocity=Vector3.zero
         root.AssemblyAngularVelocity=Vector3.zero
         -- Restore physical presence using the existing helpers, including King's trigger.
-        if f.machineActive then jZ(f.selectedMachine)
+        if f.machineActive then
+            local machine=f.selectedMachine
+            local pending={machine=machine,machineToken=q.machineToken+1}
+            q.bossRestorePending=pending
+            local rebirthToken,modeToken=q.rebirthToken,q.modeToken
+            local function owned()
+                return q.bossRestorePending==pending and aO()==root and root.Parent
+                    and aN() and aN().Health>0 and q.machineActive and q.selectedMachine==machine
+                    and q.machineToken==pending.machineToken and q.rebirthToken==rebirthToken
+                    and q.modeToken==modeToken and not q.autoRebirth
+                    and not q.kingLock and not q.lockPosition and not q.lockRock
+                    and not q.autoQuest and q.killMode=="off"
+            end
+            if not jZ(machine) then cancelRestore() return false end
+            pending.machineToken=q.machineToken
+            q.bossCycleStatus="Возврат: жду посадку на тренажёр · ребирты на паузе"
+            local seated,problem=waitForSeat({
+                now=os.clock,wait=task.wait,owned=owned,
+                ready=function()return not q.networkPaused end,
+                attached=function()return machinePresence(machine,aM(),aN()) end,
+                inFlight=function()return q.machineAttachInFlight end,
+                retry=function()
+                    if os.clock()>=q.machineNextAttach then
+                        q.machineNextAttach=os.clock()+1.5
+                        if (root.Position-machine.seat.Position).Magnitude>6 then
+                            root.CFrame=machine.seat.CFrame*CFrame.new(0,3,0)
+                            root.AssemblyLinearVelocity=Vector3.zero root.AssemblyAngularVelocity=Vector3.zero
+                        end
+                        ep(machine,pending.machineToken)
+                    end
+                end,
+            },current)
+            if not seated or not current() or not owned() then
+                cancelRestore()
+                if problem and problem~="cancelled" then q.bossCycleError=problem aP(problem) end
+                return false
+            end
         elseif f.kingLock then ji() paint("kingLock",q.kingLock)
         elseif f.lockRock then jm(snapshot.origin) q.lockRock=true paint("lockRock",true)
         elseif f.lockPosition then q.lockPosition=true q.positionCF=f.positionCF or snapshot.origin paint("lockPosition",true) end
@@ -3165,9 +3273,6 @@ end
         for id in pairs(q.activeTrains)do if q.leverRefs.train and q.leverRefs.train[id]then q.leverRefs.train[id].Set(true,true)end end
         for _,key in ipairs({"rebirthGoalEnabled","rebirthGoal","rebirthGoalCompleted","rebirthGoalAwaitingFrom",
             "rebirthGoalAwaitingSince","rebirthGoalAwaitingUntil","rebirthGoalReadFailures","nextRebirth"})do q[key]=f[key] end
-        q.autoRebirth=f.autoRebirth
-        if q.rebirthGoalEnabled then iq() end -- exact current counter may have reached the goal during the fight
-        paint("autoRebirth",q.autoRebirth) paint("rebirthGoal",q.rebirthGoalEnabled)
         q.autoSize=f.autoSize paint("autoSize",q.autoSize)
         if f.eggEnabled then q.startProteinEggAutomation() q.eggNextUseAt=f.eggNextUseAt end
         if f.petCleanupEnabled then hY() paint("petCleanup",q.petCleanupEnabled) end
@@ -3177,71 +3282,209 @@ end
         if f.crystalMode and f.crystalMode~="off" then i5(f.crystalMode) end
         if f.killMode and f.killMode~="off" then gz(f.killMode) end
         if f.autoQuest then q.startAutoQuest() paint("autoQuest",q.autoQuest) end
+        if not current() then return false end
+        if f.machineActive and not machinePresence(f.selectedMachine,aM(),aN()) then
+            q.bossCycleError="Посадка потеряна при восстановлении — ребирты выключены"
+            aP(q.bossCycleError)
+            return false
+        end
+        q.autoRebirth=f.autoRebirth
+        if q.rebirthGoalEnabled then iq() end -- exact current counter may have reached the goal during the fight
+        paint("autoRebirth",q.autoRebirth) paint("rebirthGoal",q.rebirthGoalEnabled)
+        q.bossRestorePending=nil
         return current()
     end
-    local prompts=setmetatable({},{__mode="k"})
-    local function track(obj)
-        if obj:IsA("ProximityPrompt") and not prompts[obj]then prompts[obj]={tries=0,nextAt=0}end
+    local function restore(snapshot,current)
+        local ok,result=pcall(restoreBody,snapshot,current)
+        if not ok then cancelRestore() error(result) end
+        if not result then cancelRestore() end
+        return result
     end
-    for _,obj in ipairs(workspace:GetDescendants())do track(obj)end
-    aJ(workspace.DescendantAdded:Connect(track))
+    -- BOSS_RESTORE_END
+    local prompts=setmetatable({},{__mode="k"})
+    local rewardLabels=setmetatable({},{__mode="k"})
+    local previousRewardLabels=setmetatable({},{__mode="k"})
+    local rewardAcknowledged=false
+    local function track(obj)
+        if obj:IsA("ProximityPrompt") then prompts[obj]=true
+        elseif (obj:IsA("TextLabel") or obj:IsA("TextButton")) and obj:IsDescendantOf(k) then rewardLabels[obj]=true end
+    end
+    for _,container in ipairs({workspace,k})do
+        for _,obj in ipairs(container:GetDescendants())do track(obj)end
+        aJ(container.DescendantAdded:Connect(track))
+    end
+    -- BOSS_REWARD_TEXT_BEGIN
+    local function rewardText(text)
+        local value=tostring(text or ""):gsub("<[^>]*>",""):gsub("%s+"," "):lower()
+        return value:find("chest rewards",1,true)~=nil
+            or value:find("Награды сундуков",1,true)~=nil or value:find("награды сундуков",1,true)~=nil
+            or value:find("you already claimed your reward",1,true)~=nil
+    end
     local function matches(prompt)
         if not prompt.Parent or not prompt.Enabled then return false end
-        local action=tostring(prompt.ActionText):lower():gsub("^%s+",""):gsub("%s+$","")
-        local object=tostring(prompt.ObjectText):lower():gsub("^%s+",""):gsub("%s+$","")
-        return action=="claim reward" and (object=="boss chest" or object:match("^%a+ boss chest$")~=nil)
+        local action=tostring(prompt.ActionText)
+        local object=tostring(prompt.ObjectText)
+        local parts={object,tostring(prompt.Name)}
+        local node=prompt.Parent
+        for _=1,6 do
+            if not node or node==workspace then break end
+            table.insert(parts,tostring(node.Name)) node=node.Parent
+        end
+        local context=table.concat(parts," ")
+        local enAction,enContext=action:lower(),context:lower()
+        local reward=enAction:find("claim",1,true) or enAction:find("collect",1,true) or enAction:find("reward",1,true)
+            or action:find("Получить награду",1,true) or action:find("получить награду",1,true)
+            or action:find("Собрать награду",1,true) or action:find("собрать награду",1,true)
+            or action:find("Забрать награду",1,true) or action:find("забрать награду",1,true)
+        local boss=enContext:find("boss",1,true) or context:find("Босс",1,true) or context:find("босс",1,true)
+        local chest=enContext:find("chest",1,true) or context:find("Сундук",1,true) or context:find("сундук",1,true)
+        return reward~=nil and boss~=nil and chest~=nil
     end
-    local cleanupClaim
-    local function cancelClaim()if cleanupClaim then cleanupClaim()end end
-    local function claim(current)
-        for prompt,entry in pairs(prompts)do
-            if not prompt.Parent then prompts[prompt]=nil
-            elseif matches(prompt) and entry.tries<3 and os.clock()>=entry.nextAt then
-                local root,humanoid=aO(),aN()
-                local parent=prompt.Parent
-                local position=parent:IsA("Attachment") and parent.WorldPosition
-                    or parent:IsA("BasePart") and parent.Position or parent:IsA("Model") and parent:GetPivot().Position
-                local hold=tonumber(prompt.HoldDuration)or 0
-                if not position or not root or not humanoid or humanoid.Health<=0 or hold<0 or hold>5 then continue end
-                local origin=root.CFrame
-                local ended=false
-                local function valid()return not ended and current() and aO()==root and root.Parent and humanoid.Health>0 and not q.networkPaused end
-                cleanupClaim=function()
-                    if ended then return end
-                    ended=true
-                    pcall(function()prompt:InputHoldEnd()end)
-                    if aO()==root and root.Parent and humanoid.Health>0 then
-                        pcall(function()root.CFrame=origin root.AssemblyLinearVelocity=Vector3.zero root.AssemblyAngularVelocity=Vector3.zero end)
-                    end
-                    cleanupClaim=nil
-                end
-                entry.tries+=1 entry.nextAt=os.clock()+2
-                local ok,problem=pcall(function()
-                    if not valid()then return end
-                    local range=math.max(1,tonumber(prompt.MaxActivationDistance)or 10)
-                    if (root.Position-position).Magnitude>range then
-                        root.CFrame=CFrame.new(position+Vector3.new(0,math.min(2,range*0.25),0))*(origin-origin.Position)
-                        root.AssemblyLinearVelocity=Vector3.zero root.AssemblyAngularVelocity=Vector3.zero
-                        task.wait(0.25)
-                    end
-                    if not valid()or not matches(prompt)then return end
-                    local fired=type(fireproximityprompt)=="function" and pcall(fireproximityprompt,prompt,hold)
-                    if not fired then
-                        prompt:InputHoldBegin()
-                        local deadline=os.clock()+math.max(0.05,hold)
-                        repeat task.wait(0.05)until not valid()or os.clock()>=deadline
-                        pcall(function()prompt:InputHoldEnd()end)
-                    end
-                    if valid()then task.wait(0.5)end
-                end)
-                local closed=not prompt.Parent or not prompt.Enabled
-                cancelClaim()
-                if not ok then q.bossCycleError=tostring(problem)end
-                return closed and "closed" or "pending"
+    -- BOSS_REWARD_TEXT_END
+    local function visibleReward(label)
+        if not rewardText(label.Text) then return false end
+        local node=label
+        while node and node~=k and node~=workspace do
+            if node==q.uiRoot then return false end
+            if node:IsA("GuiObject") and not node.Visible then return false end
+            if node:IsA("LayerCollector") and not node.Enabled then return false end
+            node=node.Parent
+        end
+        return node~=nil and label.TextTransparency<1
+    end
+    local function observeReward(reset)
+        if reset then rewardAcknowledged=false end
+        for label in pairs(rewardLabels)do
+            if not label.Parent then rewardLabels[label]=nil previousRewardLabels[label]=nil
+            else
+                local visible=visibleReward(label)
+                local text=visible and label.Text or nil
+                if not reset and text and previousRewardLabels[label]~=text then rewardAcknowledged=true end
+                previousRewardLabels[label]=text
             end
         end
-        return "pending"
     end
+    -- BOSS_CHEST_COLLECTOR_BEGIN
+    local function createChestCollector(api)
+        local state={generation=0,nextAt=0}
+        function state:Cancel()
+            self.generation+=1
+            if self.prompt then pcall(api.endHold,self.prompt) end
+            self.prompt=nil self.attempted=false self.nextAt=0 self.closed=false self.character=nil
+        end
+        function state:Step(current,snapshot)
+            if not current() or not api.ready() then return "pending" end
+            local character=api.character()
+            if self.character and self.character~=character then self:Cancel() end
+            self.character=character
+            local generation=self.generation
+            if api.acknowledged() then
+                if self.prompt then pcall(api.endHold,self.prompt) end
+                self.closed=true
+            end
+            if self.closed then return "closed" end
+            if self.prompt and api.closed(self.prompt) then
+                -- A prompt may expire or be replaced by streaming; neither confirms credit.
+                pcall(api.endHold,self.prompt)
+                self.prompt=nil self.attempted=false self.nextAt=0
+            end
+            if not self.prompt then self.prompt=api.find(snapshot) end
+            local prompt=self.prompt
+            if not prompt or not api.matches(prompt) then self.prompt=nil return "missing" end
+            local function valid()
+                return current() and self.generation==generation and api.ready()
+                    and api.character()==character and self.prompt==prompt
+            end
+            if not api.move(prompt) or not valid() then return "pending" end
+            if api.now()<self.nextAt then return "pending" end
+            api.wait(0.3)
+            if not valid() or not api.matches(prompt) or not api.inRange(prompt) then return "pending" end
+            self.nextAt=api.now()+2
+            self.attempted=true
+            local ok,problem=pcall(api.interact,prompt,valid)
+            pcall(api.endHold,prompt)
+            if not valid() then return "pending" end
+            if not ok then api.report(tostring(problem)) end
+            if api.acknowledged() then self.closed=true return "closed" end
+            return "pending"
+        end
+        return state
+    end
+    -- BOSS_CHEST_COLLECTOR_END
+    local function promptPosition(prompt)
+        local node=prompt.Parent
+        for _=1,7 do
+            if not node then return nil end
+            if node:IsA("Attachment") then return node.WorldPosition end
+            if node:IsA("BasePart") then return node.Position end
+            if node:IsA("Model") then return node:GetPivot().Position end
+            node=node.Parent
+        end
+    end
+    local function inRange(prompt)
+        local root,position=aO(),promptPosition(prompt)
+        return root and position and (root.Position-position).Magnitude<=(tonumber(prompt.MaxActivationDistance)or 0)
+    end
+    local function moveToChest(prompt)
+        local root,position=aO(),promptPosition(prompt)
+        if not root or not position or not arenaPoint then return false end
+        if inRange(prompt) then return true end
+        local range=tonumber(prompt.MaxActivationDistance)or 0
+        if range<=0 then return false end
+        -- Keep the verified arena standing height; never teleport into the chest or below the floor.
+        local point=Vector3.new(position.X,arenaPoint.Y,position.Z)
+        if (point-position).Magnitude>range*0.95 then return false end
+        root.CFrame=CFrame.new(point)*(root.CFrame-root.Position)
+        root.AssemblyLinearVelocity=Vector3.zero root.AssemblyAngularVelocity=Vector3.zero
+        return inRange(prompt)
+    end
+    -- BOSS_CHEST_INTERACT_BEGIN
+    local function interactChest(api,prompt,valid)
+        local hold=tonumber(prompt.HoldDuration)or 0
+        if hold~=hold or hold<0 or hold>10 then error("Некорректное время удержания награды") end
+        if not valid() then return end
+        if api.fire then pcall(api.fire,prompt) api.wait(0.15) end
+        if not valid() or api.acknowledged() or not api.matches(prompt) then return end
+        -- Some mobile executors accept fireproximityprompt but do nothing.
+        prompt:InputHoldBegin()
+        local deadline=api.now()+math.max(0.1,hold)+0.15
+        repeat
+            api.wait(0.05)
+            if not valid() or api.acknowledged() or not api.matches(prompt) or not api.inRange(prompt) then return end
+        until api.now()>=deadline
+        prompt:InputHoldEnd()
+        api.wait(0.3)
+    end
+    -- BOSS_CHEST_INTERACT_END
+    local function acknowledged()observeReward(false)return rewardAcknowledged end
+    local collector=createChestCollector({
+        now=os.clock,wait=task.wait,character=aM,acknowledged=acknowledged,
+        ready=function()local h=aN()return q.alive and not q.networkPaused and h and h.Health>0 and aO()~=nil end,
+        matches=matches,closed=function(prompt)return not prompt.Parent or not prompt.Enabled end,
+        find=function(snapshot)
+            local origin=snapshot and snapshot.arena and snapshot.arena.point
+            if not origin then return nil end
+            local best,distance=nil,120
+            for prompt in pairs(prompts)do
+                if not prompt.Parent then prompts[prompt]=nil
+                elseif matches(prompt) then
+                    local position=promptPosition(prompt)
+                    local d=position and (position-origin).Magnitude
+                    if d and d<distance then best,distance=prompt,d end
+                end
+            end
+            return best
+        end,
+        move=moveToChest,inRange=inRange,
+        endHold=function(prompt)prompt:InputHoldEnd()end,
+        interact=function(prompt,valid)
+            interactChest({now=os.clock,wait=task.wait,matches=matches,inRange=inRange,acknowledged=acknowledged,
+                fire=type(fireproximityprompt)=="function" and fireproximityprompt or nil},prompt,valid)
+        end,
+        report=function(problem)q.bossCycleError=problem end,
+    })
+    local function cancelClaim()collector:Cancel()end
+    local function claim(current,snapshot)return collector:Step(current,snapshot)end
     q.bossCycle=createCycle({
         alive=function()return q.alive end,now=os.clock,
         ready=function()local h=aN()return not q.networkPaused and h and h.Health>0 and aO()~=nil end,
@@ -3249,10 +3492,12 @@ end
             and not q.equipInFlight and not q.sessionResumeInFlight and not q.machineAttachInFlight and not q.kingPresenceInFlight and not q.fuseSession end,
         scan=q.bossAdapter.scan,
         targetAlive=function(model)local info=q.bossAdapter.info(model)return info and info.alive end,
-        capture=capture,restore=restore,claim=claim,cancelClaim=cancelClaim,
+        capture=capture,restore=restore,claim=claim,cancelClaim=cancelClaim,cancelRestore=cancelRestore,
+        observeReward=function()observeReward(false)end,
         rememberArena=rememberArena,enterArena=enterArena,onArena=onArena,
         start=function(current)
-            for _,entry in pairs(prompts)do entry.tries=0 entry.nextAt=0 end
+            collector:Cancel()
+            observeReward(true)
             q.bossCycle.internal=true
             local ok,result=pcall(function()return q.boss:Start()end)
             q.bossCycle.internal=false
@@ -3283,7 +3528,7 @@ end
     local teleport=q.teleportToIsland
     if type(teleport)=="function"then q.teleportToIsland=function(...)q.bossCycle:Cancel(false)return teleport(...)end end
     task.spawn(function()while q.alive do q.bossCycle:Tick()task.wait(0.25)end end)
-end
+end)() end
 
 local function l6()local l7=Instance.new("ScreenGui")l7.Name=l;
 l7.ResetOnSpawn=false;
