@@ -79,13 +79,24 @@ local actions={bindings={}}
 function actions:BindActionAtPriority(name,callback)self.bindings[name]=callback end
 function actions:UnbindAction(name)self.bindings[name]=nil end
 local guiService={MenuIsOpen=false}
+local TweenInfo={new=function(...)return {...}end}
+local tweens={}
+local tweenService={}
+function tweenService:Create(object,info,target)
+ local tween={target=target,object=object}
+ function tween:Play()self.played=true;for key,value in pairs(self.target)do self.object[key]=value end end
+ function tween:Cancel()self.cancelled=true end
+ table.insert(tweens,tween);return tween
+end
+Enum.EasingStyle={Quad="Quad"};Enum.EasingDirection={Out="Out"};Enum.ScrollingDirection={X="X"}
 local game={}
-function game:GetService(name)return assert(({RunService=run,UserInputService=input,ContextActionService=actions,GuiService=guiService})[name],name)end
+function game:GetService(name)return assert(({RunService=run,UserInputService=input,ContextActionService=actions,GuiService=guiService,TweenService=tweenService})[name],name)end
 local camera={CFrame=CFrame.new(0,0,20),ViewportSize=Vector3.new(1536,864),FieldOfView=70}
 function camera:ScreenPointToRay(x,y)
     -- The fixture's screen coordinates are points on z=0, for exact click tests.
     return {Origin=Vector3.new(x,y,20),Direction=Vector3.new(0,0,-1)}
 end
+function camera:WorldToScreenPoint(position)return Vector3.new(768+position.X,432-position.Y,20),true end
 local workspace={CurrentCamera=camera}
 local delayed={}
 local task={spawn=function(callback)callback()end,delay=function(_,callback)table.insert(delayed,callback)end}
@@ -102,7 +113,39 @@ local runtime={alive=true,language="ru",leverRefs={train={Weight=ref()},autoRebi
 function runtime.equippedPetState()return {},3,2,{{Name="Rare Golem"},{Name="Darkstar Hunter"}}end
 function runtime.teleportToIsland(id)runtime.lastTeleport=id;return true end
 local env={}
-local classic={Enabled=true}
+local classic=Instance.new("ScreenGui");classic.Enabled=true
 local errors={}
 local opened
 local options={player=player,env=env,classicGui=classic,report=function(message)table.insert(errors,message)end,openClassic=function(tab)opened=tab;classic.Enabled=true end}
+
+local q=runtime
+q.uiRoot=classic
+local n7=Instance.new("Frame");n7.Parent=classic
+local n_=Instance.new("TextButton");n_.Parent=classic
+local nG=Instance.new("TextButton");nG.Parent=n7
+local nL=Instance.new("Frame");nL.Parent=n7
+local nM=Instance.new("Frame");nM.Parent=n7
+local p0=Instance.new("TextButton");p0.Parent=n7
+local nT=Instance.new("ScrollingFrame");local nU=Instance.new("ScrollingFrame")
+local nV=Instance.new("ScrollingFrame");local nW=Instance.new("ScrollingFrame")
+local nX=Instance.new("ScrollingFrame");local nY=Instance.new("ScrollingFrame")
+q.layoutUI={hologramDeleteOverlay=Instance.new("TextButton")}
+for _,id in ipairs({"boss","egg","teleport","quest","system","interface"})do q.layoutUI[id.."Page"]=Instance.new("ScrollingFrame")end
+q.controlHits={}
+local initialPages={bug=nT,farm=nU,train=nV,reb=nW,kill=nX,crystal=nY,boss=q.layoutUI.bossPage,egg=q.layoutUI.eggPage,teleport=q.layoutUI.teleportPage,quest=q.layoutUI.questPage,system=q.layoutUI.systemPage,interface=q.layoutUI.interfacePage}
+for id,page in pairs(initialPages)do
+ page.Parent=n7
+ local control=Instance.new("TextButton");control.Name="OriginalControl";control.Parent=page
+ control.Activated:Connect(function()q.controlHits[id]=(q.controlHits[id]or 0)+1 end)
+end
+local sL=false
+local function sR(tab)
+ for id,page in pairs(initialPages)do page.Visible=id==tab end
+ opened=tab
+end
+function q.closePicker()p0.Visible=false end
+function q.closeDeleteConfirmation()q.layoutUI.hologramDeleteOverlay.Visible=false end
+q.leverRefs.bug=ref();q.leverRefs.crystal={crystal=ref()};q.leverRefs.proteinEgg=ref();q.leverRefs.autoQuest=ref()
+q.leverRefs.kill={all=ref(),whitelist=ref(),blacklist=ref()}
+
+local function jT()q.stoppedModes=true end
