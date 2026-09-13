@@ -1,4 +1,4 @@
--- RockBugHub T35. Bundled into the existing launcher by scripts/build_hologram.py.
+-- RockBugHub T36. Bundled into the existing launcher by scripts/build_hologram.py.
 -- All geometry is local, non-colliding and excluded from game raycasts.
 local HUD = {}
 
@@ -41,6 +41,10 @@ function HUD.layout(width, height)
     return "wide", 12.4, 9.0
 end
 
+function HUD.drawerSize(width,height)
+    return math.min(380,math.max(1,width-24)),math.min(460,math.max(1,height-24))
+end
+
 function HUD.acceptRelease(pressed, released, x, y)
     return pressed and not pressed.cancelled and pressed.button == released and (pressed.x-x)^2 + (pressed.y-y)^2 <= 144
 end
@@ -60,7 +64,7 @@ function HUD.mount(runtime, options)
     assert(options.content,"Missing hologram content bridge")
     local self = {visible=false, suspended=false, destroyed=false, group=HUD.groups[savedGroup] and savedGroup~="settings" and savedGroup or "farm", cardPage=1, cards={}, modalTabs={}, modalOpen=false, panels={}, connections={}, pressed={}, beams={}, samples={}, fps=0, inputGeneration=0, noticeToken=0}
     runtime.hologram = self -- Allows cleanup even if construction fails.
-    local binding = "RockBugHologramT35_" .. tostring(player.UserId)
+    local binding = "RockBugHologramT36_" .. tostring(player.UserId)
     local function connect(signal, callback)
         local connection = signal:Connect(callback)
         table.insert(self.connections, connection)
@@ -94,7 +98,7 @@ function HUD.mount(runtime, options)
     local function part(name, parent)
         return create("Part", {Name=name, Anchored=true, CanCollide=false, CanTouch=false, CanQuery=false, CastShadow=false, Transparency=1, Size=Vector3.new(1,1,0.025)}, parent)
     end
-    self.world = create("Model", {Name="RockBugHubHologramT35"})
+    self.world = create("Model", {Name="RockBugHubHologramT36"})
     self.surfaces = create("Folder", {Name="RockBugHubHologramSurfaces"}, playerGui)
     self.overlay = create("ScreenGui", {Name="RockBugHubHologramControl", ResetOnSpawn=false, DisplayOrder=1000010, ZIndexBehavior=Enum.ZIndexBehavior.Sibling}, playerGui)
     self.handle = create("TextButton", {Name="ToggleHologram", AnchorPoint=Vector2.new(0,0), Position=UDim2.fromOffset(16,12), Size=UDim2.fromOffset(108,36), BackgroundColor3=background, BackgroundTransparency=0.08, TextColor3=cyan, TextSize=12, Font=Enum.Font.GothamBold, Text="", AutoButtonColor=true}, self.overlay)
@@ -200,20 +204,42 @@ function HUD.mount(runtime, options)
         b.TextSize=10;table.insert(self.cardButtons,b)
     end
 
-    self.sheet=create("TextButton",{Name="ExpandedSection",Size=UDim2.fromScale(1,1),BackgroundColor3=Color3.fromRGB(1,9,16),BackgroundTransparency=0.22,Text="",AutoButtonColor=false,Active=true,Modal=true,Visible=false,ZIndex=20},self.overlay)
-    self.window=create("Frame",{AnchorPoint=Vector2.new(0.5,0.5),Position=UDim2.fromScale(0.5,0.5),Size=UDim2.fromScale(0.94,0.92),BackgroundColor3=background,BorderSizePixel=0,ClipsDescendants=true,ZIndex=21},self.sheet)
-    round(self.window,18);edge(self.window,0.08,2)
-    create("UISizeConstraint",{MaxSize=Vector2.new(880,680)},self.window)
-    self.windowTitle=label(self.window,"",16,9,400,32,20,cyan,true)
+    -- A transparent, non-modal host leaves the game usable outside the drawer.
+    self.sheet=create("Frame",{Name="SectionDrawer",Size=UDim2.fromScale(1,1),BackgroundTransparency=1,Active=false,Visible=false,ZIndex=20},self.overlay)
+    self.window=create("Frame",{AnchorPoint=Vector2.new(1,0.5),Position=UDim2.new(1,-12,0.5,0),Size=UDim2.fromOffset(380,460),BackgroundColor3=Color3.fromRGB(12,25,34),BorderSizePixel=0,Active=true,ClipsDescendants=true,ZIndex=21},self.sheet)
+    round(self.window,12);edge(self.window,0.65,1)
+    self.windowTitle=label(self.window,"",12,9,240,32,16,white,true)
     self.windowTitle.Size=UDim2.new(1,-132,0,32)
     self.close=nativeButton(self.window,"×",UDim2.new(1,-44,0,8),UDim2.fromOffset(34,34),function()self:CloseFull()end)
     self.stop=nativeButton(self.window,"STOP",UDim2.new(1,-106,0,8),UDim2.fromOffset(56,34),function()options.content:StopModes()end)
     self.stop.TextColor3=Color3.fromRGB(255,134,136)
-    self.sectionTabs=create("ScrollingFrame",{Position=UDim2.fromOffset(12,48),Size=UDim2.new(1,-24,0,38),CanvasSize=UDim2.fromOffset(0,0),BackgroundTransparency=1,BorderSizePixel=0,ScrollBarThickness=2,ScrollingDirection=Enum.ScrollingDirection.X,Active=true,ClipsDescendants=true},self.window)
-    self.quickHost=create("Frame",{Position=UDim2.fromOffset(12,90),Size=UDim2.new(1,-24,0,28),BackgroundTransparency=1,ClipsDescendants=true},self.window)
-    self.body=create("Frame",{Position=UDim2.fromOffset(12,124),Size=UDim2.new(1,-24,1,-176),BackgroundTransparency=1,ClipsDescendants=true},self.window)
-    self.footer=create("Frame",{Position=UDim2.new(0,12,1,-46),Size=UDim2.new(1,-24,0,38),BackgroundTransparency=1,ClipsDescendants=true},self.window)
+    self.sectionTabs=create("ScrollingFrame",{Position=UDim2.fromOffset(10,48),Size=UDim2.new(1,-20,0,42),CanvasSize=UDim2.fromOffset(0,0),BackgroundTransparency=1,BorderSizePixel=0,ScrollBarThickness=3,ScrollingDirection=Enum.ScrollingDirection.X,Active=true,ClipsDescendants=true},self.window)
+    self.quickHost=create("Frame",{Position=UDim2.fromOffset(12,94),Size=UDim2.new(1,-24,0,34),BackgroundTransparency=1,ClipsDescendants=true},self.window)
+    self.body=create("Frame",{Position=UDim2.fromOffset(12,94),Size=UDim2.new(1,-24,1,-128),BackgroundTransparency=1,ClipsDescendants=true},self.window)
+    self.footer=create("Frame",{Position=UDim2.new(0,12,1,-30),Size=UDim2.new(1,-24,0,24),BackgroundTransparency=1,ClipsDescendants=true},self.window)
     self.dialogHost=create("Frame",{Size=UDim2.fromScale(1,1),BackgroundTransparency=1,ZIndex=80,Active=false},self.window)
+
+    function self:LayoutDrawer(animate)
+        if not self.modalOpen then return end
+        local size=self.sheet.AbsoluteSize
+        if not size or size.X<1 or size.Y<1 then size=workspace.CurrentCamera.ViewportSize end
+        local width,height=HUD.drawerSize(size.X,size.Y)
+        local position=UDim2.new(self.drawerLeft and 0 or 1,self.drawerLeft and 12 or -12,0.5,0)
+        self.window.AnchorPoint=Vector2.new(self.drawerLeft and 0 or 1,0.5)
+        self.window.Size=UDim2.fromOffset(width,height)
+        if self.modalTween then self.modalTween:Cancel()end
+        if animate then
+            self.window.Position=UDim2.new(self.drawerLeft and 0 or 1,self.drawerLeft and -width or width,0.5,0)
+            self.modalTween=tweenService:Create(self.window,TweenInfo.new(0.2,Enum.EasingStyle.Quad,Enum.EasingDirection.Out),{Position=position})
+            self.modalTween:Play()
+        else self.window.Position=position end
+        local refresh=self.modalTab=="bug" or self.modalTab=="farm"
+        self.quickHost.Visible=refresh
+        local top=refresh and 134 or 94
+        self.body.Position=UDim2.fromOffset(12,top)
+        self.body.Size=UDim2.new(1,-24,1,-top-34)
+    end
+    connect(self.sheet:GetPropertyChangedSignal("AbsoluteSize"),function()self:LayoutDrawer(false)end)
 
     function self:OpenFull(tab,origin,requestedGroup)
         if self.destroyed or self.suspended or not HUD.sections[tab] then return false end
@@ -236,25 +262,19 @@ function HUD.mount(runtime, options)
         for i,id in ipairs(HUD.groups[group].tabs)do
             local section=id
             local title=HUD.sections[section]
-            local b=create("TextButton",{Position=UDim2.fromOffset((i-1)*122,0),Size=UDim2.fromOffset(116,32),Text=tr(title[1],title[2]),Font=Enum.Font.GothamBold,TextSize=12,TextColor3=section==tab and background or white,BackgroundColor3=section==tab and cyan or background,BorderSizePixel=0,AutoButtonColor=true},self.sectionTabs)
+            local b=create("TextButton",{Position=UDim2.fromOffset((i-1)*110,0),Size=UDim2.fromOffset(104,36),Text=tr(title[1],title[2]),Font=Enum.Font.GothamBold,TextSize=13,TextColor3=section==tab and background or white,BackgroundColor3=section==tab and cyan or Color3.fromRGB(28,46,58),BorderSizePixel=0,AutoButtonColor=true},self.sectionTabs)
             round(b,8)
             local connection=b.Activated:Connect(function()self:OpenFull(section,nil,group)end)
             table.insert(self.modalTabs,{node=b,connection=connection,id=section})
             if section==tab then selectedIndex=i end
         end
-        self.sectionTabs.CanvasSize=UDim2.fromOffset(#self.modalTabs*122,0)
-        self.sectionTabs.CanvasPosition=Vector2.new(math.max(0,(selectedIndex-2)*122),0)
+        self.sectionTabs.CanvasSize=UDim2.fromOffset(#self.modalTabs*110,0)
+        self.sectionTabs.CanvasPosition=Vector2.new(math.max(0,(selectedIndex-2)*110),0)
         self.windowTitle.Text=tr(HUD.sections[tab][1],HUD.sections[tab][2])
         if self.modalTween then self.modalTween:Cancel()end
         self:ApplyVisibility()
-        local position=UDim2.fromScale(0.5,0.5)
-        if not wasOpen and origin and workspace.CurrentCamera then
-            local point=workspace.CurrentCamera:WorldToScreenPoint(origin.part.CFrame.Position)
-            self.window.Position=UDim2.fromOffset(point.X,point.Y)
-            self.window.Size=UDim2.fromOffset(96,64)
-            self.modalTween=tweenService:Create(self.window,TweenInfo.new(0.22,Enum.EasingStyle.Quad,Enum.EasingDirection.Out),{Position=position,Size=UDim2.fromScale(0.94,0.92)})
-            self.modalTween:Play()
-        else self.window.Position=position;self.window.Size=UDim2.fromScale(0.94,0.92)end
+        if not wasOpen then self.drawerLeft=origin and origin.x<0 or false end
+        self:LayoutDrawer(not wasOpen)
         return true
     end
     function self:CloseFull()
@@ -530,12 +550,13 @@ function HUD.mount(runtime, options)
         actions:UnbindAction(binding)
         self:ClearPresses(); self.ready=false; self.inputReady=false
         self.noticeToken+=1; self.notice.Visible=false
-        local show=self.visible and not self.modalOpen and not self.suspended and not self.destroyed
+        local blocked=self.suspended or self.chestInput
+        local show=self.visible and not self.modalOpen and not blocked and not self.destroyed
         self.world.Parent=nil
         for _,p in ipairs(self.panels) do p.gui.Enabled=false end
-        if self.overlay then self.overlay.Enabled=not self.suspended and not self.destroyed end
+        if self.overlay then self.overlay.Enabled=not blocked and not self.destroyed end
         self.nav.Visible=show;self.cardTabs.Visible=false
-        self.sheet.Visible=self.modalOpen and not self.suspended
+        self.sheet.Visible=self.modalOpen and not blocked
         self.handle.Visible=not self.modalOpen;self.menu.Visible=not self.modalOpen
         options.content:HideLegacy()
         if show then
@@ -567,6 +588,10 @@ function HUD.mount(runtime, options)
         if self.destroyed then return end
         self.suspended=value==true
         self:ApplyVisibility()
+    end
+    function self:SetChestInput(value)
+        if self.destroyed then return end
+        self.chestInput=value==true;self:ApplyVisibility()
     end
     connect(self.handle.Activated,function()self:SetVisible(not self.visible)end)
     connect(self.menu.Activated,function()self:OpenFull("system",nil,"settings")end)

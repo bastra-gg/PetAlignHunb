@@ -4,7 +4,7 @@ pcall(function()i=game:GetService("NetworkClient")end)if not game:IsLoaded()then
 local j=a.LocalPlayer;
 while not j do task.wait()j=a.LocalPlayer end;
 local k=j:WaitForChild("PlayerGui",60)if not k then warn("[RockBugHub] PlayerGui was not created")pcall(function()g:SetCore("SendNotification",{Title="RockBugHub",Text="Ошибка запуска: PlayerGui не найден",Duration=8})end)return end;
-local l="RockBugHub_TEST_v4_28_HOLO_T35"local m="4.28HOLO-T35"local n=type(getgenv)=="function"and getgenv()or _G;
+local l="RockBugHub_TEST_v4_29_HOLO_T36"local m="4.29HOLO-T36"local n=type(getgenv)=="function"and getgenv()or _G;
 do
     -- Retire the old experimental windows and their listeners on hot reload.
     for _, key in ipairs({"RockBugTradeDiagnostics", "RockBugMiniTransfer"}) do
@@ -3708,38 +3708,101 @@ end
         return size and size.X>1 and size.Y>1
     end
     local function findChestButton(roots,prompt,excluded)
-        local function clean(text)return tostring(text or ""):gsub("<[^>]*>",""):gsub("^%s+",""):gsub("%s+$",""):lower()end
+        local function clean(text)return tostring(text or ""):gsub("<[^>]*>",""):gsub("%s+"," "):gsub("^%s+",""):gsub("%s+$",""):lower()end
         local function action(text)
             text=clean(text)
             return text~="" and (text==clean(prompt.ActionText) or text=="claim reward" or text=="collect reward"
-                or text=="Получить награду" or text=="получить награду")
+                or text=="claim" or text=="collect" or text=="Получить награду" or text=="получить награду"
+                or text=="Собрать награду" or text=="собрать награду" or text=="Забрать награду" or text=="забрать награду"
+                or text=="ПОЛУЧИТЬ НАГРАДУ" or text=="СОБРАТЬ НАГРАДУ" or text=="ЗАБРАТЬ НАГРАДУ")
+        end
+        local function visible(node)
+            while node do
+                if node==excluded then return false end
+                if node:IsA("GuiObject")and not node.Visible then return false end
+                if node:IsA("LayerCollector")and not node.Enabled then return false end
+                node=node.Parent
+            end
+            return true
+        end
+        local function chestContext(text)
+            text=clean(text)
+            local object=clean(prompt.ObjectText)
+            if object~=""and #object>4 and text:find(object,1,true)then return true end
+            return (text:find("boss",1,true)or text:find("Босс",1,true)or text:find("босс",1,true)or text:find("БОСС",1,true))
+                and (text:find("chest",1,true)or text:find("Сундук",1,true)or text:find("сундук",1,true)or text:find("СУНДУК",1,true))
+        end
+        local function linked(adornee)
+            local owner=prompt.Parent
+            if not owner or not adornee then return false end
+            if adornee==owner or owner:IsDescendantOf(adornee)or adornee:IsDescendantOf(owner)then return true end
+            -- Prompt and BillboardGui often attach to different parts of the same chest.
+            local ancestor=owner.Parent
+            for _=1,4 do
+                if not ancestor or ancestor==workspace then break end
+                if ancestor:IsA("Model")and chestContext(ancestor.Name)and adornee:IsDescendantOf(ancestor)then return true end
+                ancestor=ancestor.Parent
+            end
+            return false
+        end
+        local function hasAction(button)
+            if button:IsA("TextButton")and action(button.Text)then return true end
+            for _,label in ipairs(button:GetDescendants())do
+                if (label:IsA("TextLabel")or label:IsA("TextButton"))and visible(label)and action(label.Text)then return true end
+            end
+            return false
         end
         local seen={}
         for _,root in ipairs(roots)do
             local ok,nodes=pcall(function()return root:GetDescendants()end)
             if ok then for _,gui in ipairs(nodes)do
-                if gui:IsA("BillboardGui") and gui.Enabled and not seen[gui] then
+                if (gui:IsA("BillboardGui")or gui:IsA("SurfaceGui"))and gui.Enabled and not seen[gui]then
                     seen[gui]=true
-                    local adornee=gui.Adornee or gui.Parent
-                    local owner=prompt.Parent
-                    -- Match the physical chest, never another visible reward card.
-                    local linked=adornee and owner and (adornee==owner or owner:IsDescendantOf(adornee)
-                        or adornee:IsDescendantOf(owner))
-                    if linked then
-                        local candidates,hasAction={},false
+                    if linked(gui.Adornee or gui.Parent)and visible(gui)then
+                        local candidates,hasLabel={},false
                         for _,node in ipairs(gui:GetDescendants())do
-                            if (node:IsA("TextLabel") or node:IsA("TextButton")) and node.Visible and action(node.Text) then hasAction=true end
-                            if node:IsA("GuiButton") and chestButtonVisible(node,excluded) then
-                                local text=node:IsA("TextButton") and clean(node.Text) or ""
-                                if action(text) then return node end
-                                if text=="" then table.insert(candidates,node) end
+                            if (node:IsA("TextLabel")or node:IsA("TextButton"))and visible(node)and action(node.Text)then hasLabel=true end
+                            if node:IsA("GuiButton")and chestButtonVisible(node,excluded)then
+                                if hasAction(node)then return node end
+                                if not node:IsA("TextButton")or clean(node.Text)==""then table.insert(candidates,node)end
                             end
                         end
-                        if hasAction and #candidates==1 then return candidates[1] end
+                        if hasLabel and #candidates==1 then return candidates[1]end
+                    end
+                elseif gui:IsA("GuiButton")and chestButtonVisible(gui,excluded)and hasAction(gui)then
+                    -- Screen-space claim dialogs must identify the boss chest in their
+                    -- own card. Never use a different reward elsewhere in the ScreenGui.
+                    local card=gui.Parent
+                    for _=1,3 do
+                        if not card or card:IsA("LayerCollector")then break end
+                        local context=tostring(card.Name or "");local actions=0
+                        for _,label in ipairs(card:GetDescendants())do
+                            if label:IsA("TextLabel")and visible(label)then context..=" "..tostring(label.Text)end
+                            if label:IsA("GuiButton")and chestButtonVisible(label,excluded)and hasAction(label)then actions+=1 end
+                        end
+                        if actions>1 then break end
+                        if chestContext(context)then
+                            local layer=card.Parent
+                            while layer and not layer:IsA("LayerCollector")do layer=layer.Parent end
+                            if layer and layer:IsA("ScreenGui")then return gui end
+                        end
+                        card=card.Parent
                     end
                 end
             end end
         end
+    end
+    local function activateChestButton(api,prompt,valid)
+        local button=api.find(prompt)
+        if not button then return false end
+        local attempted=false
+        for _,event in ipairs({"Activated","MouseButton1Click"})do
+            if not valid()or api.acknowledged()or not api.matches(prompt)or not api.inRange(prompt)or not api.visible(button)then break end
+            local ok,fired=pcall(api.activate,button,event)
+            attempted=attempted or(ok and fired==true)
+            if ok and fired then api.wait(0.25)end
+        end
+        return attempted
     end
     local function pressChestButton(api,prompt,valid)
         local button=api.find(prompt)
@@ -3808,11 +3871,57 @@ end
             clearRelease=function(release)if chestRelease==release then chestRelease=nil end end,
             now=os.clock,wait=task.wait,matches=matches,inRange=inRange,acknowledged=function()observeReward(false)return rewardAcknowledged end,
         }
-        local clicked=pressChestButton(input,prompt,valid)
-        if usedManager and valid() and not input.acknowledged() then
-            forceVirtual=true
-            clicked=pressChestButton(input,prompt,valid) or clicked
+        input.activate=function(button,event)
+            local eventSignal=button[event]
+            if type(firesignal)=="function"then
+                local ok=pcall(function()
+                    if event=="Activated"then firesignal(eventSignal,nil,1)else firesignal(eventSignal)end
+                end)
+                if ok then return true end
+            end
+            if type(getconnections)~="function"then return false end
+            local ok,connections=pcall(getconnections,eventSignal)
+            if not ok then return false end
+            local fired=false
+            for _,connection in ipairs(connections)do
+                if not valid()or input.acknowledged()or not input.visible(button)then break end
+                pcall(function()
+                    if connection.Enabled==false then return end
+                    local callback=connection.Function
+                    if type(callback)=="function"then
+                        if event=="Activated"then callback(nil,1)else callback()end
+                        fired=true
+                    elseif type(connection.Fire)=="function"then
+                        if event=="Activated"then connection:Fire(nil,1)else connection:Fire()end
+                        fired=true
+                    end
+                end)
+            end
+            if fired then q.bossCycleStatus="Сундук: вызвана кнопка · жду награду"end
+            return fired
         end
+        local hud=q.hologram
+        if hud and hud.SetChestInput then hud:SetChestInput(true)end
+        local ok,clicked=pcall(function()
+            -- Give a newly streamed prompt a few frames to mount its touch button.
+            local deadline=os.clock()+0.8
+            repeat
+                if not valid()or input.acknowledged()then return false end
+                if input.find()then break end
+                task.wait(0.1)
+            until os.clock()>=deadline
+            local direct=activateChestButton(input,prompt,valid)
+            if not valid()or input.acknowledged()then return direct end
+            local pressed=pressChestButton(input,prompt,valid)
+            if usedManager and valid()and not input.acknowledged()then
+                forceVirtual=true;pressed=pressChestButton(input,prompt,valid)or pressed
+            end
+            if not direct and not pressed then q.bossCycleStatus="Сундук: кнопку не нашёл · пробую удержание"end
+            return direct or pressed
+        end)
+        releaseChestInput()
+        if hud and hud.SetChestInput then hud:SetChestInput(false)end
+        if not ok then error(clicked)end
         return clicked
     end
     -- BOSS_CHEST_INTERACT_BEGIN
@@ -4488,7 +4597,7 @@ aJ(o6:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(oc))aJ(o7:GetPrope
 oe.Size=UDim2.new(1,0,0,nB)oe.BackgroundColor3=lw.Surface;
 oe.BackgroundTransparency=0.10;
 oe.BorderSizePixel=0;
-mg(oe,9)mq(oe,1,0.77)mm(oe,lw.Surface,lw.Bg,115)return oe end;
+oe.BackgroundTransparency=1;oe.ClipsDescendants=true;return oe end;
 function q.layoutUI.makeGuideCard(ab,of,og,nu)local oh=od(ab,56)oh.LayoutOrder=nu or 0;
 oh.BackgroundTransparency=0.25;
 local j8=mt(oh,of,10,Enum.Font.GothamBold,lw.Accent2)j8.Size=UDim2.new(1,-20,0,17)j8.Position=UDim2.fromOffset(10,6)j8.TextWrapped=false;
@@ -4496,45 +4605,29 @@ j8.TextTruncate=Enum.TextTruncate.AtEnd;
 local oi=mt(oh,og,9,Enum.Font.Gotham,lw.Muted)oi.Size=UDim2.new(1,-20,0,23)oi.Position=UDim2.fromOffset(10,25)oi.TextXAlignment=Enum.TextXAlignment.Left;
 return oh end;
 local function oj(ab,ok,nB,ol)local oh=od(ab,nB)oh.LayoutOrder=1;
-local mE=mt(oh,"•",17,Enum.Font.GothamBold,lw.Accent)mE.Size=UDim2.fromOffset(20,20)mE.Position=UDim2.fromOffset(8,6)mE.TextXAlignment=Enum.TextXAlignment.Center;
-local om=mt(oh,ok,12,Enum.Font.GothamBold,lw.Text)om.Size=UDim2.new(1,-40,0,21)om.Position=UDim2.fromOffset(32,6)om.TextWrapped=false;
+local mE=mt(oh,"",17,Enum.Font.GothamBold,lw.Accent)mE.Size=UDim2.fromOffset(20,20)mE.Position=UDim2.fromOffset(8,6)mE.TextXAlignment=Enum.TextXAlignment.Center;
+local om=mt(oh,ok,13,Enum.Font.GothamBold,lw.Text)om.Size=UDim2.new(1,-4,0,21)om.Position=UDim2.fromOffset(2,6)om.TextWrapped=false;
 om.TextTruncate=Enum.TextTruncate.AtEnd;
 local bI=Instance.new("Frame")bI.Parent=oh;
-bI.Size=UDim2.new(1,-16,1,-42)bI.Position=UDim2.fromOffset(8,34)bI.BackgroundTransparency=1;
+bI.Size=UDim2.new(1,0,1,-42)bI.Position=UDim2.fromOffset(0,34)bI.BackgroundTransparency=1;
 local on=Instance.new("UIGridLayout")on.Parent=bI;
 on.SortOrder=Enum.SortOrder.LayoutOrder;
-on.CellPadding=UDim2.fromOffset(0,5)on.CellSize=UDim2.new(1,0,0,46)local function oo()if not oh.Parent then return end;
+on.CellPadding=UDim2.fromOffset(0,6)on.CellSize=UDim2.new(1,0,0,58)local function oo()if not oh.Parent then return end;
 local fE=0;
 for o,R in ipairs(bI:GetChildren())do if R:IsA("GuiObject")then fE=fE+1 end end;
 if fE==0 then return end;
-local op=5;
-on.CellSize=UDim2.new(1,0,0,46)oh.Size=UDim2.new(1,0,0,42+fE*46+(fE-1)*op)oc()end;
+local op=6;
+on.CellSize=UDim2.new(1,0,0,58)oh.Size=UDim2.new(1,0,0,42+fE*58+(fE-1)*op)oc()end;
 aJ(bI:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()task.defer(oo)end))aJ(bI.ChildAdded:Connect(function(R)if R:IsA("GuiObject")then task.defer(oo)end end))aJ(bI.ChildRemoved:Connect(function(R)if R:IsA("GuiObject")then task.defer(oo)end end))task.defer(oo)return oh,bI,on end;
-local function oq(ab,ok,nB)local oh=od(ab,nB)local mE=mt(oh,"•",17,Enum.Font.GothamBold,lw.Accent)mE.Size=UDim2.fromOffset(20,20)mE.Position=UDim2.fromOffset(8,4)mE.TextXAlignment=Enum.TextXAlignment.Center;
-local om=mt(oh,ok,12,Enum.Font.GothamBold,lw.Text)om.Size=UDim2.new(1,-40,0,20)om.Position=UDim2.fromOffset(32,4)local bI=Instance.new("Frame")bI.Parent=oh;
-bI.Size=UDim2.new(1,-14,1,-34)bI.Position=UDim2.fromOffset(7,28)bI.BackgroundTransparency=1;
+local function oq(ab,ok,nB)local oh=od(ab,nB)local mE=mt(oh,"",17,Enum.Font.GothamBold,lw.Accent)mE.Size=UDim2.fromOffset(20,20)mE.Position=UDim2.fromOffset(8,4)mE.TextXAlignment=Enum.TextXAlignment.Center;
+local om=mt(oh,ok,13,Enum.Font.GothamBold,lw.Text)om.Size=UDim2.new(1,-4,0,20)om.Position=UDim2.fromOffset(2,4)local bI=Instance.new("Frame")bI.Parent=oh;
+bI.Size=UDim2.new(1,0,1,-36)bI.Position=UDim2.fromOffset(0,28)bI.BackgroundTransparency=1;
 local o5=Instance.new("UIListLayout")o5.Parent=bI;
 o5.SortOrder=Enum.SortOrder.LayoutOrder;
-o5.Padding=UDim.new(0,3)return oh,bI,o5 end;
-local function ot(ab,u,ou,ov,kF)local bu=Instance.new("TextButton")bu.Parent=ab;
-bu.Size=UDim2.new(1,0,0,44)bu.Text=""bu.AutoButtonColor=false;
-bu.BackgroundColor3=lw.Surface;
-bu.BackgroundTransparency=0.22;
-bu.BorderSizePixel=0;
-mg(bu,6)mq(bu,1,0.72)local bS=mt(bu,u,11,Enum.Font.GothamBold,lw.Text)bS.Size=UDim2.new(1,-62,0,16)bS.Position=UDim2.new(0,8,0,3)local bn=mt(bu,ou,8,Enum.Font.Gotham,lw.Muted)bn.Size=UDim2.new(1,-62,0,15)bn.Position=UDim2.new(0,8,0,21)local fA=Instance.new("Frame")fA.Parent=bu;
-fA.Size=UDim2.new(0,44,0,22)fA.Position=UDim2.new(1,-50,0,11)fA.BorderSizePixel=0;
-fA.BackgroundTransparency=0.04;
-mg(fA,13)local ow=Instance.new("Frame")ow.Parent=fA;
-ow.Size=UDim2.new(0,16,0,16)ow.Position=UDim2.new(0,3,0,3)ow.BackgroundColor3=lw.Text;
-ow.BorderSizePixel=0;
-mg(ow,10)local jl=ov and true or false;
-local ox={}local function oy()if jl then fA.BackgroundColor3=lw.Success;
-ow.Position=UDim2.new(1,-19,0,3)else fA.BackgroundColor3=lw.SurfaceAlt;
-ow.Position=UDim2.new(0,3,0,3)end end;
-function ox.Set(be,mC)jl=be and true or false;
-oy()if kF and not mC then kF(jl,ox)end end;
-function ox.Get()return jl end;
-aJ(bu.Activated:Connect(function()ox.Set(not jl,false)end))oy()return ox,bu end;
+o5.Padding=UDim.new(0,6)
+local function resize()if o5.Parent and oh.Parent then oh.Size=UDim2.new(1,0,0,o5.AbsoluteContentSize.Y+36);oc()end end
+aJ(o5:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(resize));task.defer(resize);return oh,bI,o5 end;
+local function ot(ab,u,ou,ov,kF)return q.layoutUI.drawerToggle(ab,"",u,ou,ov,kF)end;
 local function oz(ab,u,ov,kF)local bu=Instance.new("TextButton")bu.Parent=ab;
 bu.Text=""bu.AutoButtonColor=false;
 bu.BackgroundColor3=lw.SurfaceAlt;
@@ -4555,56 +4648,32 @@ function ox.Set(be,mC)jl=be and true or false;
 oy()if kF and not mC then kF(jl,ox)end end;
 function ox.Get()return jl end;
 aJ(bu.Activated:Connect(function()ox.Set(not jl,false)end))oy()return ox,bu end;
-local function oC(ab,oD,u,ou,ov,kF)local oE=Instance.new("TextButton")oE.Parent=ab;
-oE.Text=""oE.AutoButtonColor=false;
-oE.BackgroundColor3=lw.SurfaceAlt;
-oE.BackgroundTransparency=0.16;
-oE.BorderSizePixel=0;
-mg(oE,8)local oF=mq(oE,1,0.78)local oB=mt(oE,oD,15,Enum.Font.GothamBold,lw.Muted)oB.Size=UDim2.fromOffset(26,30)oB.Position=UDim2.fromOffset(6,8)oB.TextXAlignment=Enum.TextXAlignment.Center;
-table.insert(q.layoutUI.themeIcons,oB)local oG=mt(oE,"",9,Enum.Font.GothamBold,lw.Muted)oG.Size=UDim2.fromOffset(39,21)oG.Position=UDim2.new(1,-47,0,12)oG.BackgroundColor3=lw.SurfaceAlt;
-oG.BackgroundTransparency=0;
-oG.BorderSizePixel=0;
-oG.TextXAlignment=Enum.TextXAlignment.Center;
-oG.TextWrapped=false;
-mg(oG,12)local oH=Instance.new("Frame")oH.Parent=oG;
-oH.Size=UDim2.fromOffset(15,15)oH.Position=UDim2.fromOffset(3,3)oH.BackgroundColor3=lw.Text;
-oH.BorderSizePixel=0;
-mg(oH,8)local bS=mt(oE,u,11,Enum.Font.GothamBold,lw.Text)bS.Size=UDim2.new(1,-98,0,18)bS.Position=UDim2.fromOffset(37,5)bS.TextXAlignment=Enum.TextXAlignment.Left;
-bS.TextWrapped=false;
-bS.TextTruncate=Enum.TextTruncate.AtEnd;
-local bn=mt(oE,ou,9,Enum.Font.Gotham,lw.Muted)bn.Size=UDim2.new(1,-98,0,16)bn.Position=UDim2.fromOffset(37,23)bn.TextXAlignment=Enum.TextXAlignment.Left;
-bn.TextWrapped=false;
-bn.TextTruncate=Enum.TextTruncate.AtEnd;
-local jl=ov and true or false;
-local ox={}local function oy()oE.BackgroundColor3=jl and lw.SurfaceAlt or lw.Surface;
-oE.BackgroundTransparency=jl and 0.06 or 0.22;
-oF.Color=jl and lw.Success or lw.Border;
-oF.Thickness=jl and 1.2 or 1;
-oF.Transparency=jl and 0.42 or 0.78;
-oB.TextColor3=q.layoutUI.iconColor or(jl and lw.Success or lw.Text)bS.TextColor3=jl and lw.Text or lw.Muted;
-oG.BackgroundColor3=jl and lw.Success or lw.SurfaceAlt;
-q.layoutUI.animate(oH,{Position=jl and UDim2.new(1,-18,0,3)or UDim2.fromOffset(3,3)},0.12)end;
-function ox.Set(be,mC)jl=be and true or false;
-oy()if kF and not mC then kF(jl,ox)end end;
-function ox.Get()return jl end;
-ox.NameLabel=bS;
-ox.DescriptionLabel=bn;
-aJ(oE.Activated:Connect(function()ox.Set(not jl,false)end))oy()return ox,oE end;
+local function oC(ab,oD,u,ou,ov,kF)
+local row=Instance.new("TextButton")row.Parent=ab;row.Name="DrawerToggle";row.Text="";row.AutoButtonColor=true;row.Size=UDim2.new(1,0,0,58);row.BackgroundColor3=Color3.fromRGB(27,46,59);row.BorderSizePixel=0;row.ClipsDescendants=true;mg(row,8)
+local title=mt(row,u,14,Enum.Font.GothamBold,lw.Text)title.Position=UDim2.fromOffset(12,7);title.Size=UDim2.new(1,-96,0,20);title.TextWrapped=false;title.TextTruncate=Enum.TextTruncate.AtEnd
+local description=mt(row,ou,11,Enum.Font.Gotham,lw.Muted)description.Position=UDim2.fromOffset(12,29);description.Size=UDim2.new(1,-96,0,22);description.TextWrapped=true;description.TextTruncate=Enum.TextTruncate.AtEnd
+local state=mt(row,"",12,Enum.Font.GothamBold,lw.Text)state.Position=UDim2.new(1,-74,0,14);state.Size=UDim2.fromOffset(64,30);state.TextXAlignment=Enum.TextXAlignment.Center;state.BackgroundTransparency=0;state.BorderSizePixel=0;mg(state,7)
+local value=ov==true;local ref={Row=row,NameLabel=title,DescriptionLabel=description}
+local function paint()state.Text=q.language=="en"and(value and"ON"or"OFF")or(value and"ВКЛ"or"ВЫКЛ");state.BackgroundColor3=value and lw.Success or Color3.fromRGB(58,75,88);state.TextColor3=value and Color3.fromRGB(7,29,28)or lw.Text end
+function ref.Set(nextValue,silent)value=nextValue==true;paint();if kF and not silent then kF(value,ref)end end
+function ref.Get()return value end
+ref.Refresh=paint;aJ(row.Activated:Connect(function()ref.Set(not value,false)end));paint();return ref,row end;
+q.layoutUI.drawerToggle=oC;
 local function oI(ab,u,ou,ov,kF,oJ,oK)local bu=Instance.new("Frame")bu.Parent=ab;
-bu.Size=UDim2.new(1,0,0,44)bu.BackgroundColor3=lw.Surface;
+bu.Size=UDim2.new(1,0,0,58)bu.BackgroundColor3=lw.Surface;
 bu.BackgroundTransparency=0.22;
 bu.BorderSizePixel=0;
-mg(bu,6)mq(bu,1,0.72)local bS=mt(bu,u,11,Enum.Font.GothamBold,lw.Text)bS.Size=UDim2.new(1,-70,0,16)bS.Position=UDim2.new(0,8,0,3)local bn=mt(bu,ou,8,Enum.Font.Gotham,lw.Muted)bn.Size=UDim2.new(1,-70,0,15)bn.Position=UDim2.new(0,8,0,21)local oL=Instance.new("TextBox")oL.Parent=bu;
-oL.Size=UDim2.new(0,58,0,26)oL.Position=UDim2.new(1,-64,0,9)oL.BackgroundColor3=lw.SurfaceAlt;
+mg(bu,6)mq(bu,1,0.72)local bS=mt(bu,u,14,Enum.Font.GothamBold,lw.Text)bS.Size=UDim2.new(1,-106,0,20)bS.Position=UDim2.fromOffset(12,7)local bn=mt(bu,ou,11,Enum.Font.Gotham,lw.Muted)bn.Size=UDim2.new(1,-106,0,22)bn.Position=UDim2.fromOffset(12,29)local oL=Instance.new("TextBox")oL.Parent=bu;
+oL.Size=UDim2.fromOffset(80,38)oL.Position=UDim2.new(1,-88,0,10)oL.BackgroundColor3=lw.SurfaceAlt;
 oL.BackgroundTransparency=0.05;
 oL.BorderSizePixel=0;
 oL.TextColor3=lw.Text;
 oL.PlaceholderColor3=lw.Muted;
 oL.PlaceholderText="1"oL.ClearTextOnFocus=false;
 oL.Font=Enum.Font.GothamBlack;
-oL.TextSize=12;
+oL.TextSize=16;
 oL.Text=tostring(ov or 1)mg(oL,10)mq(oL,1.2,0.34)local N=tonumber(ov)or 1;
-local ox={}local function oM()local gV=tonumber(tostring(oL.Text):gsub(",","."))if not gV then oL.Text=tostring(N)aP(u..": введи число")return end;
+local ox={}local function oM()local gV=tonumber((tostring(oL.Text):gsub(",",".")))if not gV then oL.Text=tostring(N)aP(u..": введи число")return end;
 N=math.clamp(gV,tonumber(oJ)or 0.1,tonumber(oK)or 1000)oL.Text=tostring(N)if kF then kF(N,ox)end end;
 ox.Commit=oM;
 ox.Box=oL;
@@ -4615,15 +4684,15 @@ aJ(oL.FocusLost:Connect(oM))return ox,bu end;
 function q.layoutUI.makePercentSlider(ab,u,ov,oN,oO,j8,kF)oN=tonumber(oN)or 0;
 oO=tonumber(oO)or 100;
 j8=math.max(1,tonumber(j8)or 1)local bu=Instance.new("Frame")bu.Parent=ab;
-bu.Size=UDim2.new(1,0,0,48)bu.BackgroundColor3=lw.Surface;
+bu.Size=UDim2.new(1,0,0,58)bu.BackgroundColor3=lw.Surface;
 bu.BackgroundTransparency=0.20;
 bu.BorderSizePixel=0;
-mg(bu,7)mq(bu,1,0.72)local oP=mt(bu,u,9,Enum.Font.GothamBlack,lw.Accent2)oP.Size=UDim2.new(0.72,-8,0,18)oP.Position=UDim2.fromOffset(8,2)oP.TextWrapped=false;
+mg(bu,7)mq(bu,1,0.72)local oP=mt(bu,u,13,Enum.Font.GothamBlack,lw.Accent2)oP.Size=UDim2.new(0.72,-8,0,18)oP.Position=UDim2.fromOffset(8,2)oP.TextWrapped=false;
 oP.TextTruncate=Enum.TextTruncate.AtEnd;
-local oQ=mt(bu,"0%",9,Enum.Font.GothamBlack,lw.Text)oQ.Size=UDim2.new(0.28,-8,0,18)oQ.Position=UDim2.new(0.72,0,0,2)oQ.TextXAlignment=Enum.TextXAlignment.Right;
+local oQ=mt(bu,"0%",13,Enum.Font.GothamBlack,lw.Text)oQ.Size=UDim2.new(0.28,-8,0,18)oQ.Position=UDim2.new(0.72,0,0,2)oQ.TextXAlignment=Enum.TextXAlignment.Right;
 oQ.TextWrapped=false;
 local oR=Instance.new("TextButton")oR.Parent=bu;
-oR.Name="SliderTrack"oR.Size=UDim2.new(1,-16,0,24)oR.Position=UDim2.fromOffset(8,21)oR.BackgroundTransparency=1;
+oR.Name="SliderTrack"oR.Size=UDim2.new(1,-16,0,32)oR.Position=UDim2.fromOffset(8,23)oR.BackgroundTransparency=1;
 oR.BorderSizePixel=0;
 oR.Text=""oR.AutoButtonColor=false;
 local fA=Instance.new("Frame")fA.Parent=oR;
@@ -4649,14 +4718,14 @@ local function oX(f9)local nA=math.max(1,oR.AbsoluteSize.X)local oU=math.clamp((
 aJ(oR.InputBegan:Connect(function(f9)if oW(f9)then oT=true;
 oX(f9)end end))aJ(f.InputChanged:Connect(function(f9)if oT and(f9.UserInputType==Enum.UserInputType.MouseMovement or f9.UserInputType==Enum.UserInputType.Touch)then oX(f9)end end))aJ(f.InputEnded:Connect(function(f9)if oT and oW(f9)then oT=false end end))ox.Set(ov,true)return ox,bu end;
 local function oY(ab,ok,oZ,kF)local bu=Instance.new("TextButton")bu.Parent=ab;
-bu.Size=UDim2.new(1,0,0,32)bu.Text=""bu.AutoButtonColor=true;
+bu.Size=UDim2.new(1,0,0,58)bu.Text=""bu.AutoButtonColor=true;
 bu.BackgroundColor3=lw.Surface;
 bu.BackgroundTransparency=0.20;
 bu.BorderSizePixel=0;
-mg(bu,7)local ms=mq(bu,1,0.66)local oP=mt(bu,ok,8,Enum.Font.GothamBlack,lw.Accent2)oP.Size=UDim2.new(0.30,-7,1,0)oP.Position=UDim2.fromOffset(7,0)local oQ=mt(bu,oZ or"ВЫБРАТЬ",9,Enum.Font.GothamBold,lw.Text)oQ.Size=UDim2.new(0.70,-28,1,0)oQ.Position=UDim2.new(0.30,0,0,0)oQ.TextXAlignment=Enum.TextXAlignment.Right;
+mg(bu,7)local ms=mq(bu,1,0.66)local oP=mt(bu,ok,11,Enum.Font.GothamBlack,lw.Accent2)oP.Size=UDim2.new(1,-48,0,18)oP.Position=UDim2.fromOffset(12,5)local oQ=mt(bu,oZ or"ВЫБРАТЬ",14,Enum.Font.GothamBold,lw.Text)oQ.Size=UDim2.new(1,-48,0,26)oQ.Position=UDim2.fromOffset(12,24)oQ.TextXAlignment=Enum.TextXAlignment.Left;
 oQ.TextWrapped=false;
 oQ.TextTruncate=Enum.TextTruncate.AtEnd;
-local o_=mt(bu,"›",16,Enum.Font.GothamBlack,lw.Accent)o_.Size=UDim2.fromOffset(20,32)o_.Position=UDim2.new(1,-22,0,0)o_.TextXAlignment=Enum.TextXAlignment.Center;
+local o_=mt(bu,"›",24,Enum.Font.GothamBlack,lw.Accent)o_.Size=UDim2.fromOffset(20,58)o_.Position=UDim2.new(1,-36,0,0)o_.TextXAlignment=Enum.TextXAlignment.Center;
 aJ(bu.Activated:Connect(function()ms.Transparency=0.08;
 task.defer(function()if ms.Parent then ms.Transparency=0.66 end end)if kF then kF()end end))return{Row=bu,Set=function(N)oQ.Text=tostring(N or"ВЫБРАТЬ")end,Get=function()return oQ.Text end}end;
 local p0=Instance.new("TextButton")p0.Parent=n7;
@@ -4666,11 +4735,11 @@ p0.Text=""p0.AutoButtonColor=false;
 p0.Visible=false;
 p0.ZIndex=80;
 local p1=Instance.new("Frame")p1.Parent=p0;
-p1.Size=UDim2.new(1,-34,1,-46)p1.Position=UDim2.fromOffset(17,23)p1.BackgroundColor3=lw.Bg;
+p1.Size=UDim2.new(1,-12,1,-12)p1.Position=UDim2.fromOffset(6,6)p1.BackgroundColor3=lw.Bg;
 p1.BackgroundTransparency=0.02;
 p1.BorderSizePixel=0;
 p1.ZIndex=81;
-mg(p1,14)mq(p1,2,0.04)mm(p1,lw.Panel,lw.Bg,125)local p2=mt(p1,"ВЫБОР",13,Enum.Font.GothamBlack,lw.Text)p2.Size=UDim2.new(1,-54,0,36)p2.Position=UDim2.fromOffset(12,3)p2.ZIndex=82;
+mg(p1,10)local p2=mt(p1,"ВЫБОР",13,Enum.Font.GothamBlack,lw.Text)p2.Size=UDim2.new(1,-54,0,36)p2.Position=UDim2.fromOffset(12,3)p2.ZIndex=82;
 local p3=kr(p1,"×",lw.SurfaceAlt)p3.Size=UDim2.fromOffset(30,30)p3.Position=UDim2.new(1,-38,0,7)p3.TextColor3=lw.Danger;
 p3.TextSize=18;
 p3.ZIndex=83;
@@ -4682,7 +4751,7 @@ p4.ClearTextOnFocus=false;
 p4.PlaceholderText="Поиск..."p4.PlaceholderColor3=lw.Muted;
 p4.Text=""p4.TextColor3=lw.Text;
 p4.Font=Enum.Font.GothamBold;
-p4.TextSize=11;
+p4.TextSize=14;
 p4.TextXAlignment=Enum.TextXAlignment.Left;
 p4.ZIndex=82;
 mg(p4,8)mq(p4,1.2,0.48)local p5=Instance.new("UIPadding")p5.Parent=p4;
@@ -4712,12 +4781,12 @@ pc.BackgroundTransparency=0.02;
 pc.BorderSizePixel=0;
 pc.ZIndex=96;
 mg(pc,13)mq(pc,2,0.06)mm(pc,lw.Panel,lw.Bg,120)local pd=mt(pc,"ВНИМАНИЕ: УДАЛЕНИЕ",11,Enum.Font.GothamBlack,lw.Danger)pd.Size=UDim2.new(1,-22,0,28)pd.Position=UDim2.fromOffset(11,8)pd.ZIndex=97;
-local pe=mt(pc,"",9,Enum.Font.Gotham,lw.Text)pe.Size=UDim2.new(1,-22,0,111)pe.Position=UDim2.fromOffset(11,40)pe.TextWrapped=true;
+local pe=mt(pc,"",12,Enum.Font.Gotham,lw.Text)pe.Size=UDim2.new(1,-22,0,111)pe.Position=UDim2.fromOffset(11,40)pe.TextWrapped=true;
 pe.TextYAlignment=Enum.TextYAlignment.Top;
 pe.ZIndex=97;
-local pf=kr(pc,"ОТМЕНА",lw.SurfaceAlt)pf.Size=UDim2.new(0.48,-13,0,33)pf.Position=UDim2.new(0,10,1,-43)pf.TextSize=9;
+local pf=kr(pc,"ОТМЕНА",lw.SurfaceAlt)pf.Size=UDim2.new(0.48,-13,0,33)pf.Position=UDim2.new(0,10,1,-43)pf.TextSize=13;
 pf.ZIndex=98;
-local pg=kr(pc,"ПОДТВЕРДИТЬ",lw.Danger)pg.Size=UDim2.new(0.52,-13,0,33)pg.Position=UDim2.new(0.48,3,1,-43)pg.TextSize=8;
+local pg=kr(pc,"ПОДТВЕРДИТЬ",lw.Danger)pg.Size=UDim2.new(0.52,-13,0,33)pg.Position=UDim2.new(0.48,3,1,-43)pg.TextSize=12;
 pg.ZIndex=98;
 local ph=nil;
 local function pi()ph=nil;
@@ -4744,13 +4813,13 @@ local pu=string.lower(tostring(p4.Text or""))local pv=0;
 for o,pw in ipairs(pm.options)do local e7=tostring(pw.id or pw.label)local px=string.lower(tostring(pw.label or"").." "..tostring(pw.sub or""))if pu==""or px:find(pu,1,true)then pv=pv+1;
 local py=pw.disabled==true;
 local pz=not py and pm.selected[e7]==true;
-local L=kr(p6,"",pz and lw.SurfaceAlt or lw.Surface)L.Size=UDim2.new(1,-2,0,45)L.LayoutOrder=pv;
+local L=kr(p6,"",pz and lw.SurfaceAlt or lw.Surface)L.Size=UDim2.new(1,-2,0,58)L.LayoutOrder=pv;
 L.ZIndex=83;
 L.BackgroundTransparency=py and 0.38 or(pz and 0.02 or 0.20)local pA=L:FindFirstChild("NeonEdge")if pA then pA.Transparency=pz and 0.02 or 0.66;
 pA.Thickness=pz and 2 or 1 end;
-local pB=mt(L,pw.label,10,Enum.Font.GothamBlack,py and lw.Muted or(pz and lw.Accent2 or lw.Text))pB.Size=UDim2.new(1,-48,0,20)pB.Position=UDim2.fromOffset(9,3)pB.ZIndex=84;
-local pC=mt(L,pw.sub or"",8,Enum.Font.Gotham,lw.Muted)pC.Size=UDim2.new(1,-48,0,16)pC.Position=UDim2.fromOffset(9,23)pC.ZIndex=84;
-local gU=mt(L,py and"ЗАЩ"or(pz and"ON"or"›"),py and 7 or 9,Enum.Font.GothamBlack,pz and lw.Accent2 or lw.Muted)gU.Size=UDim2.fromOffset(34,45)gU.Position=UDim2.new(1,-40,0,0)gU.TextXAlignment=Enum.TextXAlignment.Center;
+local pB=mt(L,pw.label,14,Enum.Font.GothamBlack,py and lw.Muted or(pz and lw.Accent2 or lw.Text))pB.Size=UDim2.new(1,-48,0,20)pB.Position=UDim2.fromOffset(9,3)pB.ZIndex=84;
+local pC=mt(L,pw.sub or"",11,Enum.Font.Gotham,lw.Muted)pC.Size=UDim2.new(1,-48,0,23)pC.Position=UDim2.fromOffset(9,29)pC.ZIndex=84;
+local gU=mt(L,py and"ЗАЩ"or(pz and"ON"or"›"),py and 7 or 9,Enum.Font.GothamBlack,pz and lw.Accent2 or lw.Muted)gU.Size=UDim2.fromOffset(34,58)gU.Position=UDim2.new(1,-40,0,0)gU.TextXAlignment=Enum.TextXAlignment.Center;
 gU.ZIndex=84;
 local pD=L.Activated:Connect(function()if not pm then return end;
 if pw.disabled then return end;
@@ -4760,7 +4829,8 @@ if pv==0 then local pF=mt(p6,"НИЧЕГО НЕ НАЙДЕНО",10,Enum.Font.Got
 pF.TextXAlignment=Enum.TextXAlignment.Center;
 pF.ZIndex=83;
 table.insert(pn,pF)end;
-p6.CanvasSize=UDim2.new(0,0,0,math.max(54,pv*50+12))if ps then p6.CanvasPosition=Vector2.new(0,0)else task.defer(function()if p6.Parent then p6.CanvasPosition=pt end end)end;
+p6.CanvasSize=UDim2.new(0,0,0,math.max(54,pv*63+12))if ps then p6.CanvasPosition=Vector2.new(0,0)else task.defer(function()if p6.Parent then p6.CanvasPosition=pt end end)end;
+if q.hologramContent then q.hologramContent:Style(p0)end;
 p9.Text=pm.multiple and q.layoutUI.staticText("ГОТОВО").." • "..fC(pm.selected)or q.layoutUI.staticText("ЗАКРЫТЬ")end;
 local function pG(ok,pH,pI)pI=pI or{}local hR={}for e7,fF in pairs(pI.selected or{})do if fF then hR[tostring(e7)]=true end end;
 pm={options=pH or{},multiple=pI.multiple==true,selected=hR,onDone=pI.onDone}p2.Text=q.layoutUI.staticText(ok)p4.Text=""p0.Visible=true;
@@ -4868,24 +4938,24 @@ end
 
 local pJ,pK=oj(nT,"АВТОФАРМ",106,3)pJ.LayoutOrder=2;
 local pL,pM=oq(nT,"ВЫБОР КАМНЯ",170)pL.LayoutOrder=1;
-local pN=od(pM,70)pN.LayoutOrder=1;
-local pO=mt(pN,"АВТОПОДБОР ПО РЕБЁРТАМ",8,Enum.Font.GothamBold,lw.Accent2)pO.Size=UDim2.new(1,-76,0,15)pO.Position=UDim2.new(0,8,0,3)pO.TextWrapped=false;
+local pN=od(pM,100)pN.LayoutOrder=1;
+local pO=mt(pN,"АВТОПОДБОР ПО РЕБЁРТАМ",8,Enum.Font.GothamBold,lw.Accent2)pO.Size=UDim2.new(1,-114,0,36)pO.Position=UDim2.new(0,8,0,3)pO.TextWrapped=false;
 pO.TextTruncate=Enum.TextTruncate.AtEnd;
-q.layoutUI.autoRockButton=kr(pN,"АВТО",lw.SurfaceAlt)q.layoutUI.autoRockButton.Size=UDim2.fromOffset(53,21)q.layoutUI.autoRockButton.Position=UDim2.new(1,-60,0,4)q.layoutUI.autoRockButton.TextSize=9;
+q.layoutUI.autoRockButton=kr(pN,"АВТО",lw.SurfaceAlt)q.layoutUI.autoRockButton.Size=UDim2.fromOffset(92,36)q.layoutUI.autoRockButton.Position=UDim2.new(1,-100,0,4)q.layoutUI.autoRockButton.TextSize=9;
 q.layoutUI.autoRockButton.TextColor3=lw.Success;
-local pP=mt(pN,"-",10,Enum.Font.GothamBold,lw.Warm)pP.Size=UDim2.new(1,-16,0,17)pP.Position=UDim2.new(0,8,0,19)pP.TextWrapped=false;
+local pP=mt(pN,"-",10,Enum.Font.GothamBold,lw.Warm)pP.Size=UDim2.new(1,-16,0,17)pP.Position=UDim2.new(0,8,0,43)pP.TextWrapped=false;
 pP.TextTruncate=Enum.TextTruncate.AtEnd;
-local pQ=mt(pN,"Ребёрты: -  •  XP/удар: -  •  цель: -  •  ударов: -",8,Enum.Font.Gotham,lw.Text)pQ.Size=UDim2.new(1,-16,0,29)pQ.Position=UDim2.new(0,8,0,38)pQ.TextYAlignment=Enum.TextYAlignment.Top;
+local pQ=mt(pN,"Ребёрты: -  •  XP/удар: -  •  цель: -  •  ударов: -",8,Enum.Font.Gotham,lw.Text)pQ.Size=UDim2.new(1,-16,0,29)pQ.Position=UDim2.new(0,8,0,64)pQ.TextYAlignment=Enum.TextYAlignment.Top;
 q.ui.autoRockTitle=pO;
 q.ui.autoRockName=pP;
 q.ui.autoRockStats=pQ;
-local pR=od(pM,58)pR.LayoutOrder=2;
-local pS=mt(pR,"камень не выбран",10,Enum.Font.GothamBold,lw.Text)pS.Size=UDim2.new(1,-100,0,21)pS.Position=UDim2.fromOffset(8,5)pS.TextXAlignment=Enum.TextXAlignment.Left;
+local pR=od(pM,106)pR.LayoutOrder=2;
+local pS=mt(pR,"камень не выбран",10,Enum.Font.GothamBold,lw.Text)pS.Size=UDim2.new(1,-16,0,26)pS.Position=UDim2.fromOffset(8,5)pS.TextXAlignment=Enum.TextXAlignment.Left;
 pS.TextWrapped=false;
 pS.TextTruncate=Enum.TextTruncate.AtEnd;
-q.layoutUI.chooseRockButton=kr(pR,"ВЫБРАТЬ",lw.SurfaceAlt)q.layoutUI.chooseRockButton.Size=UDim2.fromOffset(82,23)q.layoutUI.chooseRockButton.Position=UDim2.new(1,-89,0,5)q.layoutUI.chooseRockButton.TextSize=9;
+q.layoutUI.chooseRockButton=kr(pR,"ВЫБРАТЬ",lw.SurfaceAlt)q.layoutUI.chooseRockButton.Size=UDim2.new(1,-16,0,38)q.layoutUI.chooseRockButton.Position=UDim2.fromOffset(8,36)q.layoutUI.chooseRockButton.TextSize=9;
 local pT=Instance.new("TextButton")pT.Parent=pR;
-pT.Size=UDim2.new(1,-16,0,22)pT.Position=UDim2.fromOffset(8,31)pT.Text=""pT.AutoButtonColor=false;
+pT.Size=UDim2.new(1,-16,0,28)pT.Position=UDim2.fromOffset(8,78)pT.Text=""pT.AutoButtonColor=false;
 pT.BackgroundTransparency=1;
 pT.BorderSizePixel=0;
 pT.Active=true;
@@ -4976,7 +5046,7 @@ ox.Set(false,true)end else jX("ТРЕНАЖЁР: выключен")end end)q.lev
 qj()end;
 do local qp,qq=oq(q.layoutUI.eggPage,"PROTEIN EGG • ×2 СИЛА",130)qp.LayoutOrder=1;
 local qr=Instance.new("Frame")qr.Parent=qq;
-qr.Size=UDim2.new(1,0,0,32)qr.LayoutOrder=1;
+qr.Size=UDim2.new(1,0,0,44)qr.LayoutOrder=1;
 qr.BackgroundColor3=lw.Surface;
 qr.BackgroundTransparency=0.20;
 qr.BorderSizePixel=0;
@@ -4988,7 +5058,7 @@ mf.BackgroundTransparency=ht and 0.04 or 0.12;
 mf.TextColor3=ht and lw.Bg or lw.Text;
 local ms=mf:FindFirstChild("NeonEdge")if ms then ms.Color=ht and lw.Success or lw.Border;
 ms.Transparency=ht and 0.15 or 0.72 end end end;
-for ay,gI in ipairs({1,3,10})do local mf=kr(qr,"×"..tostring(gI),lw.SurfaceAlt)mf.Size=UDim2.new(0.19,-3,0,26)mf.Position=UDim2.new(0.39+(ay-1)*0.20,0,0,3)mf.TextSize=10;
+for ay,gI in ipairs({1,3,10})do local mf=kr(qr,"×"..tostring(gI),lw.SurfaceAlt)mf.Size=UDim2.new(0.19,-3,0,38)mf.Position=UDim2.new(0.39+(ay-1)*0.20,0,0,3)mf.TextSize=10;
 qt[gI]=mf;
 aJ(mf.Activated:Connect(function()q.eggAmount=gI;
 qu()aP("PROTEIN EGG: использовать ×"..tostring(gI))end))end;
@@ -5170,12 +5240,12 @@ q.layoutUI.showInterfaceSection(q.layoutUI.interfaceSection or"colors",true)q.la
 do local r3=q.layoutUI.makeGuideCard(q.layoutUI.teleportPage,"ТЕЛЕПОРТЫ","Нажми на нужное место — телепорт сработает сразу.",1)r3.Name="TeleportGuide"local function r4(e7)if type(q.teleportToIsland)~="function"then aP("ТЕЛЕПОРТ: функция недоступна")return false end;
 local D,cF=q.teleportToIsland(e7)if not D then aP("ТЕЛЕПОРТ: "..tostring(cF))end;
 return D end;
-local r5,r6,r7=oq(q.layoutUI.teleportPage,"ОСТРОВА",109)r5.LayoutOrder=2;
+local r5,r6,r7=oq(q.layoutUI.teleportPage,"ОСТРОВА",177)r5.LayoutOrder=2;
 r7:Destroy()local r8=Instance.new("UIGridLayout")r8.Parent=r6;
-r8.CellSize=UDim2.new(0.5,-3,0,34)r8.CellPadding=UDim2.fromOffset(5,5)r8.SortOrder=Enum.SortOrder.LayoutOrder;
+r8.CellSize=UDim2.new(1,0,0,42)r8.CellPadding=UDim2.fromOffset(5,5)r8.SortOrder=Enum.SortOrder.LayoutOrder;
 local r9,ra,rb=oq(q.layoutUI.teleportPage,"ТРЕНАЖЁРНЫЕ ЗАЛЫ",187)r9.LayoutOrder=3;
 rb:Destroy()local rc=Instance.new("UIGridLayout")rc.Parent=ra;
-rc.CellSize=UDim2.new(0.5,-3,0,34)rc.CellPadding=UDim2.fromOffset(5,5)rc.SortOrder=Enum.SortOrder.LayoutOrder;
+rc.CellSize=UDim2.new(1,0,0,42)rc.CellPadding=UDim2.fromOffset(5,5)rc.SortOrder=Enum.SortOrder.LayoutOrder;
 local rd,re=oq(q.layoutUI.teleportPage,"ТЕКУЩАЯ ЛОКАЦИЯ",69)rd.LayoutOrder=4;
 local rf=mt(re,"—",10,Enum.Font.GothamBlack,lw.Accent2)rf.Size=UDim2.new(1,0,0,31)rf.BackgroundColor3=lw.Surface;
 rf.BackgroundTransparency=0.20;
@@ -5186,7 +5256,7 @@ mg(rf,7)mq(rf,1,0.68)q.layoutUI.teleportButtons={}q.layoutUI.teleportGroups={isl
 local function rh(e7,ri)if q.layoutUI.teleportButtons[e7]then return end;
 local ab=ri and r6 or ra;
 local mf=kr(ab,q.layoutUI.officialName(e7,q.layoutUI.gameObjectContext(e7)),lw.SurfaceAlt)mf.Name="Teleport_"..tostring(e7):gsub("%s+","")mf.LayoutOrder=ri and#q.layoutUI.teleportGroups.islands+1 or rg+1;
-mf.TextSize=8;
+mf.TextSize=13;
 mf.TextWrapped=false;
 mf.TextTruncate=Enum.TextTruncate.AtEnd;
 q.layoutUI.teleportButtons[e7]=mf;
@@ -5196,7 +5266,7 @@ aJ(mf.Activated:Connect(function()r4(e7)end))end;
 for o,e7 in ipairs({"Tiny Island","Starter Island","Legend Beach"})do rh(e7,true)end;
 for o,e7 in ipairs({"Frost Gym","Mythical Gym","Eternal Gym","Legend Gym","Muscle King Gym","Jungle Gym","Industrial Gym"})do rh(e7,false)end;
 function q.refreshTeleportUI()for o,eM in ipairs(q.machineZones or{})do rh(eM.id,false)end;
-r9.Size=UDim2.new(1,0,0,36+math.max(1,math.ceil(rg/2))*39)local hR=tostring(q.selectedTeleport or"Starter Island")rf.Text=q.layoutUI.officialName(hR,q.layoutUI.gameObjectContext(hR))for e7,mf in pairs(q.layoutUI.teleportButtons)do mf.Text=q.layoutUI.officialName(e7,q.layoutUI.gameObjectContext(e7))local ht=e7==hR;
+r9.Size=UDim2.new(1,0,0,36+math.max(1,rg)*47)local hR=tostring(q.selectedTeleport or"Starter Island")rf.Text=q.layoutUI.officialName(hR,q.layoutUI.gameObjectContext(hR))for e7,mf in pairs(q.layoutUI.teleportButtons)do mf.Text=q.layoutUI.officialName(e7,q.layoutUI.gameObjectContext(e7))local ht=e7==hR;
 mf.BackgroundColor3=ht and lw.Success or lw.SurfaceAlt;
 mf.TextColor3=ht and lw.Bg or lw.Text;
 local ms=mf:FindFirstChild("NeonEdge")if ms then ms.Color=ht and lw.Success or lw.Accent;
@@ -5373,27 +5443,27 @@ q.leverRefs.train[cX.id]=qR end;
 local rQ,rR=oj(nW,"БЕЗ ОГРАНИЧЕНИЯ",106,2)rQ.LayoutOrder=2;
 local rS,rT=oq(nW,"РАЗМЕР ПЕРСОНАЖА",80)rS.LayoutOrder=3;
 q.layoutUI.rebSupportPanel,q.layoutUI.rebSupportBody=oj(nW,"KING И РАЗМЕР",106,2)q.layoutUI.rebSupportPanel.LayoutOrder=4;
-local rU=od(nW,52)rU.LayoutOrder=1;
-local rV=mt(rU,"ЦЕЛЬ РЕБИРТОВ",10,Enum.Font.GothamBlack,lw.Accent2)rV.Size=UDim2.new(1,-126,0,15)rV.Position=UDim2.new(0,8,0,4)rV.TextTruncate=Enum.TextTruncate.AtEnd;
-local rW=mt(rU,"Лимит выключен • цель: 100",8,Enum.Font.GothamBold,lw.Muted)rW.Size=UDim2.new(1,-126,0,18)rW.Position=UDim2.new(0,8,0,24)rW.TextTruncate=Enum.TextTruncate.AtEnd;
+local rU=od(nW,110)rU.LayoutOrder=1;
+local rV=mt(rU,"ЦЕЛЬ РЕБИРТОВ",10,Enum.Font.GothamBlack,lw.Accent2)rV.Size=UDim2.new(1,-16,0,22);rV.TextSize=14;rV.Position=UDim2.new(0,8,0,4)rV.TextTruncate=Enum.TextTruncate.AtEnd;
+local rW=mt(rU,"Лимит выключен • цель: 100",8,Enum.Font.GothamBold,lw.Muted)rW.Size=UDim2.new(1,-16,0,24)rW.Position=UDim2.new(0,8,0,24)rW.TextTruncate=Enum.TextTruncate.AtEnd;
 local rX=Instance.new("TextBox")rX.Parent=rU;
-rX.Size=UDim2.fromOffset(58,28)rX.Position=UDim2.new(1,-116,0,12)rX.BackgroundColor3=lw.SurfaceAlt;
+rX.Size=UDim2.new(1,-104,0,40)rX.Position=UDim2.fromOffset(8,60)rX.BackgroundColor3=lw.SurfaceAlt;
 rX.BackgroundTransparency=0.05;
 rX.BorderSizePixel=0;
 rX.TextColor3=lw.Text;
 rX.PlaceholderColor3=lw.Muted;
 rX.PlaceholderText="100"rX.ClearTextOnFocus=false;
 rX.Font=Enum.Font.GothamBlack;
-rX.TextSize=11;
+rX.TextSize=16;
 rX.Text="100"mg(rX,9)mq(rX,1.2,0.34)local rY=Instance.new("TextButton")rY.Parent=rU;
-rY.Size=UDim2.fromOffset(44,22)rY.Position=UDim2.new(1,-50,0,15)rY.Text=""rY.AutoButtonColor=false;
+rY.Size=UDim2.fromOffset(80,40)rY.Position=UDim2.new(1,-88,0,60)rY.Text="";rY.TextSize=13;rY.Font=Enum.Font.GothamBold;rY.TextColor3=lw.Text;rY.AutoButtonColor=false;
 rY.BorderSizePixel=0;
 mg(rY,13)local rZ=mq(rY,1.2,0.48)local r_=Instance.new("Frame")r_.Parent=rY;
 r_.Size=UDim2.fromOffset(16,16)r_.BorderSizePixel=0;
 r_.BackgroundColor3=lw.Text;
 mg(r_,10)local s0=false;
 local s1={}local s2;
-local function s3()rY.BackgroundColor3=s0 and lw.Accent or lw.SurfaceAlt;
+local function s3()r_.Visible=false;rY.Text=q.language=="en"and(s0 and"ON"or"OFF")or(s0 and"ВКЛ"or"ВЫКЛ");rY.BackgroundColor3=s0 and lw.Success or lw.SurfaceAlt;
 r_.Position=s0 and UDim2.new(1,-19,0,3)or UDim2.new(0,3,0,3)rZ.Color=s0 and lw.Accent2 or lw.Border;
 rZ.Thickness=s0 and 2 or 1.2 end;
 local function s4()local gV=bO(tostring(rX.Text):gsub("%s+",""))if not gV or gV<1 then rX.Text=("%.0f"):format(q.rebirthGoal)aP("ЦЕЛЬ РЕБИРТОВ: введи целое число от 1")return false end;
@@ -5418,7 +5488,7 @@ if s2 then s2.Set(true,true)end;
 ci(q.rebirthGoalCurrent)aP(("АВТОРЕБИРТ ДО ЦЕЛИ: %s"):format(ch(q.rebirthGoal)))else ij("ЛИМИТ РЕБИРТОВ: выключен",false)end end;
 function s1.Set(N,mC)s0=N and true or false;
 s3()if not mC then s5(s0,s1)end end;
-function s1.Get()return s0 end;
+s1.Refresh=s3;function s1.Get()return s0 end;
 aJ(rY.Activated:Connect(function()s1.Set(not s0,false)end))aJ(rX.FocusLost:Connect(s4))s3()q.ui.rebirthGoalProgress=rW;
 q.ui.rebirthGoalInput=rX;
 q.leverRefs.rebirthGoal=s1;
@@ -5573,7 +5643,7 @@ q.layoutUI.teleportPage.Visible=not sL and r4;
 q.layoutUI.questPage.Visible=not sL and hq;
 q.layoutUI.systemPage.Visible=not sL and sY;
 q.layoutUI.interfacePage.Visible=not sL and sZ;
-if not sL and sS~=u then local nS=u=="boss"and q.layoutUI.bossPage or sT and nT or sU and nU or sV and nV or sW and nW or sX and nX or k5 and nY or ku and q.layoutUI.eggPage or r4 and q.layoutUI.teleportPage or hq and q.layoutUI.questPage or sY and q.layoutUI.systemPage or sZ and q.layoutUI.interfacePage or nil;
+if not sL and sS~=u and not(q.hologramContent and q.hologramContent.Active)then local nS=u=="boss"and q.layoutUI.bossPage or sT and nT or sU and nU or sV and nV or sW and nW or sX and nX or k5 and nY or ku and q.layoutUI.eggPage or r4 and q.layoutUI.teleportPage or hq and q.layoutUI.questPage or sY and q.layoutUI.systemPage or sZ and q.layoutUI.interfacePage or nil;
 if nS then local k2=nS.Position;
 local s_=math.floor(math.clamp(tonumber(q.layoutUI.appearance.pageMotion)or 40,0,100)*0.2+0.5)if s_>0 then nS.Position=UDim2.new(k2.X.Scale,k2.X.Offset+s_,k2.Y.Scale,k2.Y.Offset)q.layoutUI.animate(nS,{Position=k2},0.16)end;
 q.layoutUI.pulseMotionBlur()end end;
@@ -5591,6 +5661,7 @@ if sZ and type(q.refreshAppearanceUI)=="function"then q.refreshAppearanceUI()end
 if u=="boss"then q.layoutUI.bossPage.CanvasPosition=Vector2.zero;if q.refreshBossUI then q.refreshBossUI()end end;if ku and type(q.refreshEggUI)=="function"then q.refreshEggUI()end end;
 function q.layoutUI.applyLanguage(cJ,mC)cJ=cJ=="en"and"en"or"ru"q.language=cJ;
 if q.hologram and q.hologram.RefreshLanguage then q.hologram:RefreshLanguage()end;
+(function()local function refresh(ref)if type(ref)~="table"then return end;if ref.Refresh then ref.Refresh()elseif not ref.Get then for _,child in pairs(ref)do refresh(child)end end end;refresh(q.leverRefs)end)();
 n.RockBugLanguage=cJ;
 q.gameTranslators=q.gameTranslators or{}q.translationToken=(q.translationToken or 0)+1;
 local fd=q.translationToken;
@@ -5647,19 +5718,48 @@ q.layoutUI.interfaceSideTab.Visible=false end)else n7.Size=sM;
 n7.Position=t4(n_.Position,sM)n_.Visible=false;
 n7.Visible=true;
 sR(sK)q.layoutUI.animateWindow(true)end end;
+q.layoutUI.drawerFooter=function()
+ nN.Visible=false;nO.Visible=false;nQ.Visible=false;nM.BackgroundTransparency=1
+ nP.Position=UDim2.fromOffset(0,0);nP.Size=UDim2.fromScale(1,1);nP.BackgroundTransparency=1;nP.TextSize=11;nP.TextTruncate=Enum.TextTruncate.AtEnd
+end;
 -- HOLOGRAM_CONTENT_BEGIN
 do(function()
 local content={Pages={bug=nT,farm=nU,train=nV,reb=nW,kill=nX,crystal=nY,boss=q.layoutUI.bossPage,egg=q.layoutUI.eggPage,teleport=q.layoutUI.teleportPage,quest=q.layoutUI.questPage,system=q.layoutUI.systemPage,interface=q.layoutUI.interfacePage}}
 function content:HideLegacy()
  n7.Visible=false;n_.Visible=false;q.uiRoot.Enabled=false
 end
+function content:Style(root)
+ for _,node in ipairs(root:GetDescendants())do
+  if node:IsA("UIGradient")then node.Enabled=false
+  elseif node:IsA("UIStroke")then node.Transparency=1
+  elseif node:IsA("TextLabel")or node:IsA("TextButton")or node:IsA("TextBox")then
+   node.TextSize=math.max(node.TextSize,node:IsA("TextLabel")and 11 or 13)
+   node.TextTruncate=Enum.TextTruncate.AtEnd
+   if node:IsA("TextButton")then
+    node.AutoButtonColor=true
+    if node.Text~=""and node.Size.Y.Scale==0 and node.Size.Y.Offset>0 and node.Size.Y.Offset<36 then
+     node.Size=UDim2.new(node.Size.X.Scale,node.Size.X.Offset,0,36)
+     local parent=node.Parent
+     if parent:IsA("Frame")and parent.Size.Y.Scale==0 and parent.Size.Y.Offset>=26 and parent.Size.Y.Offset<=40 then
+      parent.Size=UDim2.new(parent.Size.X.Scale,parent.Size.X.Offset,0,44)
+     end
+    end
+   end
+  end
+ end
+end
 function content:Layout()
  if not self.Active then return end
  for _,page in pairs(self.Pages)do
   page.Position=UDim2.fromOffset(0,0);page.Size=UDim2.fromScale(1,1);page.ClipsDescendants=true
  end
- nL.Position=UDim2.fromOffset(0,0);nL.Size=UDim2.new(1,(self.Active=="bug"or self.Active=="farm")and -84 or 0,1,0)
- nG.Position=UDim2.new(1,-78,0,0);nG.Size=UDim2.fromOffset(78,28)
+ nL.Position=UDim2.fromOffset(0,0);nL.Size=UDim2.new(1,0,0,132);nL.LayoutOrder=-20
+ local index=0
+ for _,button in ipairs(nL:GetChildren())do if button:IsA("GuiButton")then
+  button.Position=UDim2.new(index%2/2,index%2==1 and 3 or 0,0,math.floor(index/2)*44)
+  button.Size=UDim2.new(0.5,-3,0,38);index+=1
+ end end
+ nG.Position=UDim2.fromOffset(0,0);nG.Size=UDim2.new(1,0,0,34);nG.TextSize=13
  nM.Position=UDim2.fromOffset(0,0);nM.Size=UDim2.fromScale(1,1)
  self:HideLegacy()
 end
@@ -5671,7 +5771,9 @@ function content:Attach(tab,body,overlays,quick,footer)
  for id,page in pairs(self.Pages)do page.Parent=body;page.Visible=id==tab end
  p0.Parent=overlays
  if q.layoutUI.hologramDeleteOverlay then q.layoutUI.hologramDeleteOverlay.Parent=overlays end
- nL.Parent=quick;nG.Parent=quick;nM.Parent=footer
+ nL.Parent=self.Pages.system;nG.Parent=quick;nM.Parent=footer
+ self:Style(self.Pages[tab]);self:Style(nL);self:Style(nM)
+ if q.layoutUI.drawerFooter then q.layoutUI.drawerFooter()end
  sL=false;sR(tab);self:Layout()
  return true
 end
@@ -5790,7 +5892,7 @@ warn("[RockBugHub] UI startup failed: "..tostring(tP))pcall(function()g:SetCore(
 -- HOLOGRAM_HUD_BEGIN
 do (function()
 local Hologram = (function()
--- RockBugHub T35. Bundled into the existing launcher by scripts/build_hologram.py.
+-- RockBugHub T36. Bundled into the existing launcher by scripts/build_hologram.py.
 -- All geometry is local, non-colliding and excluded from game raycasts.
 local HUD = {}
 
@@ -5833,6 +5935,10 @@ function HUD.layout(width, height)
     return "wide", 12.4, 9.0
 end
 
+function HUD.drawerSize(width,height)
+    return math.min(380,math.max(1,width-24)),math.min(460,math.max(1,height-24))
+end
+
 function HUD.acceptRelease(pressed, released, x, y)
     return pressed and not pressed.cancelled and pressed.button == released and (pressed.x-x)^2 + (pressed.y-y)^2 <= 144
 end
@@ -5852,7 +5958,7 @@ function HUD.mount(runtime, options)
     assert(options.content,"Missing hologram content bridge")
     local self = {visible=false, suspended=false, destroyed=false, group=HUD.groups[savedGroup] and savedGroup~="settings" and savedGroup or "farm", cardPage=1, cards={}, modalTabs={}, modalOpen=false, panels={}, connections={}, pressed={}, beams={}, samples={}, fps=0, inputGeneration=0, noticeToken=0}
     runtime.hologram = self -- Allows cleanup even if construction fails.
-    local binding = "RockBugHologramT35_" .. tostring(player.UserId)
+    local binding = "RockBugHologramT36_" .. tostring(player.UserId)
     local function connect(signal, callback)
         local connection = signal:Connect(callback)
         table.insert(self.connections, connection)
@@ -5886,7 +5992,7 @@ function HUD.mount(runtime, options)
     local function part(name, parent)
         return create("Part", {Name=name, Anchored=true, CanCollide=false, CanTouch=false, CanQuery=false, CastShadow=false, Transparency=1, Size=Vector3.new(1,1,0.025)}, parent)
     end
-    self.world = create("Model", {Name="RockBugHubHologramT35"})
+    self.world = create("Model", {Name="RockBugHubHologramT36"})
     self.surfaces = create("Folder", {Name="RockBugHubHologramSurfaces"}, playerGui)
     self.overlay = create("ScreenGui", {Name="RockBugHubHologramControl", ResetOnSpawn=false, DisplayOrder=1000010, ZIndexBehavior=Enum.ZIndexBehavior.Sibling}, playerGui)
     self.handle = create("TextButton", {Name="ToggleHologram", AnchorPoint=Vector2.new(0,0), Position=UDim2.fromOffset(16,12), Size=UDim2.fromOffset(108,36), BackgroundColor3=background, BackgroundTransparency=0.08, TextColor3=cyan, TextSize=12, Font=Enum.Font.GothamBold, Text="", AutoButtonColor=true}, self.overlay)
@@ -5992,20 +6098,42 @@ function HUD.mount(runtime, options)
         b.TextSize=10;table.insert(self.cardButtons,b)
     end
 
-    self.sheet=create("TextButton",{Name="ExpandedSection",Size=UDim2.fromScale(1,1),BackgroundColor3=Color3.fromRGB(1,9,16),BackgroundTransparency=0.22,Text="",AutoButtonColor=false,Active=true,Modal=true,Visible=false,ZIndex=20},self.overlay)
-    self.window=create("Frame",{AnchorPoint=Vector2.new(0.5,0.5),Position=UDim2.fromScale(0.5,0.5),Size=UDim2.fromScale(0.94,0.92),BackgroundColor3=background,BorderSizePixel=0,ClipsDescendants=true,ZIndex=21},self.sheet)
-    round(self.window,18);edge(self.window,0.08,2)
-    create("UISizeConstraint",{MaxSize=Vector2.new(880,680)},self.window)
-    self.windowTitle=label(self.window,"",16,9,400,32,20,cyan,true)
+    -- A transparent, non-modal host leaves the game usable outside the drawer.
+    self.sheet=create("Frame",{Name="SectionDrawer",Size=UDim2.fromScale(1,1),BackgroundTransparency=1,Active=false,Visible=false,ZIndex=20},self.overlay)
+    self.window=create("Frame",{AnchorPoint=Vector2.new(1,0.5),Position=UDim2.new(1,-12,0.5,0),Size=UDim2.fromOffset(380,460),BackgroundColor3=Color3.fromRGB(12,25,34),BorderSizePixel=0,Active=true,ClipsDescendants=true,ZIndex=21},self.sheet)
+    round(self.window,12);edge(self.window,0.65,1)
+    self.windowTitle=label(self.window,"",12,9,240,32,16,white,true)
     self.windowTitle.Size=UDim2.new(1,-132,0,32)
     self.close=nativeButton(self.window,"×",UDim2.new(1,-44,0,8),UDim2.fromOffset(34,34),function()self:CloseFull()end)
     self.stop=nativeButton(self.window,"STOP",UDim2.new(1,-106,0,8),UDim2.fromOffset(56,34),function()options.content:StopModes()end)
     self.stop.TextColor3=Color3.fromRGB(255,134,136)
-    self.sectionTabs=create("ScrollingFrame",{Position=UDim2.fromOffset(12,48),Size=UDim2.new(1,-24,0,38),CanvasSize=UDim2.fromOffset(0,0),BackgroundTransparency=1,BorderSizePixel=0,ScrollBarThickness=2,ScrollingDirection=Enum.ScrollingDirection.X,Active=true,ClipsDescendants=true},self.window)
-    self.quickHost=create("Frame",{Position=UDim2.fromOffset(12,90),Size=UDim2.new(1,-24,0,28),BackgroundTransparency=1,ClipsDescendants=true},self.window)
-    self.body=create("Frame",{Position=UDim2.fromOffset(12,124),Size=UDim2.new(1,-24,1,-176),BackgroundTransparency=1,ClipsDescendants=true},self.window)
-    self.footer=create("Frame",{Position=UDim2.new(0,12,1,-46),Size=UDim2.new(1,-24,0,38),BackgroundTransparency=1,ClipsDescendants=true},self.window)
+    self.sectionTabs=create("ScrollingFrame",{Position=UDim2.fromOffset(10,48),Size=UDim2.new(1,-20,0,42),CanvasSize=UDim2.fromOffset(0,0),BackgroundTransparency=1,BorderSizePixel=0,ScrollBarThickness=3,ScrollingDirection=Enum.ScrollingDirection.X,Active=true,ClipsDescendants=true},self.window)
+    self.quickHost=create("Frame",{Position=UDim2.fromOffset(12,94),Size=UDim2.new(1,-24,0,34),BackgroundTransparency=1,ClipsDescendants=true},self.window)
+    self.body=create("Frame",{Position=UDim2.fromOffset(12,94),Size=UDim2.new(1,-24,1,-128),BackgroundTransparency=1,ClipsDescendants=true},self.window)
+    self.footer=create("Frame",{Position=UDim2.new(0,12,1,-30),Size=UDim2.new(1,-24,0,24),BackgroundTransparency=1,ClipsDescendants=true},self.window)
     self.dialogHost=create("Frame",{Size=UDim2.fromScale(1,1),BackgroundTransparency=1,ZIndex=80,Active=false},self.window)
+
+    function self:LayoutDrawer(animate)
+        if not self.modalOpen then return end
+        local size=self.sheet.AbsoluteSize
+        if not size or size.X<1 or size.Y<1 then size=workspace.CurrentCamera.ViewportSize end
+        local width,height=HUD.drawerSize(size.X,size.Y)
+        local position=UDim2.new(self.drawerLeft and 0 or 1,self.drawerLeft and 12 or -12,0.5,0)
+        self.window.AnchorPoint=Vector2.new(self.drawerLeft and 0 or 1,0.5)
+        self.window.Size=UDim2.fromOffset(width,height)
+        if self.modalTween then self.modalTween:Cancel()end
+        if animate then
+            self.window.Position=UDim2.new(self.drawerLeft and 0 or 1,self.drawerLeft and -width or width,0.5,0)
+            self.modalTween=tweenService:Create(self.window,TweenInfo.new(0.2,Enum.EasingStyle.Quad,Enum.EasingDirection.Out),{Position=position})
+            self.modalTween:Play()
+        else self.window.Position=position end
+        local refresh=self.modalTab=="bug" or self.modalTab=="farm"
+        self.quickHost.Visible=refresh
+        local top=refresh and 134 or 94
+        self.body.Position=UDim2.fromOffset(12,top)
+        self.body.Size=UDim2.new(1,-24,1,-top-34)
+    end
+    connect(self.sheet:GetPropertyChangedSignal("AbsoluteSize"),function()self:LayoutDrawer(false)end)
 
     function self:OpenFull(tab,origin,requestedGroup)
         if self.destroyed or self.suspended or not HUD.sections[tab] then return false end
@@ -6028,25 +6156,19 @@ function HUD.mount(runtime, options)
         for i,id in ipairs(HUD.groups[group].tabs)do
             local section=id
             local title=HUD.sections[section]
-            local b=create("TextButton",{Position=UDim2.fromOffset((i-1)*122,0),Size=UDim2.fromOffset(116,32),Text=tr(title[1],title[2]),Font=Enum.Font.GothamBold,TextSize=12,TextColor3=section==tab and background or white,BackgroundColor3=section==tab and cyan or background,BorderSizePixel=0,AutoButtonColor=true},self.sectionTabs)
+            local b=create("TextButton",{Position=UDim2.fromOffset((i-1)*110,0),Size=UDim2.fromOffset(104,36),Text=tr(title[1],title[2]),Font=Enum.Font.GothamBold,TextSize=13,TextColor3=section==tab and background or white,BackgroundColor3=section==tab and cyan or Color3.fromRGB(28,46,58),BorderSizePixel=0,AutoButtonColor=true},self.sectionTabs)
             round(b,8)
             local connection=b.Activated:Connect(function()self:OpenFull(section,nil,group)end)
             table.insert(self.modalTabs,{node=b,connection=connection,id=section})
             if section==tab then selectedIndex=i end
         end
-        self.sectionTabs.CanvasSize=UDim2.fromOffset(#self.modalTabs*122,0)
-        self.sectionTabs.CanvasPosition=Vector2.new(math.max(0,(selectedIndex-2)*122),0)
+        self.sectionTabs.CanvasSize=UDim2.fromOffset(#self.modalTabs*110,0)
+        self.sectionTabs.CanvasPosition=Vector2.new(math.max(0,(selectedIndex-2)*110),0)
         self.windowTitle.Text=tr(HUD.sections[tab][1],HUD.sections[tab][2])
         if self.modalTween then self.modalTween:Cancel()end
         self:ApplyVisibility()
-        local position=UDim2.fromScale(0.5,0.5)
-        if not wasOpen and origin and workspace.CurrentCamera then
-            local point=workspace.CurrentCamera:WorldToScreenPoint(origin.part.CFrame.Position)
-            self.window.Position=UDim2.fromOffset(point.X,point.Y)
-            self.window.Size=UDim2.fromOffset(96,64)
-            self.modalTween=tweenService:Create(self.window,TweenInfo.new(0.22,Enum.EasingStyle.Quad,Enum.EasingDirection.Out),{Position=position,Size=UDim2.fromScale(0.94,0.92)})
-            self.modalTween:Play()
-        else self.window.Position=position;self.window.Size=UDim2.fromScale(0.94,0.92)end
+        if not wasOpen then self.drawerLeft=origin and origin.x<0 or false end
+        self:LayoutDrawer(not wasOpen)
         return true
     end
     function self:CloseFull()
@@ -6322,12 +6444,13 @@ function HUD.mount(runtime, options)
         actions:UnbindAction(binding)
         self:ClearPresses(); self.ready=false; self.inputReady=false
         self.noticeToken+=1; self.notice.Visible=false
-        local show=self.visible and not self.modalOpen and not self.suspended and not self.destroyed
+        local blocked=self.suspended or self.chestInput
+        local show=self.visible and not self.modalOpen and not blocked and not self.destroyed
         self.world.Parent=nil
         for _,p in ipairs(self.panels) do p.gui.Enabled=false end
-        if self.overlay then self.overlay.Enabled=not self.suspended and not self.destroyed end
+        if self.overlay then self.overlay.Enabled=not blocked and not self.destroyed end
         self.nav.Visible=show;self.cardTabs.Visible=false
-        self.sheet.Visible=self.modalOpen and not self.suspended
+        self.sheet.Visible=self.modalOpen and not blocked
         self.handle.Visible=not self.modalOpen;self.menu.Visible=not self.modalOpen
         options.content:HideLegacy()
         if show then
@@ -6359,6 +6482,10 @@ function HUD.mount(runtime, options)
         if self.destroyed then return end
         self.suspended=value==true
         self:ApplyVisibility()
+    end
+    function self:SetChestInput(value)
+        if self.destroyed then return end
+        self.chestInput=value==true;self:ApplyVisibility()
     end
     connect(self.handle.Activated,function()self:SetVisible(not self.visible)end)
     connect(self.menu.Activated,function()self:OpenFull("system",nil,"settings")end)

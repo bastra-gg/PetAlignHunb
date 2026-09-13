@@ -1,4 +1,4 @@
--- RockBug Boss 1.3: standalone UI + account-bound access.
+-- RockBug Boss 1.4: standalone UI + account-bound access.
 -- Shares under-arena combat, a safe exit to the surface, strength warmup and the chest cycle with the test hub.
 -- A client-side Lua gate is not tamper-proof DRM. UserId alone never grants access.
 if not game:IsLoaded() then game.Loaded:Wait() end
@@ -1564,38 +1564,101 @@ end
         return size and size.X>1 and size.Y>1
     end
     local function findChestButton(roots,prompt,excluded)
-        local function clean(text)return tostring(text or ""):gsub("<[^>]*>",""):gsub("^%s+",""):gsub("%s+$",""):lower()end
+        local function clean(text)return tostring(text or ""):gsub("<[^>]*>",""):gsub("%s+"," "):gsub("^%s+",""):gsub("%s+$",""):lower()end
         local function action(text)
             text=clean(text)
             return text~="" and (text==clean(prompt.ActionText) or text=="claim reward" or text=="collect reward"
-                or text=="Получить награду" or text=="получить награду")
+                or text=="claim" or text=="collect" or text=="Получить награду" or text=="получить награду"
+                or text=="Собрать награду" or text=="собрать награду" or text=="Забрать награду" or text=="забрать награду"
+                or text=="ПОЛУЧИТЬ НАГРАДУ" or text=="СОБРАТЬ НАГРАДУ" or text=="ЗАБРАТЬ НАГРАДУ")
+        end
+        local function visible(node)
+            while node do
+                if node==excluded then return false end
+                if node:IsA("GuiObject")and not node.Visible then return false end
+                if node:IsA("LayerCollector")and not node.Enabled then return false end
+                node=node.Parent
+            end
+            return true
+        end
+        local function chestContext(text)
+            text=clean(text)
+            local object=clean(prompt.ObjectText)
+            if object~=""and #object>4 and text:find(object,1,true)then return true end
+            return (text:find("boss",1,true)or text:find("Босс",1,true)or text:find("босс",1,true)or text:find("БОСС",1,true))
+                and (text:find("chest",1,true)or text:find("Сундук",1,true)or text:find("сундук",1,true)or text:find("СУНДУК",1,true))
+        end
+        local function linked(adornee)
+            local owner=prompt.Parent
+            if not owner or not adornee then return false end
+            if adornee==owner or owner:IsDescendantOf(adornee)or adornee:IsDescendantOf(owner)then return true end
+            -- Prompt and BillboardGui often attach to different parts of the same chest.
+            local ancestor=owner.Parent
+            for _=1,4 do
+                if not ancestor or ancestor==workspace then break end
+                if ancestor:IsA("Model")and chestContext(ancestor.Name)and adornee:IsDescendantOf(ancestor)then return true end
+                ancestor=ancestor.Parent
+            end
+            return false
+        end
+        local function hasAction(button)
+            if button:IsA("TextButton")and action(button.Text)then return true end
+            for _,label in ipairs(button:GetDescendants())do
+                if (label:IsA("TextLabel")or label:IsA("TextButton"))and visible(label)and action(label.Text)then return true end
+            end
+            return false
         end
         local seen={}
         for _,root in ipairs(roots)do
             local ok,nodes=pcall(function()return root:GetDescendants()end)
             if ok then for _,gui in ipairs(nodes)do
-                if gui:IsA("BillboardGui") and gui.Enabled and not seen[gui] then
+                if (gui:IsA("BillboardGui")or gui:IsA("SurfaceGui"))and gui.Enabled and not seen[gui]then
                     seen[gui]=true
-                    local adornee=gui.Adornee or gui.Parent
-                    local owner=prompt.Parent
-                    -- Match the physical chest, never another visible reward card.
-                    local linked=adornee and owner and (adornee==owner or owner:IsDescendantOf(adornee)
-                        or adornee:IsDescendantOf(owner))
-                    if linked then
-                        local candidates,hasAction={},false
+                    if linked(gui.Adornee or gui.Parent)and visible(gui)then
+                        local candidates,hasLabel={},false
                         for _,node in ipairs(gui:GetDescendants())do
-                            if (node:IsA("TextLabel") or node:IsA("TextButton")) and node.Visible and action(node.Text) then hasAction=true end
-                            if node:IsA("GuiButton") and chestButtonVisible(node,excluded) then
-                                local text=node:IsA("TextButton") and clean(node.Text) or ""
-                                if action(text) then return node end
-                                if text=="" then table.insert(candidates,node) end
+                            if (node:IsA("TextLabel")or node:IsA("TextButton"))and visible(node)and action(node.Text)then hasLabel=true end
+                            if node:IsA("GuiButton")and chestButtonVisible(node,excluded)then
+                                if hasAction(node)then return node end
+                                if not node:IsA("TextButton")or clean(node.Text)==""then table.insert(candidates,node)end
                             end
                         end
-                        if hasAction and #candidates==1 then return candidates[1] end
+                        if hasLabel and #candidates==1 then return candidates[1]end
+                    end
+                elseif gui:IsA("GuiButton")and chestButtonVisible(gui,excluded)and hasAction(gui)then
+                    -- Screen-space claim dialogs must identify the boss chest in their
+                    -- own card. Never use a different reward elsewhere in the ScreenGui.
+                    local card=gui.Parent
+                    for _=1,3 do
+                        if not card or card:IsA("LayerCollector")then break end
+                        local context=tostring(card.Name or "");local actions=0
+                        for _,label in ipairs(card:GetDescendants())do
+                            if label:IsA("TextLabel")and visible(label)then context..=" "..tostring(label.Text)end
+                            if label:IsA("GuiButton")and chestButtonVisible(label,excluded)and hasAction(label)then actions+=1 end
+                        end
+                        if actions>1 then break end
+                        if chestContext(context)then
+                            local layer=card.Parent
+                            while layer and not layer:IsA("LayerCollector")do layer=layer.Parent end
+                            if layer and layer:IsA("ScreenGui")then return gui end
+                        end
+                        card=card.Parent
                     end
                 end
             end end
         end
+    end
+    local function activateChestButton(api,prompt,valid)
+        local button=api.find(prompt)
+        if not button then return false end
+        local attempted=false
+        for _,event in ipairs({"Activated","MouseButton1Click"})do
+            if not valid()or api.acknowledged()or not api.matches(prompt)or not api.inRange(prompt)or not api.visible(button)then break end
+            local ok,fired=pcall(api.activate,button,event)
+            attempted=attempted or(ok and fired==true)
+            if ok and fired then api.wait(0.25)end
+        end
+        return attempted
     end
     local function pressChestButton(api,prompt,valid)
         local button=api.find(prompt)
@@ -1664,11 +1727,57 @@ end
             clearRelease=function(release)if chestRelease==release then chestRelease=nil end end,
             now=os.clock,wait=task.wait,matches=matches,inRange=inRange,acknowledged=function()observeReward(false)return rewardAcknowledged end,
         }
-        local clicked=pressChestButton(input,prompt,valid)
-        if usedManager and valid() and not input.acknowledged() then
-            forceVirtual=true
-            clicked=pressChestButton(input,prompt,valid) or clicked
+        input.activate=function(button,event)
+            local eventSignal=button[event]
+            if type(firesignal)=="function"then
+                local ok=pcall(function()
+                    if event=="Activated"then firesignal(eventSignal,nil,1)else firesignal(eventSignal)end
+                end)
+                if ok then return true end
+            end
+            if type(getconnections)~="function"then return false end
+            local ok,connections=pcall(getconnections,eventSignal)
+            if not ok then return false end
+            local fired=false
+            for _,connection in ipairs(connections)do
+                if not valid()or input.acknowledged()or not input.visible(button)then break end
+                pcall(function()
+                    if connection.Enabled==false then return end
+                    local callback=connection.Function
+                    if type(callback)=="function"then
+                        if event=="Activated"then callback(nil,1)else callback()end
+                        fired=true
+                    elseif type(connection.Fire)=="function"then
+                        if event=="Activated"then connection:Fire(nil,1)else connection:Fire()end
+                        fired=true
+                    end
+                end)
+            end
+            if fired then q.bossCycleStatus="Сундук: вызвана кнопка · жду награду"end
+            return fired
         end
+        local hud=q.hologram
+        if hud and hud.SetChestInput then hud:SetChestInput(true)end
+        local ok,clicked=pcall(function()
+            -- Give a newly streamed prompt a few frames to mount its touch button.
+            local deadline=os.clock()+0.8
+            repeat
+                if not valid()or input.acknowledged()then return false end
+                if input.find()then break end
+                task.wait(0.1)
+            until os.clock()>=deadline
+            local direct=activateChestButton(input,prompt,valid)
+            if not valid()or input.acknowledged()then return direct end
+            local pressed=pressChestButton(input,prompt,valid)
+            if usedManager and valid()and not input.acknowledged()then
+                forceVirtual=true;pressed=pressChestButton(input,prompt,valid)or pressed
+            end
+            if not direct and not pressed then q.bossCycleStatus="Сундук: кнопку не нашёл · пробую удержание"end
+            return direct or pressed
+        end)
+        releaseChestInput()
+        if hud and hud.SetChestInput then hud:SetChestInput(false)end
+        if not ok then error(clicked)end
         return clicked
     end
     -- BOSS_CHEST_INTERACT_BEGIN

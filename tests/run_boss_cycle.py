@@ -15,6 +15,7 @@ paid = (root / 'RockBugBoss.lua').read_text()
 for name in ['REWARD_TEXT', 'CHEST_COLLECTOR', 'CHEST_BUTTON', 'CHEST_INTERACT']:
     paid_section = paid.split('-- BOSS_' + name + '_BEGIN', 1)[1].split('-- BOSS_' + name + '_END', 1)[0]
     assert paid_section == section(name), 'Paid reward implementation diverged: ' + name
+assert paid.split('    local chestRelease=nil',1)[1].split('    -- BOSS_CHEST_INTERACT_BEGIN',1)[0] == source.split('    local chestRelease=nil',1)[1].split('    -- BOSS_CHEST_INTERACT_BEGIN',1)[0], 'Paid chest input adapter diverged'
 print('Paid reward routines match the tested hub', flush=True)
 parts = '\n'.join(section(name) for name in ['SEAT_WAIT', 'MACHINE_PRESENCE', 'REWARD_TEXT', 'CHEST_COLLECTOR', 'CHEST_BUTTON', 'CHEST_INTERACT', 'CYCLE'])
 restore = source.split('    local function cancelRestore()', 1)[1].split('-- BOSS_RESTORE_END', 1)[0]
