@@ -4,7 +4,7 @@ pcall(function()i=game:GetService("NetworkClient")end)if not game:IsLoaded()then
 local j=a.LocalPlayer;
 while not j do task.wait()j=a.LocalPlayer end;
 local k=j:WaitForChild("PlayerGui",60)if not k then warn("[RockBugHub] PlayerGui was not created")pcall(function()g:SetCore("SendNotification",{Title="RockBugHub",Text="Ошибка запуска: PlayerGui не найден",Duration=8})end)return end;
-local l="RockBugHub_TEST_v4_26_HOLO_T33"local m="4.26HOLO-T33"local n=type(getgenv)=="function"and getgenv()or _G;
+local l="RockBugHub_TEST_v4_27_HOLO_T34"local m="4.27HOLO-T34"local n=type(getgenv)=="function"and getgenv()or _G;
 do
     -- Retire the old experimental windows and their listeners on hot reload.
     for _, key in ipairs({"RockBugTradeDiagnostics", "RockBugMiniTransfer"}) do
@@ -5688,7 +5688,7 @@ if ti and tn then local a2=UDim2.fromOffset(tn.X.Offset+tr.X,tn.Y.Offset+tr.Y)n7
 local a2=UDim2.fromOffset(tn.X.Offset+tr.X,tn.Y.Offset+tr.Y)n_.Position=t4(a2,n_.Size)elseif tk and to then local mT=mQ()local ts,tt,tu,tv=mS(mT)local tb=math.min(tu,math.max(ts,mT.X-n7.Position.X.Offset-4))local tc=math.min(tv,math.max(tt,mT.Y-n7.Position.Y.Offset-4))local nA=math.clamp(to.X.Offset+tr.X,ts,tb)local nB=math.clamp(to.Y.Offset+tr.Y,tt,tc)n7.Size=UDim2.fromOffset(nA,nB)sM=n7.Size end end end))aJ(n_.Activated:Connect(function()if tl then tl=false;
 return end;
 t7(false)end))end)()function q:Stop(cF)if not self.alive then return end;
-if self.hologram then self.hologram:Destroy()end;
+if self.hologram then pcall(function()self.hologram:Destroy()end)end;
 if type(self.sessionLeave)=="function"and not self.sessionLeaveSent then self.sessionLeaveSent=true;
 task.spawn(function()pcall(self.sessionLeave)end)end;
 if self.layoutUI and type(self.layoutUI.closeFuseMachineSession)=="function"then pcall(self.layoutUI.closeFuseMachineSession,false)end;
@@ -5754,7 +5754,7 @@ warn("[RockBugHub] UI startup failed: "..tostring(tP))pcall(function()g:SetCore(
 -- HOLOGRAM_HUD_BEGIN
 do (function()
 local Hologram = (function()
--- RockBugHub T33. Bundled into the existing launcher by scripts/build_hologram.py.
+-- RockBugHub T34. Bundled into the existing launcher by scripts/build_hologram.py.
 -- All geometry is local, non-colliding and excluded from game raycasts.
 local HUD = {}
 
@@ -5775,7 +5775,7 @@ function HUD.layout(width, height)
 end
 
 function HUD.acceptRelease(pressed, released, x, y)
-    return pressed and pressed.button == released and (pressed.x-x)^2 + (pressed.y-y)^2 <= 144
+    return pressed and not pressed.cancelled and pressed.button == released and (pressed.x-x)^2 + (pressed.y-y)^2 <= 144
 end
 
 function HUD.mount(runtime, options)
@@ -5788,9 +5788,11 @@ function HUD.mount(runtime, options)
     local cyan, mint = Color3.fromRGB(65, 224, 255), Color3.fromRGB(69, 250, 193)
     local white, muted = Color3.fromRGB(211, 249, 255), Color3.fromRGB(121, 177, 194)
     local background = Color3.fromRGB(4, 19, 29)
-    local self = {visible=false, suspended=false, destroyed=false, page="automation", panels={}, connections={}, pressed={}, beams={}, samples={}, fades={}, fps=0}
+    local pages={automation=true,pets=true,teleport=true,session=true,progress=true}
+    local savedPage=options.env.RockBugHologramPage
+    local self = {visible=false, suspended=false, destroyed=false, page=pages[savedPage] and savedPage or "automation", panels={}, connections={}, pressed={}, beams={}, samples={}, fps=0, petPage=0, petCount=0, inputGeneration=0, noticeToken=0}
     runtime.hologram = self -- Allows cleanup even if construction fails.
-    local binding = "RockBugHologramT33_" .. tostring(player.UserId)
+    local binding = "RockBugHologramT34_" .. tostring(player.UserId)
     local function connect(signal, callback)
         local connection = signal:Connect(callback)
         table.insert(self.connections, connection)
@@ -5824,20 +5826,49 @@ function HUD.mount(runtime, options)
     local function part(name, parent)
         return create("Part", {Name=name, Anchored=true, CanCollide=false, CanTouch=false, CanQuery=false, CastShadow=false, Transparency=1, Size=Vector3.new(1,1,0.025)}, parent)
     end
-    self.world = create("Model", {Name="RockBugHubHologramT33"})
+    self.world = create("Model", {Name="RockBugHubHologramT34"})
     self.surfaces = create("Folder", {Name="RockBugHubHologramSurfaces"}, playerGui)
     self.overlay = create("ScreenGui", {Name="RockBugHubHologramControl", ResetOnSpawn=false, DisplayOrder=1000010, ZIndexBehavior=Enum.ZIndexBehavior.Sibling}, playerGui)
     self.handle = create("TextButton", {Name="ToggleHologram", AnchorPoint=Vector2.new(0,0), Position=UDim2.fromOffset(16,12), Size=UDim2.fromOffset(148,44), BackgroundColor3=background, BackgroundTransparency=0.08, TextColor3=cyan, TextSize=14, Font=Enum.Font.GothamBold, Text="", AutoButtonColor=true}, self.overlay)
     round(self.handle,14); edge(self.handle,0.12)
+    self.menu = create("TextButton", {Name="OpenFullMenu", Position=UDim2.fromOffset(172,12), Size=UDim2.fromOffset(72,44), BackgroundColor3=background, BackgroundTransparency=0.08, TextColor3=white, TextSize=13, Font=Enum.Font.GothamBold, Text=tr("МЕНЮ","MENU"), AutoButtonColor=true},self.overlay)
+    round(self.menu,14); edge(self.menu,0.5)
+    self.notice=label(self.overlay,"",16,64,340,64,15,white)
+    self.notice.Name="ActionResult"; self.notice.Size=UDim2.new(1,-32,0,64)
+    self.notice.BackgroundColor3=background; self.notice.BackgroundTransparency=0.08
+    self.notice.TextWrapped=true; self.notice.TextTruncate=Enum.TextTruncate.AtEnd
+    self.notice.TextXAlignment=Enum.TextXAlignment.Center; self.notice.Visible=false
+    create("UISizeConstraint",{MaxSize=Vector2.new(420,64)},self.notice)
+    create("UIPadding",{PaddingLeft=UDim.new(0,10),PaddingRight=UDim.new(0,10)},self.notice)
+    round(self.notice,14); edge(self.notice,0.3)
+
+    function self:Notify(message)
+        if self.destroyed or self.suspended or not self.visible then return end
+        self.noticeToken+=1
+        local token=self.noticeToken
+        self.notice.Text=tostring(message)
+        self.notice.Visible=true
+        task.delay(4,function()
+            if not self.destroyed and token==self.noticeToken then self.notice.Visible=false end
+        end)
+    end
+
+    function self:ClearPresses()
+        for _,pressed in pairs(self.pressed) do
+            if pressed.button.node.Parent then pressed.button.node.BackgroundTransparency=0.94 end
+        end
+        self.pressed={}; self.inputGeneration+=1
+    end
 
     function self:Destroy()
         if self.destroyed then return end
         self.destroyed=true; self.visible=false
-        run:UnbindFromRenderStep(binding)
-        actions:UnbindAction(binding)
-        for _, connection in ipairs(self.connections) do connection:Disconnect() end
+        self:ClearPresses(); self.noticeToken+=1
+        pcall(function()run:UnbindFromRenderStep(binding)end)
+        pcall(function()actions:UnbindAction(binding)end)
+        for _, connection in ipairs(self.connections) do pcall(function()connection:Disconnect()end) end
         self.connections={}; self.pressed={}
-        for _, object in ipairs({self.world,self.surfaces,self.overlay}) do if object then object:Destroy() end end
+        for _, object in ipairs({self.world,self.surfaces,self.overlay}) do if object then pcall(function()object:Destroy()end) end end
         if runtime.hologram == self then runtime.hologram=nil end
     end
 
@@ -5846,7 +5877,7 @@ function HUD.mount(runtime, options)
         p.part = part(id, self.world)
         p.gui = create("SurfaceGui", {Name=id, Adornee=p.part, Face=Enum.NormalId.Back, SizingMode=Enum.SurfaceGuiSizingMode.FixedSize, CanvasSize=Vector2.new(p.cw,p.ch), AlwaysOnTop=true, LightInfluence=0, Active=false, Enabled=false, ZOffset=0.1}, self.surfaces)
         p.frame = create("Frame", {Size=UDim2.fromScale(1,1), BackgroundColor3=background, BackgroundTransparency=0.16, BorderSizePixel=0}, p.gui)
-        round(p.frame,24); edge(p.frame,0.1,2)
+        round(p.frame,24); p.stroke=edge(p.frame,0.1,2)
         create("UIGradient", {Rotation=100, Color=ColorSequence.new(Color3.fromRGB(42,76,93),Color3.fromRGB(9,27,37))},p.frame)
         local rim=create("Frame",{Position=UDim2.fromOffset(8,8), Size=UDim2.new(1,-16,1,-16), BackgroundTransparency=1},p.frame)
         round(rim,18); edge(rim,0.8,1)
@@ -5870,6 +5901,7 @@ function HUD.mount(runtime, options)
     end
     local function open(tab)
         self:SetVisible(false)
+        options.env.RockBugHologramLastMenu=tab
         options.openClassic(tab)
     end
     local function lever(key)
@@ -5879,7 +5911,11 @@ function HUD.mount(runtime, options)
     local function toggle(p, ru, en, key, index)
         local b=button(p,ru,20,66+(index-1)*52,360,46,function()
             local ref=lever(key)
-            if ref and ref.Get and ref.Set then ref.Set(not ref.Get(),false) end
+            if ref and ref.Get and ref.Set then
+                local target=not ref.Get()
+                ref.Set(target,false)
+                if ref.Get()~=target then self:Notify(runtime.status or tr("Режим пока не включён","Mode could not be enabled")) end
+            else self:Notify(tr("Откройте полные настройки режима","Open the full settings for this mode")) end
         end)
         b.text.Size=UDim2.fromOffset(258,46)
         b.ru=ru; b.en=en; b.key=key
@@ -5909,21 +5945,31 @@ function HUD.mount(runtime, options)
         b.text.TextXAlignment=Enum.TextXAlignment.Center; b.text.Size=UDim2.fromOffset(104,60); b.text.Position=UDim2.fromOffset(6,0)
         edge(b.node,0.65); pets.slots[i]=b.text
     end
-    pets.count=label(pets.frame,"",24,143,300,24,17,muted)
-    button(pets,"→",336,140,44,32,function()open("crystal")end)
+    pets.count=label(pets.frame,"",24,143,232,26,16,muted)
+    local function petPage(delta)
+        self.petPage=(self.petPage+delta)%math.max(1,math.ceil(self.petCount/3))
+        self.nextRefresh=nil
+    end
+    pets.previous=button(pets,"←",264,140,52,36,function()petPage(-1)end)
+    pets.next=button(pets,"→",324,140,52,36,function()petPage(1)end)
 
     local session=panel("session","СЕССИЯ",4,2.22,3.35,2.12,254)
     session.time=label(session.frame,"00:00:00",24,64,350,42,36,white,true)
     session.gain=label(session.frame,"",24,120,350,25,19,mint)
     session.rebirths=label(session.frame,"",24,154,350,25,19,white)
     session.network=label(session.frame,"",24,199,350,25,17,muted)
+    session.goal=button(session,"Цель →",272,16,104,32,function()self:SelectPage("progress")end)
+    session.goal.text.TextSize=15
 
     local teleport=panel("teleport","ТЕЛЕПОРТ",4,-0.52,3.35,2.80,336)
     for i,id in ipairs({"Starter Island","Legend Beach","Frost Gym","Jungle Gym"}) do
         local destination=id
         local b=button(teleport,string.format("0%d   %s    →",i,id),20,66+(i-1)*52,360,46,function()
             local ok,reason=runtime.teleportToIsland(destination)
-            if not ok and reason then options.report(tostring(reason)) end
+            if not ok then
+                local message=tostring(reason or tr("Телепорт пока недоступен","Teleport is unavailable"))
+                options.report(message); self:Notify(message)
+            end
         end)
         b.text.TextSize=18
     end
@@ -5937,6 +5983,15 @@ function HUD.mount(runtime, options)
     progress.fill=create("Frame",{Size=UDim2.fromScale(0,1),BackgroundColor3=mint,BorderSizePixel=0},track); round(progress.fill,5)
     progress.detail=label(progress.frame,"",24,142,292,26,16,muted)
     button(progress,"→",336,140,44,32,function()open("reb")end)
+    progress.back=button(progress,"Сессия →",264,16,112,32,function()self:SelectPage("session")end)
+    progress.back.text.TextSize=14
+
+    function self:SelectPage(id)
+        if not pages[id] or self.destroyed then return false end
+        self:ClearPresses()
+        self.page=id; options.env.RockBugHologramPage=id; self.nextRefresh=nil
+        return true
+    end
 
     local title=panel("title",nil,0,2.70,3.85,0.96,100)
     title.frame.BackgroundTransparency=1
@@ -5946,13 +6001,13 @@ function HUD.mount(runtime, options)
 
     local nav=panel("nav",nil,0,-3.4,4.30,0.74,110)
     nav.cw=640; nav.gui.CanvasSize=Vector2.new(640,110)
-    for i,entry in ipairs({{"AUTO","automation"},{"PETS","pets"},{"WORLD","teleport"},{"STATS","session"},{"MENU","menu"}}) do
+    for i,entry in ipairs({{"AUTO","automation","АВТО"},{"PETS","pets","ПЕТЫ"},{"WORLD","teleport","МИР"},{"STATS","session","СЕССИЯ"},{"MENU","menu","МЕНЮ"}}) do
         local id=entry[2]
         local b=button(nav,entry[1],10+(i-1)*124,14,120,82,function()
-            if id=="menu" then open("interface") else self.page=id end
+            if id=="menu" then open("interface") else self:SelectPage(id) end
         end)
         b.text.TextSize=24; b.text.TextXAlignment=Enum.TextXAlignment.Center
-        b.page=id
+        b.page=id; b.en=entry[1]; b.ru=entry[3]
     end
 
     self.ringRoot=part("Orbit",self.world)
@@ -5974,7 +6029,6 @@ function HUD.mount(runtime, options)
     -- A light wireframe crystal inspired by the generated concept. No uploaded
     -- MeshPart permissions, collisions, lights or particle emitters are needed.
     self.crystalRoot=part("Crystal",self.world)
-    self.crystalEdges={}
     local function crystal(cx,cy,cz,radius,height)
         local top=Vector3.new(cx,cy+height,cz)
         local bottom=Vector3.new(cx,cy-height*0.35,cz)
@@ -6022,24 +6076,37 @@ function HUD.mount(runtime, options)
         end
         if runtime.equippedPetState then
             local ok,_,slots,count,ordered=pcall(runtime.equippedPetState)
-            if ok then
-                pets.count.Text=tostring(count).." / "..tostring(slots)..tr(" экипировано"," equipped")
-                for i,node in ipairs(pets.slots) do node.Text=ordered[i] and ordered[i].Name or "—" end
+            if ok and type(ordered)=="table" then
+                self.petCount=#ordered
+                self.petPage=math.clamp(self.petPage,0,math.max(0,math.ceil(self.petCount/3)-1))
+                local offset=self.petPage*3
+                pets.count.Text=tostring(count).." / "..tostring(slots)..(self.petCount>3 and ("  ·  "..tostring(offset+1).."–"..tostring(math.min(offset+3,self.petCount))) or tr(" экипировано"," equipped"))
+                for i,node in ipairs(pets.slots) do node.Text=ordered[offset+i] and ordered[offset+i].Name or "—" end
+            else
+                self.petCount=0; self.petPage=0
+                pets.count.Text=tr("Нет данных","No data")
+                for _,node in ipairs(pets.slots) do node.Text="—" end
             end
+            for _,b in ipairs({pets.previous,pets.next}) do b.text.TextColor3=self.petCount>3 and cyan or muted end
         end
-        local current,goal=tonumber(runtime.sessionRebirthCurrent) or 0,tonumber(runtime.rebirthGoal) or 0
-        local ratio=runtime.rebirthGoalEnabled and goal>0 and math.clamp(current/goal,0,1) or 0
+        local current,goal=tonumber(runtime.rebirthGoalCurrent) or tonumber(runtime.sessionRebirthCurrent),tonumber(runtime.rebirthGoal) or 0
+        local ratio=runtime.rebirthGoalEnabled and current and goal>0 and math.clamp(current/goal,0,1) or 0
         progress.fill.Size=UDim2.fromScale(ratio,1)
         progress.status.Text=tostring(runtime.machineActive and runtime.machineRecoveryStatus or runtime.autoQuest and runtime.questLastMessage or runtime.status or "")
         progress.detail.Text=runtime.rebirthGoalEnabled and (number(current).." / "..number(goal)..tr(" ребиртов"," rebirths")) or tr("Цель ребиртов не задана","No rebirth target")
         automation.buttons[5].text.Text=tr("Настроить тренажёр  →","Machine settings  →")
         teleport.buttons[5].text.Text=tr("Все локации  →","All destinations  →")
         self.handle.Text=self.visible and tr("СКРЫТЬ  ·  RB","HIDE  ·  RB") or tr("ПОКАЗАТЬ  ·  RB","SHOW  ·  RB")
-        for _,b in ipairs(nav.buttons) do b.node.BackgroundTransparency=b.page==self.page and 0.72 or 0.96 end
+        self.menu.Text=tr("МЕНЮ","MENU")
+        session.goal.text.Text=tr("Цель →","Goal →"); progress.back.text.Text=tr("Сессия →","Session →")
+        for _,b in ipairs(nav.buttons) do
+            b.text.Text=tr(b.ru,b.en)
+            b.node.BackgroundTransparency=(b.page==self.page or b.page=="session" and self.page=="progress") and 0.72 or 0.96
+        end
     end
 
     function self:Hit(x,y)
-        if self.destroyed or not self.visible or self.suspended or not self.ready or input:GetFocusedTextBox() or guiService.MenuIsOpen then return nil end
+        if self.destroyed or not self.visible or self.suspended or not self.ready or not self.inputReady or input:GetFocusedTextBox() or guiService.MenuIsOpen then return nil end
         local camera=workspace.CurrentCamera
         if not camera then return nil end
         local objects=playerGui:GetGuiObjectsAtPosition(x,y)
@@ -6068,18 +6135,22 @@ function HUD.mount(runtime, options)
         if state==Enum.UserInputState.Begin then
             local b=self:Hit(event.Position.X,event.Position.Y)
             if not b then return Enum.ContextActionResult.Pass end
-            self.pressed[key]={button=b,x=event.Position.X,y=event.Position.Y}
+            self.pressed[key]={button=b,x=event.Position.X,y=event.Position.Y,generation=self.inputGeneration}
             b.node.BackgroundTransparency=0.65
         elseif state==Enum.UserInputState.End or state==Enum.UserInputState.Cancel then
             local pressed=self.pressed[key]
             if not pressed then return Enum.ContextActionResult.Pass end
             self.pressed[key]=nil
             pressed.button.node.BackgroundTransparency=0.94
-            if state==Enum.UserInputState.End and HUD.acceptRelease(pressed,self:Hit(event.Position.X,event.Position.Y),event.Position.X,event.Position.Y) then
+            if state==Enum.UserInputState.End and pressed.generation==self.inputGeneration and HUD.acceptRelease(pressed,self:Hit(event.Position.X,event.Position.Y),event.Position.X,event.Position.Y) then
                 task.spawn(function()
-                    if self.destroyed or not runtime.alive then return end
+                    if self.destroyed or not runtime.alive or not self.visible or self.suspended or pressed.generation~=self.inputGeneration then return end
                     local ok,reason=pcall(pressed.button.callback)
-                    if not ok then options.report("HUD: "..tostring(reason)) end
+                    self.nextRefresh=nil
+                    if not ok then
+                        local message=tr("Не удалось выполнить действие: ","Action failed: ")..tostring(reason)
+                        options.report(message); self:Notify(message)
+                    end
                 end)
             end
         elseif not self.pressed[key] then return Enum.ContextActionResult.Pass end
@@ -6091,6 +6162,9 @@ function HUD.mount(runtime, options)
         local camera=workspace.CurrentCamera
         local character=player.Character
         local root=character and character:FindFirstChild("HumanoidRootPart")
+        if self.inputCamera~=camera or self.inputRoot~=root then
+            self:ClearPresses(); self.inputCamera=camera; self.inputRoot=root
+        end
         if not camera or not root then
             self.ready=false; self.world.Parent=nil
             for _,p in ipairs(self.panels) do p.gui.Enabled=false end
@@ -6098,19 +6172,25 @@ function HUD.mount(runtime, options)
         end
         local viewport=camera.ViewportSize
         local mode,designW,designH=HUD.layout(viewport.X,viewport.Y)
+        if self.viewportX~=viewport.X or self.viewportY~=viewport.Y then
+            self:ClearPresses(); self.viewportX=viewport.X; self.viewportY=viewport.Y
+        end
         local depth=-camera.CFrame:PointToObjectSpace(root.Position).Z
         if depth<1 or viewport.X<1 or viewport.Y<1 then
+            if self.ready then self:ClearPresses() end
             self.ready=false; self.world.Parent=nil
             for _,p in ipairs(self.panels) do p.gui.Enabled=false end
             return
         end
         self.world.Parent=camera; self.ready=true
+        if (guiService.MenuIsOpen or input:GetFocusedTextBox()) and next(self.pressed) then self:ClearPresses() end
         local now=os.clock()
         self.fps=self.fps==0 and 1/math.max(dt,0.001) or self.fps+(1/math.max(dt,0.001)-self.fps)*math.min(1,dt*2)
         local worldH=2*depth*math.tan(math.rad(camera.FieldOfView/2))
         local scale=math.min(worldH*(mode=="wide" and 0.82 or 0.94)/designH,worldH*viewport.X/viewport.Y*0.94/designW)
         local progressOpen=math.clamp((now-(self.openedAt or now))/0.28,0,1)
         local spread=1-(1-progressOpen)^3
+        self.inputReady=progressOpen>=1
         local center=root.Position
         -- Camera-space basis keeps labels upright as the character turns.
         local basis=CFrame.fromMatrix(center,camera.CFrame.RightVector,camera.CFrame.UpVector,-camera.CFrame.LookVector)
@@ -6131,6 +6211,7 @@ function HUD.mount(runtime, options)
             end
             p.gui.Enabled=enabled
             if enabled then
+                if p.stroke and p.stroke.Parent then p.stroke.Transparency=self.page==p.id and 0 or 0.35 end
                 local yaw=mode=="wide" and (x< -2 and 0.07 or x>2 and -0.07 or 0) or 0
                 p.part.Size=Vector3.new(w*scale,h*scale,0.025)
                 p.part.CFrame=basis*CFrame.new(x*scale*spread,y*scale*spread,0)*CFrame.Angles(0,yaw,0)
@@ -6149,7 +6230,8 @@ function HUD.mount(runtime, options)
     function self:ApplyVisibility()
         run:UnbindFromRenderStep(binding)
         actions:UnbindAction(binding)
-        self.pressed={}; self.ready=false
+        self:ClearPresses(); self.ready=false; self.inputReady=false
+        self.noticeToken+=1; self.notice.Visible=false
         local show=self.visible and not self.suspended and not self.destroyed
         self.world.Parent=nil
         for _,p in ipairs(self.panels) do p.gui.Enabled=false end
@@ -6181,11 +6263,21 @@ function HUD.mount(runtime, options)
         self:ApplyVisibility()
     end
     connect(self.handle.Activated,function()self:SetVisible(not self.visible)end)
+    connect(self.menu.Activated,function()open(options.env.RockBugHologramLastMenu or "interface")end)
+    connect(input.InputChanged,function(event)
+        local key=event.UserInputType==Enum.UserInputType.Touch and event or event.UserInputType==Enum.UserInputType.MouseMovement and "mouse" or nil
+        local pressed=key and self.pressed[key]
+        if pressed and (pressed.x-event.Position.X)^2+(pressed.y-event.Position.Y)^2>144 then
+            pressed.cancelled=true
+            pressed.button.node.BackgroundTransparency=0.94
+        end
+    end)
     connect(input.InputBegan,function(event,processed)
         if not processed and not input:GetFocusedTextBox() and event.KeyCode==Enum.KeyCode.RightShift then self:SetVisible(not self.visible) end
     end)
     self.visible=options.env.RockBugHologramVisible~=false
     self.suspended=runtime.ultraBlack==true
+    if options.classicGui then options.classicGui.Enabled=false end
     self:ApplyVisibility()
     return self
 end

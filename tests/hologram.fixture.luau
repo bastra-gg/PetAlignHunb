@@ -45,7 +45,7 @@ function UDim2.fromScale(x,y)return UDim2.new(x,0,y,0)end
 local Color3={fromRGB=function(r,g,b)return {R=r/255,G=g/255,B=b/255}end}
 local ColorSequence={new=function(...)return {...}end}
 local NumberSequence={new=function(...)return {...}end}
-local Enum={Font={Gotham="Gotham",GothamBold="GothamBold"},TextXAlignment={Left="Left",Center="Center"},TextYAlignment={Center="Center"},TextTruncate={AtEnd="AtEnd",None="None"},NormalId={Back="Back"},SurfaceGuiSizingMode={FixedSize="FixedSize"},ZIndexBehavior={Sibling="Sibling"},UserInputType={MouseButton1="MouseButton1",Touch="Touch"},UserInputState={Begin="Begin",End="End",Cancel="Cancel",Change="Change"},ContextActionResult={Pass="Pass",Sink="Sink"},RenderPriority={Camera={Value=200}},KeyCode={RightShift="RightShift"}}
+local Enum={Font={Gotham="Gotham",GothamBold="GothamBold"},TextXAlignment={Left="Left",Center="Center"},TextYAlignment={Center="Center"},TextTruncate={AtEnd="AtEnd",None="None"},NormalId={Back="Back"},SurfaceGuiSizingMode={FixedSize="FixedSize"},ZIndexBehavior={Sibling="Sibling"},UserInputType={MouseButton1="MouseButton1",Touch="Touch",MouseMovement="MouseMovement"},UserInputState={Begin="Begin",End="End",Cancel="Cancel",Change="Change"},ContextActionResult={Pass="Pass",Sink="Sink"},RenderPriority={Camera={Value=200}},KeyCode={RightShift="RightShift"}}
 local objects={}
 local node={};node.__index=node
 function node:IsA(class)return self.ClassName==class or class=="GuiButton"and self.ClassName=="TextButton"end
@@ -73,7 +73,7 @@ local run={bindings={}}
 function run:BindToRenderStep(name,priority,callback)self.bindings[name]=callback end
 function run:UnbindFromRenderStep(name)self.bindings[name]=nil end
 function run:Step()for _,callback in pairs(self.bindings)do callback(1/60)end end
-local input={InputBegan=signal()}
+local input={InputBegan=signal(),InputChanged=signal()}
 function input:GetFocusedTextBox()return self.focus end
 local actions={bindings={}}
 function actions:BindActionAtPriority(name,callback)self.bindings[name]=callback end
@@ -87,7 +87,8 @@ function camera:ScreenPointToRay(x,y)
     return {Origin=Vector3.new(x,y,20),Direction=Vector3.new(0,0,-1)}
 end
 local workspace={CurrentCamera=camera}
-local task={spawn=function(callback)callback()end}
+local delayed={}
+local task={spawn=function(callback)callback()end,delay=function(_,callback)table.insert(delayed,callback)end}
 local player=Instance.new("Player");player.UserId=17
 local playerGui=Instance.new("PlayerGui");playerGui.Parent=player
 local character=Instance.new("Model");player.Character=character
