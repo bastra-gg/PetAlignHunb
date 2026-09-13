@@ -208,6 +208,70 @@ check("Find mobile button by chest adornee, excluding other chests and own UI",f
     card.Enabled=false assert(not findChestButton({root},p,nil))card.Enabled=true
     button.Parent=nil assert(not findChestButton({root},p,nil))
 end)
+local function rewardGui(class,parent)
+ local obj=node(class,parent)
+ obj.Visible=true;obj.Enabled=true;obj.Active=true;obj.AbsoluteSize={X=150,Y=60}
+ function obj:IsA(kind)
+  return class==kind or kind=="GuiButton"and(class=="TextButton"or class=="ImageButton")
+   or kind=="GuiObject"and(class=="TextButton"or class=="ImageButton"or class=="TextLabel"or class=="Frame")
+   or kind=="LayerCollector"and(class=="BillboardGui"or class=="ScreenGui"or class=="SurfaceGui")
+ end
+ return obj
+end
+check("sibling attachment on the same chest and nested mobile action labels are found",function()
+ local root=node("PlayerGui",nil);local model=node("Model",workspace);model.Name="Rare Boss Chest"
+ local owner=node("Part",model);local other=node("Part",model)
+ local p={Parent=owner,ActionText="Claim Reward",ObjectText="Rare Boss Chest"}
+ local card=rewardGui("BillboardGui",root);card.Adornee=other
+ local close=rewardGui("TextButton",card);close.Text="×"
+ local button=rewardGui("ImageButton",card);local title=rewardGui("TextLabel",button);title.Text="Собрать награду"
+ assert(findChestButton({root},p,nil)==button)
+ title.Visible=false;assert(not findChestButton({root},p,nil))
+end)
+check("surface claim UI and Russian uppercase labels are supported",function()
+ local root=node("PlayerGui",nil);local owner=node("Part",workspace)
+ local p={Parent=owner,ActionText="Claim Reward"}
+ local card=rewardGui("SurfaceGui",root);card.Adornee=owner
+ local button=rewardGui("TextButton",card);button.Text="ЗАБРАТЬ НАГРАДУ"
+ assert(findChestButton({root},p,nil)==button)
+end)
+check("screen-space claim dialog identifies the boss chest in its own card",function()
+ local root=node("PlayerGui",nil);local screen=rewardGui("ScreenGui",root)
+ local p={Parent=node("Part",workspace),ActionText="Claim Reward",ObjectText="Rare Boss Chest"}
+ local card=rewardGui("Frame",screen);local label=rewardGui("TextLabel",card);label.Text="Rare Boss Chest"
+ local button=rewardGui("TextButton",card);button.Text="Claim"
+ assert(findChestButton({root},p,nil)==button)
+ card.Visible=false;assert(not findChestButton({root},p,nil));card.Visible=true
+ label.Text="Daily Chest";assert(not findChestButton({root},p,nil))
+end)
+check("another chest or sibling daily reward is never used as the boss action",function()
+ local root=node("PlayerGui",nil);local screen=rewardGui("ScreenGui",root);local shared=rewardGui("Frame",screen)
+ local p={Parent=node("Part",workspace),ActionText="Claim Reward",ObjectText="Rare Boss Chest"}
+ local daily=rewardGui("Frame",shared);local dl=rewardGui("TextLabel",daily);dl.Text="Daily Chest"
+ local wrong=rewardGui("TextButton",daily);wrong.Text="Claim"
+ local boss=rewardGui("Frame",shared);local title=rewardGui("TextLabel",boss);title.Text="Rare Boss Chest"
+ local correct=rewardGui("TextButton",boss);correct.Text="Claim"
+ assert(findChestButton({root},p,nil)==correct)
+end)
+check("direct Activated confirmation prevents a second handler and physical input",function()
+ local s,api,p,valid=buttonCase();local events={}
+ api.activate=function(_,event)table.insert(events,event);s.ack=true;return true end
+ assert(activateChestButton(api,p,valid)and #events==1 and events[1]=="Activated" and s.down==0)
+end)
+check("no-op Activated falls back to the game's click handler",function()
+ local s,api,p,valid=buttonCase();local events={}
+ api.activate=function(_,event)table.insert(events,event);if event=="MouseButton1Click"then s.ack=true end;return true end
+ assert(activateChestButton(api,p,valid)and #events==2 and s.ack)
+end)
+check("unavailable direct helpers leave physical clicking available",function()
+ local s,api,p,valid=buttonCase();api.activate=function()error("not supported")end
+ assert(not activateChestButton(api,p,valid));assert(pressChestButton(api,p,valid)and s.down==1 and s.up==1)
+end)
+check("cancellation between direct events never invokes a late callback",function()
+ local s,api,p,valid=buttonCase();local calls=0
+ api.activate=function()calls+=1;return true end;s.onwait=function()s.valid=false end
+ activateChestButton(api,p,valid);assert(calls==1)
+end)
 local function cycleCase()
     local state={time=0,restores=0,reports=0}
     local api={now=function()return state.time end,alive=function()return true end,ready=function()return true end,

@@ -49,6 +49,13 @@ local Enum={Font={Gotham="Gotham",GothamBold="GothamBold"},TextXAlignment={Left=
 local objects={}
 local node={};node.__index=node
 function node:IsA(class)return self.ClassName==class or class=="GuiButton"and self.ClassName=="TextButton"end
+function node:GetPropertyChangedSignal(key)
+ self.propertySignals=self.propertySignals or {};self.propertySignals[key]=self.propertySignals[key]or signal();return self.propertySignals[key]
+end
+function node:GetDescendants()
+ local result={};local function walk(parent)for _,child in ipairs(parent:GetChildren())do table.insert(result,child);walk(child)end end
+ walk(self);return result
+end
 function node:GetChildren()
     local children={};for _,o in ipairs(objects)do if o.Parent==self then table.insert(children,o)end end;return children
 end
@@ -66,7 +73,7 @@ end
 function node:GetGuiObjectsAtPosition()return self.hitObjects or {}end
 local Instance={}
 function Instance.new(class)
-    local o=setmetatable({ClassName=class,Name=class,Activated=signal(),Active=class=="TextButton",Size=UDim2.fromOffset(100,100),Position=UDim2.fromOffset(0,0)},node)
+    local o=setmetatable({ClassName=class,Name=class,TextSize=14,InputBegan=signal(),FocusLost=signal(),Activated=signal(),Active=class=="TextButton",Size=UDim2.fromOffset(100,100),Position=UDim2.fromOffset(0,0)},node)
     table.insert(objects,o);return o
 end
 local run={bindings={}}
