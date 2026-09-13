@@ -5,15 +5,13 @@ local function step()
  h.openedAt=os.clock()-1;run:Step();assert(#errors==0,errors[1])
 end
 local function screenPoint(p,b)
- local point=Vector3.new(((b.x+b.w/2)/p.cw-0.5)*p.part.Size.X,(0.5-(b.y+b.h/2)/p.ch)*p.part.Size.Y,p.part.Size.Z/2)
- local world=p.part.CFrame.Position+p.part.CFrame:VectorToWorldSpace(point)
- return world.X,world.Y
+ return p.bounds.x+(b.x+b.w/2)*p.scale.Scale,p.bounds.y+(b.y+b.h/2)*p.scale.Scale
 end
 local function eventAt(p,b,touch)
  local x,y=screenPoint(p,b)
  return {UserInputType=touch and "Touch"or"MouseButton1",Position=Vector3.new(x,y)}
 end
-local binding="RockBugHologramT36_17"
+local binding="RockBugHologramT37_17"
 local function click(p,b,touch)
  local action=actions.bindings[binding];local e=eventAt(p,b,touch)
  assert(action(binding,"Begin",e)=="Sink")
@@ -217,6 +215,85 @@ check("chest input cannot be intercepted by open or hidden hub controls",functio
  h:CloseFull();h:SetVisible(false);h:SetChestInput(true);h:SetChestInput(false)
  assert(not h.visible and not h.world.Parent and not h.nav.Visible)
  h:SetVisible(true);step()
+end)
+check("all overview panels render as opaque screen layers above gain popups",function()
+ for _,p in ipairs(h.panels)do
+  assert(p.gui.ClassName=="ScreenGui" and p.gui.DisplayOrder==1000009 and p.gui.DisplayOrder<h.overlay.DisplayOrder)
+  assert(p.gui.IgnoreGuiInset and p.gui.ScreenInsets=="None" and p.gui.ClipToDeviceSafeArea==false)
+  if p.id~="title"then assert(p.frame.ClassName=="TextButton" and p.frame.Active and p.frame.BackgroundTransparency==0)else assert(not p.frame.Active)end
+  assert(p.frame.Parent==p.screenRoot and p.screenRoot.Parent==p.gui)
+ end
+ for _,o in ipairs(h.surfaces:GetDescendants())do assert(o.ClassName~="SurfaceGui")end
+end)
+check("covered game controls do not veto the visible hub button",function()
+ local group=h.group;h:SelectGroup("farm");step()
+ local panel=h.cards[1];local x,y=screenPoint(panel,panel.primary)
+ local gameLayer=Instance.new("ScreenGui");gameLayer.Parent=playerGui;gameLayer.DisplayOrder=50
+ local gameButton=Instance.new("TextButton");gameButton.Parent=gameLayer
+ playerGui.hitObjects={panel.frame,gameButton}
+ assert(h:Hit(x,y)==panel.primary)
+ local old=runtime.leverRefs.bug.Get();click(panel,panel.primary)
+ assert(runtime.leverRefs.bug.Get()~=old)
+ -- A covered margin has no automation action; the native shield remains the UI target.
+ assert(not h:Hit(panel.bounds.x+2,panel.bounds.y+2))
+ playerGui.hitObjects={};gameLayer:Destroy();h:SelectGroup(group);step()
+end)
+check("native controls and higher-priority dialogs still block overview actions",function()
+ local panel=h.cards[1];local x,y=screenPoint(panel,panel.primary)
+ playerGui.hitObjects={h.groupButtons.farm,panel.frame};assert(h:Hit(x,y)==nil)
+ local dialog=Instance.new("ScreenGui");dialog.Parent=playerGui;dialog.DisplayOrder=h.overlay.DisplayOrder+1
+ local control=Instance.new("TextButton");control.Parent=dialog
+ playerGui.hitObjects={control,panel.frame};assert(h:Hit(x,y)==nil)
+ playerGui.hitObjects={};dialog:Destroy()
+end)
+check("projection follows the character, camera and FOV using viewport coordinates",function()
+ local oldRoot,oldCamera,oldFOV,oldGroup=root.Position,camera.CFrame,camera.FieldOfView,h.group
+ for _,size in ipairs({Vector3.new(1536,864),Vector3.new(844,390),Vector3.new(390,844)})do
+  camera.ViewportSize=size;root.Position=Vector3.new(2,1,0);camera.CFrame=CFrame.new(0,1,20)*CFrame.Angles(0,0.1,0);camera.FieldOfView=85
+  h:SelectGroup("farm");step()
+  for _,panel in ipairs(h.panels)do if panel.gui.Enabled then
+   local point=camera:WorldToViewportPoint(panel.part.CFrame.Position)
+   assert(math.abs(panel.screenRoot.Position.X.Offset-point.X)<0.001 and math.abs(panel.screenRoot.Position.Y.Offset-point.Y)<0.001)
+   assert(math.abs(panel.bounds.w-panel.cw*panel.scale.Scale)<0.001 and math.abs(panel.bounds.h-panel.ch*panel.scale.Scale)<0.001)
+   for _,button in ipairs(panel.buttons)do local x,y=screenPoint(panel,button);assert(h:Hit(x,y)==button)end
+  end end
+ end
+ camera.ViewportSize=Vector3.new(1536,864);root.Position=oldRoot;camera.CFrame=oldCamera;camera.FieldOfView=oldFOV;h:SelectGroup(oldGroup);step()
+end)
+check("hiding, missing character and chest collection disable every projected layer",function()
+ h:SetVisible(false);for _,panel in ipairs(h.panels)do assert(not panel.gui.Enabled)end
+ h:SetVisible(true);step();player.Character=nil;step();for _,panel in ipairs(h.panels)do assert(not panel.gui.Enabled)end
+ player.Character=character;step();h:SetChestInput(true);for _,panel in ipairs(h.panels)do assert(not panel.gui.Enabled)end
+ h:SetChestInput(false);step();assert(h.cards[1].gui.Enabled)
+end)
+check("native mobile activation works even when the GUI consumes the context action",function()
+ local group=h.group;h:SelectGroup("farm");step()
+ local panel=h.cards[1];local b=panel.primary;local e=eventAt(panel,b,true)
+ playerGui.hitObjects={b.node,panel.frame}
+ local before=runtime.leverRefs.bug.Get();b.node.InputBegan:Fire(e);b.node.Activated:Fire(e)
+ assert(runtime.leverRefs.bug.Get()~=before)
+ b.node.Activated:Fire(e);assert(runtime.leverRefs.bug.Get()~=before)
+ playerGui.hitObjects={};h:SelectGroup(group);step()
+end)
+check("native and context routes toggle only once regardless of release ordering",function()
+ local group=h.group;h:SelectGroup("farm");step()
+ for _,nativeFirst in ipairs({false,true})do
+  local panel=h.cards[1];local b=panel.primary;local e=eventAt(panel,b,true);local action=actions.bindings[binding]
+  local before=runtime.leverRefs.bug.Get()
+  action(binding,"Begin",e);b.node.InputBegan:Fire(e)
+  if nativeFirst then b.node.Activated:Fire(e);action(binding,"End",e)
+  else action(binding,"End",e);b.node.Activated:Fire(e)end
+  assert(runtime.leverRefs.bug.Get()~=before)
+ end
+ h:SelectGroup(group);step()
+end)
+check("native drags and hide invalidate an activation without a context callback",function()
+ local panel=h.cards[1];local b=panel.primary;local e=eventAt(panel,b,true);local calls=0;local callback=b.callback
+ b.callback=function()calls+=1 end
+ b.node.InputBegan:Fire(e);local position=e.Position;e.Position=position+Vector3.new(40,0,0);input.InputChanged:Fire(e)
+ e.Position=position;input.InputChanged:Fire(e);b.node.Activated:Fire(e);assert(calls==0)
+ b.node.InputBegan:Fire(e);h:SetVisible(false);b.node.Activated:Fire(e);assert(calls==0)
+ b.callback=callback;h:SetVisible(true);step()
 end)
 check("destroy cleans native/full/world UI and repeat launch stays hidden",function()
  h:SetVisible(false);local connections=table.clone(h.connections);local tabs=table.clone(h.modalTabs)

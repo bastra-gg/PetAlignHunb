@@ -65,6 +65,12 @@ end
 function node:FindFirstChildOfClass(class)
     for _,o in ipairs(self:GetChildren())do if o.ClassName==class then return o end end
 end
+function node:FindFirstAncestorWhichIsA(class)
+ local ancestor=self.Parent;while ancestor do if ancestor:IsA(class)then return ancestor end;ancestor=ancestor.Parent end
+end
+function node:IsDescendantOf(target)
+ local ancestor=self.Parent;while ancestor do if ancestor==target then return true end;ancestor=ancestor.Parent end;return false
+end
 function node:WaitForChild(name)return assert(self:FindFirstChild(name),name)end
 function node:Destroy()
     for _,o in ipairs(self:GetChildren())do o:Destroy()end
@@ -73,7 +79,7 @@ end
 function node:GetGuiObjectsAtPosition()return self.hitObjects or {}end
 local Instance={}
 function Instance.new(class)
-    local o=setmetatable({ClassName=class,Name=class,TextSize=14,InputBegan=signal(),FocusLost=signal(),Activated=signal(),Active=class=="TextButton",Size=UDim2.fromOffset(100,100),Position=UDim2.fromOffset(0,0)},node)
+    local o=setmetatable({ClassName=class,Name=class,DisplayOrder=0,TextSize=14,InputBegan=signal(),FocusLost=signal(),Activated=signal(),Active=class=="TextButton",Size=UDim2.fromOffset(100,100),Position=UDim2.fromOffset(0,0)},node)
     table.insert(objects,o);return o
 end
 local run={bindings={}}
@@ -96,6 +102,8 @@ function tweenService:Create(object,info,target)
  table.insert(tweens,tween);return tween
 end
 Enum.EasingStyle={Quad="Quad"};Enum.EasingDirection={Out="Out"};Enum.ScrollingDirection={X="X"}
+Enum.ScreenInsets={None="None"}
+Enum.ApplyStrokeMode={Border="Border"}
 local game={}
 function game:GetService(name)return assert(({RunService=run,UserInputService=input,ContextActionService=actions,GuiService=guiService,TweenService=tweenService})[name],name)end
 local camera={CFrame=CFrame.new(0,0,20),ViewportSize=Vector3.new(1536,864),FieldOfView=70}
@@ -104,6 +112,12 @@ function camera:ScreenPointToRay(x,y)
     return {Origin=Vector3.new(x,y,20),Direction=Vector3.new(0,0,-1)}
 end
 function camera:WorldToScreenPoint(position)return Vector3.new(768+position.X,432-position.Y,20),true end
+function camera:WorldToViewportPoint(position)
+ local point=self.CFrame:PointToObjectSpace(position);local depth=-point.Z
+ local focal=self.ViewportSize.Y/(2*math.tan(math.rad(self.FieldOfView/2)))
+ local x,y=self.ViewportSize.X/2+point.X*focal/depth,self.ViewportSize.Y/2-point.Y*focal/depth
+ return Vector3.new(x,y,depth),depth>0 and x>=0 and x<=self.ViewportSize.X and y>=0 and y<=self.ViewportSize.Y
+end
 local workspace={CurrentCamera=camera}
 local delayed={}
 local task={spawn=function(callback)callback()end,delay=function(_,callback)table.insert(delayed,callback)end}

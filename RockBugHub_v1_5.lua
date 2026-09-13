@@ -4,7 +4,7 @@ pcall(function()i=game:GetService("NetworkClient")end)if not game:IsLoaded()then
 local j=a.LocalPlayer;
 while not j do task.wait()j=a.LocalPlayer end;
 local k=j:WaitForChild("PlayerGui",60)if not k then warn("[RockBugHub] PlayerGui was not created")pcall(function()g:SetCore("SendNotification",{Title="RockBugHub",Text="Ошибка запуска: PlayerGui не найден",Duration=8})end)return end;
-local l="RockBugHub_TEST_v4_29_HOLO_T36"local m="4.29HOLO-T36"local n=type(getgenv)=="function"and getgenv()or _G;
+local l="RockBugHub_TEST_v4_30_HOLO_T37"local m="4.30HOLO-T37"local n=type(getgenv)=="function"and getgenv()or _G;
 do
     -- Retire the old experimental windows and their listeners on hot reload.
     for _, key in ipairs({"RockBugTradeDiagnostics", "RockBugMiniTransfer"}) do
@@ -5892,7 +5892,7 @@ warn("[RockBugHub] UI startup failed: "..tostring(tP))pcall(function()g:SetCore(
 -- HOLOGRAM_HUD_BEGIN
 do (function()
 local Hologram = (function()
--- RockBugHub T36. Bundled into the existing launcher by scripts/build_hologram.py.
+-- RockBugHub T37. Bundled into the existing launcher by scripts/build_hologram.py.
 -- All geometry is local, non-colliding and excluded from game raycasts.
 local HUD = {}
 
@@ -5919,14 +5919,11 @@ HUD.groups={
 }
 HUD.sections={bug={"Камни","Rocks"},farm={"Тренажёры","Machines"},train={"Кач","Training"},boss={"Босс","Boss"},reb={"Ребирты","Rebirths"},crystal={"Магазин","Shop"},egg={"Яйца","Eggs"},quest={"Квесты","Quests"},teleport={"Локации","Locations"},system={"Петы / Ещё","Pets / More"},interface={"Вид интерфейса","Appearance"},kill={"Килл","Kill"}}
 
-function HUD.planeHit(ox, oy, oz, dx, dy, dz, width, height, thickness)
-    -- Back (+Z) face: its horizontal axis agrees with camera screen-right.
-    if dz >= -0.00001 or width <= 0 or height <= 0 then return nil end
-    local distance = (thickness / 2 - oz) / dz
-    if distance <= 0 then return nil end
-    local u, v = 0.5 + (ox + dx * distance) / width, 0.5 - (oy + dy * distance) / height
+function HUD.screenHit(bounds,x,y)
+    if not bounds or bounds.w<=0 or bounds.h<=0 then return nil end
+    local u,v=(x-bounds.x)/bounds.w,(y-bounds.y)/bounds.h
     if u < 0 or u > 1 or v < 0 or v > 1 then return nil end
-    return u, v, distance
+    return u,v
 end
 
 function HUD.layout(width, height)
@@ -5958,7 +5955,8 @@ function HUD.mount(runtime, options)
     assert(options.content,"Missing hologram content bridge")
     local self = {visible=false, suspended=false, destroyed=false, group=HUD.groups[savedGroup] and savedGroup~="settings" and savedGroup or "farm", cardPage=1, cards={}, modalTabs={}, modalOpen=false, panels={}, connections={}, pressed={}, beams={}, samples={}, fps=0, inputGeneration=0, noticeToken=0}
     runtime.hologram = self -- Allows cleanup even if construction fails.
-    local binding = "RockBugHologramT36_" .. tostring(player.UserId)
+    local binding = "RockBugHologramT37_" .. tostring(player.UserId)
+    local panelOrder=1000009
     local function connect(signal, callback)
         local connection = signal:Connect(callback)
         table.insert(self.connections, connection)
@@ -5974,7 +5972,7 @@ function HUD.mount(runtime, options)
         create("UICorner", {CornerRadius=UDim.new(0,radius or 12)}, object)
     end
     local function edge(object, transparency, thickness)
-        return create("UIStroke", {Color=cyan, Transparency=transparency or 0.45, Thickness=thickness or 1.4}, object)
+        return create("UIStroke", {ApplyStrokeMode=Enum.ApplyStrokeMode.Border, Color=cyan, Transparency=transparency or 0.45, Thickness=thickness or 1.4}, object)
     end
     local function tr(ru, en) return runtime.language == "en" and en or ru end
     local function number(value)
@@ -5987,12 +5985,12 @@ function HUD.mount(runtime, options)
         return string.format("%.0f",value)
     end
     local function label(parent, text, x, y, w, h, size, color, bold)
-        return create("TextLabel", {BackgroundTransparency=1, BorderSizePixel=0, Position=UDim2.fromOffset(x,y), Size=UDim2.fromOffset(w,h), Text=text, TextSize=size or 20, TextColor3=color or white, Font=bold and Enum.Font.GothamBold or Enum.Font.Gotham, TextXAlignment=Enum.TextXAlignment.Left, TextYAlignment=Enum.TextYAlignment.Center, TextTruncate=Enum.TextTruncate.AtEnd}, parent)
+        return create("TextLabel", {AutoLocalize=false, BackgroundTransparency=1, BorderSizePixel=0, Position=UDim2.fromOffset(x,y), Size=UDim2.fromOffset(w,h), Text=text, TextSize=size or 20, TextColor3=color or white, Font=bold and Enum.Font.GothamBold or Enum.Font.Gotham, TextXAlignment=Enum.TextXAlignment.Left, TextYAlignment=Enum.TextYAlignment.Center, TextTruncate=Enum.TextTruncate.AtEnd}, parent)
     end
     local function part(name, parent)
         return create("Part", {Name=name, Anchored=true, CanCollide=false, CanTouch=false, CanQuery=false, CastShadow=false, Transparency=1, Size=Vector3.new(1,1,0.025)}, parent)
     end
-    self.world = create("Model", {Name="RockBugHubHologramT36"})
+    self.world = create("Model", {Name="RockBugHubHologramT37"})
     self.surfaces = create("Folder", {Name="RockBugHubHologramSurfaces"}, playerGui)
     self.overlay = create("ScreenGui", {Name="RockBugHubHologramControl", ResetOnSpawn=false, DisplayOrder=1000010, ZIndexBehavior=Enum.ZIndexBehavior.Sibling}, playerGui)
     self.handle = create("TextButton", {Name="ToggleHologram", AnchorPoint=Vector2.new(0,0), Position=UDim2.fromOffset(16,12), Size=UDim2.fromOffset(108,36), BackgroundColor3=background, BackgroundTransparency=0.08, TextColor3=cyan, TextSize=12, Font=Enum.Font.GothamBold, Text="", AutoButtonColor=true}, self.overlay)
@@ -6024,6 +6022,7 @@ function HUD.mount(runtime, options)
             if pressed.button.node.Parent then pressed.button.node.BackgroundTransparency=0.94 end
         end
         self.pressed={}; self.inputGeneration+=1
+        for _,p in ipairs(self.panels)do for _,b in ipairs(p.buttons)do b.nativePress=nil end end
     end
 
     function self:Destroy()
@@ -6044,8 +6043,14 @@ function HUD.mount(runtime, options)
     local function panel(id, title, x, y, width, height, canvasHeight)
         local p = {id=id, x=x, y=y, w=width, h=height, cw=400, ch=canvasHeight, buttons={}}
         p.part = part(id, self.world)
-        p.gui = create("SurfaceGui", {Name=id, Adornee=p.part, Face=Enum.NormalId.Back, SizingMode=Enum.SurfaceGuiSizingMode.FixedSize, CanvasSize=Vector2.new(p.cw,p.ch), AlwaysOnTop=true, LightInfluence=0, Active=false, Enabled=false, ZOffset=0.1}, self.surfaces)
-        p.frame = create("Frame", {Size=UDim2.fromScale(1,1), BackgroundColor3=background, BackgroundTransparency=0.16, BorderSizePixel=0, ClipsDescendants=true}, p.gui)
+        -- Screen-space layers can sit above game gain popups; SurfaceGui cannot.
+        -- The camera projects the original character-relative anchors every frame.
+        p.gui = create("ScreenGui", {Name="RockBugPanel_"..id, ResetOnSpawn=false, DisplayOrder=panelOrder, IgnoreGuiInset=true, ScreenInsets=Enum.ScreenInsets.None, ClipToDeviceSafeArea=false, ZIndexBehavior=Enum.ZIndexBehavior.Sibling, Enabled=false}, self.surfaces)
+        p.screenRoot=create("Frame",{AnchorPoint=Vector2.new(0.5,0.5),BackgroundTransparency=1,BorderSizePixel=0,ClipsDescendants=true},p.gui)
+        -- This button shields the covered game UI. Actions still use the existing
+        -- press/release dispatcher, so dragging never becomes an accidental toggle.
+        p.frame = create("TextButton", {Size=UDim2.fromOffset(p.cw,p.ch), Text="", Active=true, AutoButtonColor=false, BackgroundColor3=background, BackgroundTransparency=0, BorderSizePixel=0, ClipsDescendants=true}, p.screenRoot)
+        p.scale=create("UIScale",{Scale=1},p.frame)
         round(p.frame,24); p.stroke=edge(p.frame,0.1,2)
         create("UIGradient", {Rotation=100, Color=ColorSequence.new(Color3.fromRGB(42,76,93),Color3.fromRGB(9,27,37))},p.frame)
         local rim=create("Frame",{Position=UDim2.fromOffset(8,8), Size=UDim2.new(1,-16,1,-16), BackgroundTransparency=1},p.frame)
@@ -6060,11 +6065,26 @@ function HUD.mount(runtime, options)
         return p
     end
     local function button(p, text, x, y, w, h, callback)
-        -- Render-only frame: manual ray/plane input keeps CanQuery=false.
-        local row=create("Frame",{Position=UDim2.fromOffset(x,y),Size=UDim2.fromOffset(w,h),BackgroundColor3=cyan,BackgroundTransparency=0.94,BorderSizePixel=0,ClipsDescendants=true},p.frame)
+        -- One shared screen rectangle drives rendering and the press/release hit test.
+        local row=create("TextButton",{Text="",Active=true,AutoButtonColor=false,Position=UDim2.fromOffset(x,y),Size=UDim2.fromOffset(w,h),BackgroundColor3=cyan,BackgroundTransparency=0.94,BorderSizePixel=0,ClipsDescendants=true},p.frame)
         round(row,10)
         local textNode=label(row,text,14,0,w-28,h,19,white,false)
         local b={x=x,y=y,w=w,h=h,node=row,text=textNode,callback=callback,owner=p}
+        -- Some clients route a ScreenGui touch to Activated before ContextActionService.
+        -- Both routes share the same press and handled flag: never dispatch twice.
+        connect(row.InputBegan,function(event)
+            if event.UserInputType~=Enum.UserInputType.MouseButton1 and event.UserInputType~=Enum.UserInputType.Touch then return end
+            if not self.inputReady or self:Hit(event.Position.X,event.Position.Y)~=b then return end
+            b.nativeHandled=false
+            b.nativePress={button=b,x=event.Position.X,y=event.Position.Y,generation=self.inputGeneration,key=event.UserInputType==Enum.UserInputType.Touch and event or "mouse"}
+        end)
+        connect(row.Activated,function(event)
+            local pressed=b.nativePress;b.nativePress=nil
+            if not event or b.nativeHandled or not pressed or pressed.generation~=self.inputGeneration then return end
+            if HUD.acceptRelease(pressed,self:Hit(event.Position.X,event.Position.Y),event.Position.X,event.Position.Y)then
+                b.nativeHandled=true;self:ActivateButton(b,pressed.generation)
+            end
+        end)
         table.insert(p.buttons,b)
         return b
     end
@@ -6227,7 +6247,7 @@ function HUD.mount(runtime, options)
         table.insert(self.cards,p)
     end
     local title=panel("title",nil,0,2.75,3.85,0.96,100)
-    title.frame.BackgroundTransparency=1
+    title.frame.BackgroundTransparency=1;title.frame.Active=false
     for _,child in ipairs(title.frame:GetChildren())do if child:IsA("UIStroke")or child:IsA("Frame")then child:Destroy()end end
     local brand=label(title.frame,"RockBugHub",0,0,400,53,43,white,true);brand.TextXAlignment=Enum.TextXAlignment.Center
     local tagline=label(title.frame,"TRAIN / EXPLORE / BEYOND",0,58,400,26,14,cyan);tagline.TextXAlignment=Enum.TextXAlignment.Center
@@ -6283,7 +6303,7 @@ function HUD.mount(runtime, options)
             self.cardButtons[i].Text=tr(def.ru,def.en)
             self.cardButtons[i].BackgroundColor3=i==self.cardPage and Color3.fromRGB(19,67,82) or background
             local ref=def.key and lever(def.key)
-            p.state.Text=ref and (ref.Get() and "ON" or "OFF") or "→"
+            p.state.Text=ref and (ref.Get() and tr("ВКЛ","ON") or tr("ВЫКЛ","OFF")) or "→"
             p.state.TextColor3=ref and ref.Get() and mint or muted
             p.hint.Text=tr("Настройки выбранного режима","Settings for this mode")
             if def.tab=="farm" then p.hint.Text=tostring(runtime.machineActive and runtime.machineRecoveryStatus or runtime.selectedMachine and (runtime.selectedMachine.label or runtime.selectedMachine.name or runtime.selectedMachine.kind) or tr("Выберите тренажёр","Choose a machine"))
@@ -6319,34 +6339,48 @@ function HUD.mount(runtime, options)
 
     function self:Hit(x,y)
         if self.destroyed or not self.visible or self.suspended or not self.ready or not self.inputReady or self.modalOpen or input:GetFocusedTextBox() or guiService.MenuIsOpen then return nil end
-        local camera=workspace.CurrentCamera
-        if not camera then return nil end
+        if not workspace.CurrentCamera then return nil end
         local objects=playerGui:GetGuiObjectsAtPosition(x,y)
         for _,object in ipairs(objects) do
-            if object:IsA("GuiButton") and object.Active then return nil end
+            if object:IsA("GuiButton") and object.Active then
+                local layer=object:FindFirstAncestorWhichIsA("ScreenGui")
+                local ownPanel=layer and layer:IsDescendantOf(self.surfaces)
+                if not ownPanel and (not layer or layer.DisplayOrder>=panelOrder)then return nil end
+            end
         end
-        local ray=camera:ScreenPointToRay(x,y)
-        local closest, distance=nil,math.huge
-        for _,p in ipairs(self.panels) do
+        -- Last-created panels win during the opening overlap, matching ScreenGui order.
+        for i=#self.panels,1,-1 do
+            local p=self.panels[i]
             if p.gui.Enabled then
-                local origin=p.part.CFrame:PointToObjectSpace(ray.Origin)
-                local direction=p.part.CFrame:VectorToObjectSpace(ray.Direction)
-                local u,v,t=HUD.planeHit(origin.X,origin.Y,origin.Z,direction.X,direction.Y,direction.Z,p.part.Size.X,p.part.Size.Y,p.part.Size.Z)
-                if u and t<distance then
+                local u,v=HUD.screenHit(p.bounds,x,y)
+                if u then
                     for _,b in ipairs(p.buttons) do
                         local px,py=u*p.cw,v*p.ch
-                        if px>=b.x and px<=b.x+b.w and py>=b.y and py<=b.y+b.h then closest=b; distance=t; break end
+                        if px>=b.x and px<=b.x+b.w and py>=b.y and py<=b.y+b.h then return b end
                     end
+                    return nil
                 end
             end
         end
-        return closest
+    end
+    function self:ActivateButton(button,generation)
+        task.spawn(function()
+            if self.destroyed or not runtime.alive or not self.visible or self.suspended or self.chestInput or generation~=self.inputGeneration then return end
+            self.actionPanel=button.owner
+            local ok,reason=pcall(button.callback)
+            self.nextRefresh=nil
+            if not ok then
+                local message=tr("Не удалось выполнить действие: ","Action failed: ")..tostring(reason)
+                options.report(message);self:Notify(message)
+            end
+        end)
     end
     local function onInput(_,state,event)
         local key=event.UserInputType==Enum.UserInputType.Touch and event or "mouse"
         if state==Enum.UserInputState.Begin then
             local b=self:Hit(event.Position.X,event.Position.Y)
             if not b then return Enum.ContextActionResult.Pass end
+            b.nativeHandled=false
             self.pressed[key]={button=b,x=event.Position.X,y=event.Position.Y,generation=self.inputGeneration}
             b.node.BackgroundTransparency=0.65
         elseif state==Enum.UserInputState.End or state==Enum.UserInputState.Cancel then
@@ -6354,17 +6388,10 @@ function HUD.mount(runtime, options)
             if not pressed then return Enum.ContextActionResult.Pass end
             self.pressed[key]=nil
             pressed.button.node.BackgroundTransparency=0.94
-            if state==Enum.UserInputState.End and pressed.generation==self.inputGeneration and HUD.acceptRelease(pressed,self:Hit(event.Position.X,event.Position.Y),event.Position.X,event.Position.Y) then
-                task.spawn(function()
-                    if self.destroyed or not runtime.alive or not self.visible or self.suspended or pressed.generation~=self.inputGeneration then return end
-                    self.actionPanel=pressed.button.owner
-                    local ok,reason=pcall(pressed.button.callback)
-                    self.nextRefresh=nil
-                    if not ok then
-                        local message=tr("Не удалось выполнить действие: ","Action failed: ")..tostring(reason)
-                        options.report(message); self:Notify(message)
-                    end
-                end)
+            if state==Enum.UserInputState.Cancel then pressed.button.nativePress=nil;pressed.button.nativeHandled=true end
+            if state==Enum.UserInputState.End and not pressed.button.nativeHandled and pressed.generation==self.inputGeneration and HUD.acceptRelease(pressed,self:Hit(event.Position.X,event.Position.Y),event.Position.X,event.Position.Y) then
+                pressed.button.nativeHandled=true
+                self:ActivateButton(pressed.button,pressed.generation)
             end
         elseif not self.pressed[key] then return Enum.ContextActionResult.Pass end
         return Enum.ContextActionResult.Sink
@@ -6424,9 +6451,17 @@ function HUD.mount(runtime, options)
             p.gui.Enabled=enabled
             if enabled then
                 if p.stroke and p.stroke.Parent then p.stroke.Transparency=p.index==self.cardPage and 0.1 or 0.35 end
-                local yaw=mode=="wide" and (x< -2 and 0.07 or x>2 and -0.07 or 0) or 0
                 p.part.Size=Vector3.new(w*scale,h*scale,0.025)
-                p.part.CFrame=basis*CFrame.new(x*scale*spread,y*scale*spread,0)*CFrame.Angles(0,yaw,0)
+                p.part.CFrame=basis*CFrame.new(x*scale*spread,y*scale*spread,0)
+                local point=camera:WorldToViewportPoint(p.part.CFrame.Position)
+                local edgePoint=camera:WorldToViewportPoint(p.part.CFrame.Position+p.part.CFrame.RightVector*w*scale*0.5)
+                local pixelScale=math.abs(edgePoint.X-point.X)*2/p.cw
+                local pixelW,pixelH=p.cw*pixelScale,p.ch*pixelScale
+                p.bounds={x=point.X-pixelW/2,y=point.Y-pixelH/2,w=pixelW,h=pixelH}
+                p.gui.Enabled=point.Z>0 and pixelScale>0 and p.bounds.x<viewport.X and p.bounds.y<viewport.Y and p.bounds.x+pixelW>0 and p.bounds.y+pixelH>0
+                p.screenRoot.Position=UDim2.fromOffset(point.X,point.Y)
+                p.screenRoot.Size=UDim2.fromOffset(pixelW,pixelH)
+                p.scale.Scale=pixelScale
             end
         end
         local humanoid=character:FindFirstChildOfClass("Humanoid")
@@ -6496,6 +6531,10 @@ function HUD.mount(runtime, options)
             pressed.cancelled=true
             pressed.button.node.BackgroundTransparency=0.94
         end
+        if key then for _,p in ipairs(self.panels)do for _,b in ipairs(p.buttons)do
+            local native=b.nativePress
+            if native and native.key==key and (native.x-event.Position.X)^2+(native.y-event.Position.Y)^2>144 then native.cancelled=true end
+        end end end
     end)
     connect(input.InputBegan,function(event,processed)
         if not processed and not input:GetFocusedTextBox() and event.KeyCode==Enum.KeyCode.RightShift then self:SetVisible(not self.visible) end
