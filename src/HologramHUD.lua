@@ -1,6 +1,29 @@
--- RockBugHub T34. Bundled into the existing launcher by scripts/build_hologram.py.
+-- RockBugHub T35. Bundled into the existing launcher by scripts/build_hologram.py.
 -- All geometry is local, non-colliding and excluded from game raycasts.
 local HUD = {}
+
+HUD.groups={
+ farm={ru="ФАРМ",en="FARM",tabs={"bug","farm","train","boss","reb"},cards={
+  {ru="КАМНИ",en="ROCKS",tab="bug",key="bug",actionRu="Автоудар",actionEn="Auto punch",moreRu="Выбрать камень",moreEn="Choose rock"},
+  {ru="ТРЕНАЖЁРЫ",en="MACHINES",tab="farm",key="machineFarm",actionRu="Автотренажёр",actionEn="Auto machine",moreRu="Все тренажёры",moreEn="All machines"},
+  {ru="КАЧ",en="TRAINING",tab="train",key="train.Weight",actionRu="Качать гантель",actionEn="Auto weight",moreRu="Все упражнения",moreEn="All exercises"},
+  {ru="БОСС",en="BOSS",tab="boss",key="bossCycle",actionRu="Босс и сундук",actionEn="Boss & chest",moreRu="Настроить босса",moreEn="Boss settings"},
+ }},
+ growth={ru="РАЗВИТИЕ",en="GROWTH",tabs={"crystal","egg","quest","teleport","system"},cards={
+  {ru="МАГАЗИН",en="SHOP",tab="crystal",key="crystal.crystal",actionRu="Автокристалл",actionEn="Auto crystal",moreRu="Весь магазин",moreEn="Full shop"},
+  {ru="ЯЙЦА",en="EGGS",tab="egg",key="proteinEgg",actionRu="Protein Egg",actionEn="Protein Egg",moreRu="Все настройки яиц",moreEn="All egg settings"},
+  {ru="КВЕСТЫ",en="QUESTS",tab="quest",key="autoQuest",actionRu="Автоквест",actionEn="Auto quest",moreRu="Все квесты",moreEn="All quests"},
+  {ru="ПИТОМЦЫ / МИР",en="PETS / WORLD",tab="teleport",actionTab="system",actionRu="Питомцы и другое",actionEn="Pets & more",moreRu="Все локации",moreEn="All destinations"},
+ }},
+ kill={ru="КИЛЛ",en="KILL",tabs={"kill"},cards={
+  {ru="ВСЕ ИГРОКИ",en="ALL PLAYERS",tab="kill",key="kill.all",actionRu="Атаковать всех",actionEn="Attack all",moreRu="Полные настройки",moreEn="Full settings"},
+  {ru="КРОМЕ ДРУЗЕЙ",en="EXCEPT FRIENDS",tab="kill",key="kill.whitelist",actionRu="Пропускать друзей",actionEn="Skip friends",moreRu="Список исключений",moreEn="Exclusion list"},
+  {ru="ТОЛЬКО ЦЕЛИ",en="SELECTED TARGETS",tab="kill",key="kill.blacklist",actionRu="Атаковать цели",actionEn="Attack targets",moreRu="Выбрать цели",moreEn="Choose targets"},
+  {ru="УПРАВЛЕНИЕ",en="CONTROL",tab="kill",actionRu="Остановить килл",actionEn="Stop kill",stopKill=true,moreRu="Все функции килла",moreEn="All kill functions"},
+ }},
+ settings={ru="НАСТРОЙКИ",en="SETTINGS",tabs={"system","interface","bug","farm","train","boss","reb","crystal","egg","quest","teleport","kill"}},
+}
+HUD.sections={bug={"Камни","Rocks"},farm={"Тренажёры","Machines"},train={"Кач","Training"},boss={"Босс","Boss"},reb={"Ребирты","Rebirths"},crystal={"Магазин","Shop"},egg={"Яйца","Eggs"},quest={"Квесты","Quests"},teleport={"Локации","Locations"},system={"Петы / Ещё","Pets / More"},interface={"Вид интерфейса","Appearance"},kill={"Килл","Kill"}}
 
 function HUD.planeHit(ox, oy, oz, dx, dy, dz, width, height, thickness)
     -- Back (+Z) face: its horizontal axis agrees with camera screen-right.
@@ -14,8 +37,8 @@ end
 
 function HUD.layout(width, height)
     if height > width then return "portrait", 7.0, 16.0 end
-    if width < 1080 or height < 620 then return "compact", 17.3, 8.0 end
-    return "wide", 12.4, 8.8
+    if width < 1080 or height < 620 then return "compact", 16.0, 8.2 end
+    return "wide", 12.4, 9.0
 end
 
 function HUD.acceptRelease(pressed, released, x, y)
@@ -32,11 +55,12 @@ function HUD.mount(runtime, options)
     local cyan, mint = Color3.fromRGB(65, 224, 255), Color3.fromRGB(69, 250, 193)
     local white, muted = Color3.fromRGB(211, 249, 255), Color3.fromRGB(121, 177, 194)
     local background = Color3.fromRGB(4, 19, 29)
-    local pages={automation=true,pets=true,teleport=true,session=true,progress=true}
-    local savedPage=options.env.RockBugHologramPage
-    local self = {visible=false, suspended=false, destroyed=false, page=pages[savedPage] and savedPage or "automation", panels={}, connections={}, pressed={}, beams={}, samples={}, fps=0, petPage=0, petCount=0, inputGeneration=0, noticeToken=0}
+    local savedGroup=options.env.RockBugHologramGroup
+    local tweenService=game:GetService("TweenService")
+    assert(options.content,"Missing hologram content bridge")
+    local self = {visible=false, suspended=false, destroyed=false, group=HUD.groups[savedGroup] and savedGroup~="settings" and savedGroup or "farm", cardPage=1, cards={}, modalTabs={}, modalOpen=false, panels={}, connections={}, pressed={}, beams={}, samples={}, fps=0, inputGeneration=0, noticeToken=0}
     runtime.hologram = self -- Allows cleanup even if construction fails.
-    local binding = "RockBugHologramT34_" .. tostring(player.UserId)
+    local binding = "RockBugHologramT35_" .. tostring(player.UserId)
     local function connect(signal, callback)
         local connection = signal:Connect(callback)
         table.insert(self.connections, connection)
@@ -70,12 +94,12 @@ function HUD.mount(runtime, options)
     local function part(name, parent)
         return create("Part", {Name=name, Anchored=true, CanCollide=false, CanTouch=false, CanQuery=false, CastShadow=false, Transparency=1, Size=Vector3.new(1,1,0.025)}, parent)
     end
-    self.world = create("Model", {Name="RockBugHubHologramT34"})
+    self.world = create("Model", {Name="RockBugHubHologramT35"})
     self.surfaces = create("Folder", {Name="RockBugHubHologramSurfaces"}, playerGui)
     self.overlay = create("ScreenGui", {Name="RockBugHubHologramControl", ResetOnSpawn=false, DisplayOrder=1000010, ZIndexBehavior=Enum.ZIndexBehavior.Sibling}, playerGui)
-    self.handle = create("TextButton", {Name="ToggleHologram", AnchorPoint=Vector2.new(0,0), Position=UDim2.fromOffset(16,12), Size=UDim2.fromOffset(148,44), BackgroundColor3=background, BackgroundTransparency=0.08, TextColor3=cyan, TextSize=14, Font=Enum.Font.GothamBold, Text="", AutoButtonColor=true}, self.overlay)
+    self.handle = create("TextButton", {Name="ToggleHologram", AnchorPoint=Vector2.new(0,0), Position=UDim2.fromOffset(16,12), Size=UDim2.fromOffset(108,36), BackgroundColor3=background, BackgroundTransparency=0.08, TextColor3=cyan, TextSize=12, Font=Enum.Font.GothamBold, Text="", AutoButtonColor=true}, self.overlay)
     round(self.handle,14); edge(self.handle,0.12)
-    self.menu = create("TextButton", {Name="OpenFullMenu", Position=UDim2.fromOffset(172,12), Size=UDim2.fromOffset(72,44), BackgroundColor3=background, BackgroundTransparency=0.08, TextColor3=white, TextSize=13, Font=Enum.Font.GothamBold, Text=tr("МЕНЮ","MENU"), AutoButtonColor=true},self.overlay)
+    self.menu = create("TextButton", {Name="OpenFullMenu", AnchorPoint=Vector2.new(1,0), Position=UDim2.new(1,-16,0,12), Size=UDim2.fromOffset(88,36), BackgroundColor3=background, BackgroundTransparency=0.08, TextColor3=white, TextSize=13, Font=Enum.Font.GothamBold, Text=tr("НАСТРОЙКИ","SETTINGS"), AutoButtonColor=true},self.overlay)
     round(self.menu,14); edge(self.menu,0.5)
     self.notice=label(self.overlay,"",16,64,340,64,15,white)
     self.notice.Name="ActionResult"; self.notice.Size=UDim2.new(1,-32,0,64)
@@ -108,6 +132,9 @@ function HUD.mount(runtime, options)
         if self.destroyed then return end
         self.destroyed=true; self.visible=false
         self:ClearPresses(); self.noticeToken+=1
+        if self.modalTween then self.modalTween:Cancel()end
+        if options.content then pcall(function()options.content:Close()end)end
+        for _,tab in ipairs(self.modalTabs)do tab.connection:Disconnect()end
         pcall(function()run:UnbindFromRenderStep(binding)end)
         pcall(function()actions:UnbindAction(binding)end)
         for _, connection in ipairs(self.connections) do pcall(function()connection:Disconnect()end) end
@@ -120,7 +147,7 @@ function HUD.mount(runtime, options)
         local p = {id=id, x=x, y=y, w=width, h=height, cw=400, ch=canvasHeight, buttons={}}
         p.part = part(id, self.world)
         p.gui = create("SurfaceGui", {Name=id, Adornee=p.part, Face=Enum.NormalId.Back, SizingMode=Enum.SurfaceGuiSizingMode.FixedSize, CanvasSize=Vector2.new(p.cw,p.ch), AlwaysOnTop=true, LightInfluence=0, Active=false, Enabled=false, ZOffset=0.1}, self.surfaces)
-        p.frame = create("Frame", {Size=UDim2.fromScale(1,1), BackgroundColor3=background, BackgroundTransparency=0.16, BorderSizePixel=0}, p.gui)
+        p.frame = create("Frame", {Size=UDim2.fromScale(1,1), BackgroundColor3=background, BackgroundTransparency=0.16, BorderSizePixel=0, ClipsDescendants=true}, p.gui)
         round(p.frame,24); p.stroke=edge(p.frame,0.1,2)
         create("UIGradient", {Rotation=100, Color=ColorSequence.new(Color3.fromRGB(42,76,93),Color3.fromRGB(9,27,37))},p.frame)
         local rim=create("Frame",{Position=UDim2.fromOffset(8,8), Size=UDim2.new(1,-16,1,-16), BackgroundTransparency=1},p.frame)
@@ -136,123 +163,160 @@ function HUD.mount(runtime, options)
     end
     local function button(p, text, x, y, w, h, callback)
         -- Render-only frame: manual ray/plane input keeps CanQuery=false.
-        local row=create("Frame",{Position=UDim2.fromOffset(x,y),Size=UDim2.fromOffset(w,h),BackgroundColor3=cyan,BackgroundTransparency=0.94,BorderSizePixel=0},p.frame)
+        local row=create("Frame",{Position=UDim2.fromOffset(x,y),Size=UDim2.fromOffset(w,h),BackgroundColor3=cyan,BackgroundTransparency=0.94,BorderSizePixel=0,ClipsDescendants=true},p.frame)
         round(row,10)
         local textNode=label(row,text,14,0,w-28,h,19,white,false)
-        local b={x=x,y=y,w=w,h=h,node=row,text=textNode,callback=callback}
+        local b={x=x,y=y,w=w,h=h,node=row,text=textNode,callback=callback,owner=p}
         table.insert(p.buttons,b)
         return b
     end
-    local function open(tab)
-        self:SetVisible(false)
-        options.env.RockBugHologramLastMenu=tab
-        options.openClassic(tab)
-    end
+
     local function lever(key)
-        if key=="weight" then return runtime.leverRefs.train and runtime.leverRefs.train.Weight end
-        return runtime.leverRefs[key]
+        local ref=runtime.leverRefs
+        for component in tostring(key or ""):gmatch("[^.]+")do ref=ref and ref[component]end
+        return ref and ref.Get and ref.Set and ref or nil
     end
-    local function toggle(p, ru, en, key, index)
-        local b=button(p,ru,20,66+(index-1)*52,360,46,function()
-            local ref=lever(key)
-            if ref and ref.Get and ref.Set then
-                local target=not ref.Get()
-                ref.Set(target,false)
-                if ref.Get()~=target then self:Notify(runtime.status or tr("Режим пока не включён","Mode could not be enabled")) end
-            else self:Notify(tr("Откройте полные настройки режима","Open the full settings for this mode")) end
-        end)
-        b.text.Size=UDim2.fromOffset(258,46)
-        b.ru=ru; b.en=en; b.key=key
-        b.track=create("Frame",{Position=UDim2.fromOffset(290,11),Size=UDim2.fromOffset(54,26),BackgroundColor3=muted,BackgroundTransparency=0.7,BorderSizePixel=0},b.node)
-        round(b.track,20)
-        b.knob=create("Frame",{Position=UDim2.fromOffset(4,4),Size=UDim2.fromOffset(18,18),BackgroundColor3=white,BorderSizePixel=0},b.track)
-        round(b.knob,20)
+    local function open(tab,origin)self:OpenFull(tab,origin or self.actionPanel)end
+    local function nativeButton(parent,text,position,size,callback)
+        local b=create("TextButton",{Position=position,Size=size,Text=text,Font=Enum.Font.GothamBold,TextSize=13,TextColor3=white,BackgroundColor3=background,BackgroundTransparency=0.1,BorderSizePixel=0,AutoButtonColor=true,ClipsDescendants=true,TextTruncate=Enum.TextTruncate.AtEnd},parent)
+        round(b,10);edge(b,0.6)
+        connect(b.Activated,callback)
         return b
     end
 
-    local strength=panel("strength","СИЛА / СЕК",-4,2.22,3.35,2.12,254)
-    strength.value=label(strength.frame,"—",24,62,348,62,52,white,true)
-    strength.total=label(strength.frame,"",26,125,348,26,17,muted)
-    strength.bars={}
-    for i=1,20 do
-        strength.bars[i]=create("Frame",{AnchorPoint=Vector2.new(0,1),Position=UDim2.fromOffset(25+(i-1)*17.5,225),Size=UDim2.fromOffset(11,2),BackgroundColor3=cyan,BackgroundTransparency=0.1+i%3*0.12,BorderSizePixel=0},strength.frame)
+    -- Native bottom buttons receive touch/clicks directly, independently of 3D rays.
+    self.nav=create("Frame",{AnchorPoint=Vector2.new(0.5,1),Position=UDim2.new(0.5,0,1,-10),Size=UDim2.new(1,-24,0,40),BackgroundTransparency=1,Visible=false},self.overlay)
+    create("UISizeConstraint",{MaxSize=Vector2.new(328,40)},self.nav)
+    self.groupButtons={}
+    for i,id in ipairs({"farm","growth","kill"})do
+        local group=id
+        self.groupButtons[group]=nativeButton(self.nav,tr(HUD.groups[group].ru,HUD.groups[group].en),UDim2.new((i-1)/3,3,0,0),UDim2.new(1/3,-6,1,0),function()self:SelectGroup(group)end)
     end
-    local automation=panel("automation","АВТОМАТИКА",-4,-0.52,3.35,2.80,336)
-    self.toggles={toggle(automation,"Качать гантель","Auto weight","weight",1),toggle(automation,"Авто ребирт","Auto rebirth","autoRebirth",2),toggle(automation,"Тренажёр","Auto machine","machineFarm",3),toggle(automation,"Босс и сундук","Boss & chest","bossCycle",4)}
-    button(automation,"Настроить тренажёр  →",20,282,360,38,function()open("farm")end)
+    self.cardTabs=create("Frame",{AnchorPoint=Vector2.new(0.5,1),Position=UDim2.new(0.5,0,1,-58),Size=UDim2.new(1,-32,0,32),BackgroundTransparency=1,Visible=false},self.overlay)
+    self.cardButtons={}
+    for i=1,4 do
+        local index=i
+        local b=nativeButton(self.cardTabs,"",UDim2.new((i-1)/4,2,0,0),UDim2.new(0.25,-4,1,0),function()self:ClearPresses();self.cardPage=index;self.nextRefresh=nil end)
+        b.TextSize=10;table.insert(self.cardButtons,b)
+    end
 
-    local pets=panel("pets","ПИТОМЦЫ",-4,-3.02,3.35,1.60,192)
-    pets.slots={}
-    for i=1,3 do
-        local b=button(pets,"—",20+(i-1)*122,66,116,64,function()open("crystal")end)
-        b.text.TextSize=16; b.text.TextWrapped=true; b.text.TextTruncate=Enum.TextTruncate.None
-        b.text.TextXAlignment=Enum.TextXAlignment.Center; b.text.Size=UDim2.fromOffset(104,60); b.text.Position=UDim2.fromOffset(6,0)
-        edge(b.node,0.65); pets.slots[i]=b.text
+    self.sheet=create("TextButton",{Name="ExpandedSection",Size=UDim2.fromScale(1,1),BackgroundColor3=Color3.fromRGB(1,9,16),BackgroundTransparency=0.22,Text="",AutoButtonColor=false,Active=true,Modal=true,Visible=false,ZIndex=20},self.overlay)
+    self.window=create("Frame",{AnchorPoint=Vector2.new(0.5,0.5),Position=UDim2.fromScale(0.5,0.5),Size=UDim2.fromScale(0.94,0.92),BackgroundColor3=background,BorderSizePixel=0,ClipsDescendants=true,ZIndex=21},self.sheet)
+    round(self.window,18);edge(self.window,0.08,2)
+    create("UISizeConstraint",{MaxSize=Vector2.new(880,680)},self.window)
+    self.windowTitle=label(self.window,"",16,9,400,32,20,cyan,true)
+    self.windowTitle.Size=UDim2.new(1,-132,0,32)
+    self.close=nativeButton(self.window,"×",UDim2.new(1,-44,0,8),UDim2.fromOffset(34,34),function()self:CloseFull()end)
+    self.stop=nativeButton(self.window,"STOP",UDim2.new(1,-106,0,8),UDim2.fromOffset(56,34),function()options.content:StopModes()end)
+    self.stop.TextColor3=Color3.fromRGB(255,134,136)
+    self.sectionTabs=create("ScrollingFrame",{Position=UDim2.fromOffset(12,48),Size=UDim2.new(1,-24,0,38),CanvasSize=UDim2.fromOffset(0,0),BackgroundTransparency=1,BorderSizePixel=0,ScrollBarThickness=2,ScrollingDirection=Enum.ScrollingDirection.X,Active=true,ClipsDescendants=true},self.window)
+    self.quickHost=create("Frame",{Position=UDim2.fromOffset(12,90),Size=UDim2.new(1,-24,0,28),BackgroundTransparency=1,ClipsDescendants=true},self.window)
+    self.body=create("Frame",{Position=UDim2.fromOffset(12,124),Size=UDim2.new(1,-24,1,-176),BackgroundTransparency=1,ClipsDescendants=true},self.window)
+    self.footer=create("Frame",{Position=UDim2.new(0,12,1,-46),Size=UDim2.new(1,-24,0,38),BackgroundTransparency=1,ClipsDescendants=true},self.window)
+    self.dialogHost=create("Frame",{Size=UDim2.fromScale(1,1),BackgroundTransparency=1,ZIndex=80,Active=false},self.window)
+
+    function self:OpenFull(tab,origin,requestedGroup)
+        if self.destroyed or self.suspended or not HUD.sections[tab] then return false end
+        local group=requestedGroup or self.group
+        local function contains(id)
+            for _,entry in ipairs(HUD.groups[id].tabs)do if entry==tab then return true end end
+            return false
+        end
+        if not contains(group) then
+            for _,id in ipairs({"farm","growth","kill","settings"})do if contains(id)then group=id;break end end
+        end
+        local ok=options.content:Attach(tab,self.body,self.dialogHost,self.quickHost,self.footer)
+        if not ok then self:Notify(tr("Раздел недоступен","Section unavailable"));return false end
+        local wasOpen=self.modalOpen
+        if not wasOpen then self.modalReturnVisible=self.visible end
+        self.visible=true;self.modalOpen=true;self.modalTab=tab;self.modalGroup=group
+        for _,entry in ipairs(self.modalTabs)do entry.connection:Disconnect();entry.node:Destroy()end
+        self.modalTabs={}
+        local selectedIndex=1
+        for i,id in ipairs(HUD.groups[group].tabs)do
+            local section=id
+            local title=HUD.sections[section]
+            local b=create("TextButton",{Position=UDim2.fromOffset((i-1)*122,0),Size=UDim2.fromOffset(116,32),Text=tr(title[1],title[2]),Font=Enum.Font.GothamBold,TextSize=12,TextColor3=section==tab and background or white,BackgroundColor3=section==tab and cyan or background,BorderSizePixel=0,AutoButtonColor=true},self.sectionTabs)
+            round(b,8)
+            local connection=b.Activated:Connect(function()self:OpenFull(section,nil,group)end)
+            table.insert(self.modalTabs,{node=b,connection=connection,id=section})
+            if section==tab then selectedIndex=i end
+        end
+        self.sectionTabs.CanvasSize=UDim2.fromOffset(#self.modalTabs*122,0)
+        self.sectionTabs.CanvasPosition=Vector2.new(math.max(0,(selectedIndex-2)*122),0)
+        self.windowTitle.Text=tr(HUD.sections[tab][1],HUD.sections[tab][2])
+        if self.modalTween then self.modalTween:Cancel()end
+        self:ApplyVisibility()
+        local position=UDim2.fromScale(0.5,0.5)
+        if not wasOpen and origin and workspace.CurrentCamera then
+            local point=workspace.CurrentCamera:WorldToScreenPoint(origin.part.CFrame.Position)
+            self.window.Position=UDim2.fromOffset(point.X,point.Y)
+            self.window.Size=UDim2.fromOffset(96,64)
+            self.modalTween=tweenService:Create(self.window,TweenInfo.new(0.22,Enum.EasingStyle.Quad,Enum.EasingDirection.Out),{Position=position,Size=UDim2.fromScale(0.94,0.92)})
+            self.modalTween:Play()
+        else self.window.Position=position;self.window.Size=UDim2.fromScale(0.94,0.92)end
+        return true
     end
-    pets.count=label(pets.frame,"",24,143,232,26,16,muted)
-    local function petPage(delta)
-        self.petPage=(self.petPage+delta)%math.max(1,math.ceil(self.petCount/3))
+    function self:CloseFull()
+        if self.destroyed then return end
+        if self.modalTween then self.modalTween:Cancel()end
+        self.modalOpen=false;self.modalTab=nil;self.visible=self.modalReturnVisible~=false;options.content:Close();self:ApplyVisibility()
+    end
+    function self:RefreshLanguage()
+        self.menu.Text=tr("НАСТРОЙКИ","SETTINGS")
+        self.stop.Text=tr("СТОП","STOP")
+        for id,node in pairs(self.groupButtons)do node.Text=tr(HUD.groups[id].ru,HUD.groups[id].en)end
+        for _,entry in ipairs(self.modalTabs)do local title=HUD.sections[entry.id];entry.node.Text=tr(title[1],title[2])end
+        if self.modalTab then local title=HUD.sections[self.modalTab];self.windowTitle.Text=tr(title[1],title[2])end
         self.nextRefresh=nil
     end
-    pets.previous=button(pets,"←",264,140,52,36,function()petPage(-1)end)
-    pets.next=button(pets,"→",324,140,52,36,function()petPage(1)end)
-
-    local session=panel("session","СЕССИЯ",4,2.22,3.35,2.12,254)
-    session.time=label(session.frame,"00:00:00",24,64,350,42,36,white,true)
-    session.gain=label(session.frame,"",24,120,350,25,19,mint)
-    session.rebirths=label(session.frame,"",24,154,350,25,19,white)
-    session.network=label(session.frame,"",24,199,350,25,17,muted)
-    session.goal=button(session,"Цель →",272,16,104,32,function()self:SelectPage("progress")end)
-    session.goal.text.TextSize=15
-
-    local teleport=panel("teleport","ТЕЛЕПОРТ",4,-0.52,3.35,2.80,336)
-    for i,id in ipairs({"Starter Island","Legend Beach","Frost Gym","Jungle Gym"}) do
-        local destination=id
-        local b=button(teleport,string.format("0%d   %s    →",i,id),20,66+(i-1)*52,360,46,function()
-            local ok,reason=runtime.teleportToIsland(destination)
-            if not ok then
-                local message=tostring(reason or tr("Телепорт пока недоступен","Teleport is unavailable"))
-                options.report(message); self:Notify(message)
-            end
-        end)
-        b.text.TextSize=18
-    end
-    button(teleport,"Все локации  →",20,282,360,38,function()open("teleport")end)
-
-    local progress=panel("progress","ПРОГРЕСС",4,-3.02,3.35,1.60,192)
-    progress.status=label(progress.frame,"",24,65,350,42,17,white)
-    progress.status.TextWrapped=true; progress.status.TextTruncate=Enum.TextTruncate.None
-    local track=create("Frame",{Position=UDim2.fromOffset(24,121),Size=UDim2.fromOffset(350,8),BackgroundColor3=muted,BackgroundTransparency=0.8,BorderSizePixel=0},progress.frame)
-    round(track,5)
-    progress.fill=create("Frame",{Size=UDim2.fromScale(0,1),BackgroundColor3=mint,BorderSizePixel=0},track); round(progress.fill,5)
-    progress.detail=label(progress.frame,"",24,142,292,26,16,muted)
-    button(progress,"→",336,140,44,32,function()open("reb")end)
-    progress.back=button(progress,"Сессия →",264,16,112,32,function()self:SelectPage("session")end)
-    progress.back.text.TextSize=14
-
-    function self:SelectPage(id)
-        if not pages[id] or self.destroyed then return false end
-        self:ClearPresses()
-        self.page=id; options.env.RockBugHologramPage=id; self.nextRefresh=nil
+    function self:SelectGroup(id)
+        if not HUD.groups[id] or id=="settings" or self.destroyed then return false end
+        if self.modalOpen then self.modalOpen=false;options.content:Close()end
+        self:ClearPresses();self.group=id;self.cardPage=1;self.nextRefresh=nil
+        options.env.RockBugHologramGroup=id
+        self.visible=true;self:ApplyVisibility()
         return true
     end
 
-    local title=panel("title",nil,0,2.70,3.85,0.96,100)
-    title.frame.BackgroundTransparency=1
-    for _,child in ipairs(title.frame:GetChildren()) do if child:IsA("UIStroke") or child:IsA("Frame") then child:Destroy() end end
-    local brand=label(title.frame,"RockBugHub",0,0,400,53,45,white,true); brand.TextXAlignment=Enum.TextXAlignment.Center
-    local tagline=label(title.frame,"TRAIN  /  EXPLORE  /  BEYOND",0,58,400,26,15,cyan); tagline.TextXAlignment=Enum.TextXAlignment.Center
-
-    local nav=panel("nav",nil,0,-3.4,4.30,0.74,110)
-    nav.cw=640; nav.gui.CanvasSize=Vector2.new(640,110)
-    for i,entry in ipairs({{"AUTO","automation","АВТО"},{"PETS","pets","ПЕТЫ"},{"WORLD","teleport","МИР"},{"STATS","session","СЕССИЯ"},{"MENU","menu","МЕНЮ"}}) do
-        local id=entry[2]
-        local b=button(nav,entry[1],10+(i-1)*124,14,120,82,function()
-            if id=="menu" then open("interface") else self:SelectPage(id) end
+    local strength=panel("strength","СИЛА / СЕК",-4,2.45,3.6,2.28,254)
+    strength.value=label(strength.frame,"—",24,62,348,62,52,white,true)
+    strength.total=label(strength.frame,"",26,125,348,26,17,muted)
+    strength.bars={}
+    for i=1,20 do strength.bars[i]=create("Frame",{AnchorPoint=Vector2.new(0,1),Position=UDim2.fromOffset(25+(i-1)*17.5,225),Size=UDim2.fromOffset(11,2),BackgroundColor3=cyan,BackgroundTransparency=0.25,BorderSizePixel=0},strength.frame)end
+    local session=panel("session","СЕССИЯ",4,2.45,3.6,2.28,254)
+    session.time=label(session.frame,"00:00:00",24,64,350,42,36,white,true)
+    session.gain=label(session.frame,"",24,116,350,25,19,mint)
+    session.rebirths=label(session.frame,"",24,150,350,25,19,white)
+    session.network=label(session.frame,"",24,196,350,25,17,muted)
+    button(session,"Ребирты →",264,16,112,32,function()open("reb",session)end).text.TextSize=14
+    for i=1,4 do
+        local index=i
+        local left=i%2==1
+        local p=panel("card"..i,"",left and -4 or 4,i<=2 and 0 or -2.35,3.6,2.07,230)
+        p.index=i
+        p.primary=button(p,"",20,66,360,46,function()
+            local def=HUD.groups[self.group].cards[index]
+            if def.stopKill then
+                for _,ref in pairs(runtime.leverRefs.kill or {})do if ref.Get()then ref.Set(false,false)end end
+            elseif def.key then
+                local ref=lever(def.key)
+                if ref then local target=not ref.Get();ref.Set(target,false);if ref.Get()~=target then self:Notify(runtime.status or tr("Проверьте настройки","Check settings"))end
+                else open(def.tab,p)end
+            else open(def.actionTab or def.tab,p)end
         end)
-        b.text.TextSize=24; b.text.TextXAlignment=Enum.TextXAlignment.Center
-        b.page=id; b.en=entry[1]; b.ru=entry[3]
+        p.primary.text.Size=UDim2.fromOffset(260,46)
+        p.state=label(p.primary.node,"",276,0,70,46,17,mint,true)
+        p.hint=label(p.frame,"",24,119,350,36,16,muted)
+        p.hint.TextWrapped=true;p.hint.TextTruncate=Enum.TextTruncate.AtEnd
+        p.more=button(p,"",20,172,360,42,function()open(HUD.groups[self.group].cards[index].tab,p)end)
+        table.insert(self.cards,p)
     end
+    local title=panel("title",nil,0,2.75,3.85,0.96,100)
+    title.frame.BackgroundTransparency=1
+    for _,child in ipairs(title.frame:GetChildren())do if child:IsA("UIStroke")or child:IsA("Frame")then child:Destroy()end end
+    local brand=label(title.frame,"RockBugHub",0,0,400,53,43,white,true);brand.TextXAlignment=Enum.TextXAlignment.Center
+    local tagline=label(title.frame,"TRAIN / EXPLORE / BEYOND",0,58,400,26,14,cyan);tagline.TextXAlignment=Enum.TextXAlignment.Center
 
     self.ringRoot=part("Orbit",self.world)
     local function beam(a,b,width,transparency)
@@ -289,68 +353,58 @@ function HUD.mount(runtime, options)
     end
     crystal(0,0,0,0.24,0.75); crystal(-0.43,-0.20,0.03,0.18,0.43); crystal(0.43,-0.13,0.07,0.18,0.49)
 
+
     local function refresh(now)
-        strength.title.Text=tr("СИЛА / СЕК","STRENGTH / SEC")
-        automation.title.Text=tr("АВТОМАТИКА","AUTOMATION")
-        pets.title.Text=tr("ПИТОМЦЫ","PETS")
-        session.title.Text=tr("СЕССИЯ","SESSION")
-        teleport.title.Text=tr("ТЕЛЕПОРТ","TELEPORT")
-        progress.title.Text=tr("ПРОГРЕСС","PROGRESS")
+        local group=HUD.groups[self.group]
+        for id,node in pairs(self.groupButtons)do
+            node.Text=tr(HUD.groups[id].ru,HUD.groups[id].en)
+            node.BackgroundColor3=id==self.group and cyan or background
+            node.TextColor3=id==self.group and background or white
+        end
+        for i,p in ipairs(self.cards)do
+            local def=group.cards[i]
+            p.title.Text=tr(def.ru,def.en)
+            p.primary.text.Text=tr(def.actionRu,def.actionEn)
+            p.more.text.Text=tr(def.moreRu,def.moreEn).."  →"
+            self.cardButtons[i].Text=tr(def.ru,def.en)
+            self.cardButtons[i].BackgroundColor3=i==self.cardPage and Color3.fromRGB(19,67,82) or background
+            local ref=def.key and lever(def.key)
+            p.state.Text=ref and (ref.Get() and "ON" or "OFF") or "→"
+            p.state.TextColor3=ref and ref.Get() and mint or muted
+            p.hint.Text=tr("Настройки выбранного режима","Settings for this mode")
+            if def.tab=="farm" then p.hint.Text=tostring(runtime.machineActive and runtime.machineRecoveryStatus or runtime.selectedMachine and (runtime.selectedMachine.label or runtime.selectedMachine.name or runtime.selectedMachine.kind) or tr("Выберите тренажёр","Choose a machine"))
+            elseif def.tab=="bug" then p.hint.Text=tr("Авто ребирт: ","Auto rebirth: ")..(runtime.autoRebirth and "ON" or "OFF")
+            elseif def.tab=="train" then p.hint.Text=tr("Упражнения, фиксация и темп","Exercises, position lock and pace")
+            elseif def.tab=="boss" then p.hint.Text=tr("Автобой, награда и возврат","Auto fight, reward and return")
+            elseif def.tab=="crystal" then p.hint.Text=tostring(runtime.selectedCrystal or tr("Выберите товар","Choose an item"))
+            elseif def.tab=="egg" then p.hint.Text=tr("Интервал: ","Interval: ")..tostring((tonumber(runtime.eggIntervalMultiplier)or 1)*30)..tr(" мин."," min")
+            elseif def.tab=="quest" then p.hint.Text=tostring(runtime.questLastMessage or tr("Выбор NPC и заданий","NPC and quest selection"))
+            elseif def.tab=="kill" then p.hint.Text=tr("Режим: ","Mode: ")..tostring(runtime.killMode or "off")
+            elseif def.tab=="teleport" and runtime.equippedPetState then
+                local ok,_,slots,count=pcall(runtime.equippedPetState)
+                p.hint.Text=ok and slots and tr("Питомцы: ","Pets: ")..tostring(count).." / "..tostring(slots) or tr("Данные питомцев загружаются","Loading pet data")
+            end
+        end
+        strength.title.Text=tr("СИЛА / СЕК","STRENGTH / SEC");session.title.Text=tr("СЕССИЯ","SESSION")
         local elapsed=math.max(0,math.floor(now-(runtime.sessionStatsStartedAt or now)))
         session.time.Text=string.format("%02d:%02d:%02d",math.floor(elapsed/3600),math.floor(elapsed/60)%60,elapsed%60)
         session.gain.Text=tr("Сила: +","Strength: +")..number(runtime.sessionStrengthGained)
         session.rebirths.Text=tr("Ребирты: +","Rebirths: +")..number(runtime.sessionRebirthGained)
-        session.network.Text=(runtime.pingAvailable and number(runtime.pingMs).." ms" or "— ms").."   /   "..(self.fps>0 and number(self.fps) or "—").." FPS"
+        session.network.Text=(runtime.pingAvailable and number(runtime.pingMs).." ms" or "— ms").." / "..number(self.fps).." FPS"
+        session.buttons[1].text.Text=tr("Ребирты →","Rebirths →")
         strength.total.Text=tr("Всего: ","Total: ")..number(runtime.sessionStrengthCurrent)
-        local gained=tonumber(runtime.sessionStrengthGained) or 0
-        local rate=self.lastSample and math.max(0,gained-self.lastSample.gained)/math.max(0.01,now-self.lastSample.time) or 0
+        local gained=tonumber(runtime.sessionStrengthGained)or 0
+        local rate=self.lastSample and math.max(0,gained-self.lastSample.gained)/math.max(0.01,now-self.lastSample.time)or 0
         self.lastSample={time=now,gained=gained}
-        table.insert(self.samples,rate); if #self.samples>20 then table.remove(self.samples,1) end
+        table.insert(self.samples,rate);if #self.samples>20 then table.remove(self.samples,1)end
         strength.value.Text=number(rate)
-        local maximum=1
-        for _,value in ipairs(self.samples) do maximum=math.max(maximum,value) end
-        for i,bar in ipairs(strength.bars) do bar.Size=UDim2.fromOffset(11,math.max(2,(self.samples[i] or 0)/maximum*57)) end
-        for _,b in ipairs(self.toggles) do
-            local ref=lever(b.key)
-            local enabled=ref and ref.Get and ref.Get()==true
-            b.text.Text=tr(b.ru,b.en)
-            b.track.BackgroundColor3=enabled and mint or muted
-            b.track.BackgroundTransparency=enabled and 0.05 or 0.7
-            b.knob.Position=UDim2.fromOffset(enabled and 32 or 4,4)
-        end
-        if runtime.equippedPetState then
-            local ok,_,slots,count,ordered=pcall(runtime.equippedPetState)
-            if ok and type(ordered)=="table" then
-                self.petCount=#ordered
-                self.petPage=math.clamp(self.petPage,0,math.max(0,math.ceil(self.petCount/3)-1))
-                local offset=self.petPage*3
-                pets.count.Text=tostring(count).." / "..tostring(slots)..(self.petCount>3 and ("  ·  "..tostring(offset+1).."–"..tostring(math.min(offset+3,self.petCount))) or tr(" экипировано"," equipped"))
-                for i,node in ipairs(pets.slots) do node.Text=ordered[offset+i] and ordered[offset+i].Name or "—" end
-            else
-                self.petCount=0; self.petPage=0
-                pets.count.Text=tr("Нет данных","No data")
-                for _,node in ipairs(pets.slots) do node.Text="—" end
-            end
-            for _,b in ipairs({pets.previous,pets.next}) do b.text.TextColor3=self.petCount>3 and cyan or muted end
-        end
-        local current,goal=tonumber(runtime.rebirthGoalCurrent) or tonumber(runtime.sessionRebirthCurrent),tonumber(runtime.rebirthGoal) or 0
-        local ratio=runtime.rebirthGoalEnabled and current and goal>0 and math.clamp(current/goal,0,1) or 0
-        progress.fill.Size=UDim2.fromScale(ratio,1)
-        progress.status.Text=tostring(runtime.machineActive and runtime.machineRecoveryStatus or runtime.autoQuest and runtime.questLastMessage or runtime.status or "")
-        progress.detail.Text=runtime.rebirthGoalEnabled and (number(current).." / "..number(goal)..tr(" ребиртов"," rebirths")) or tr("Цель ребиртов не задана","No rebirth target")
-        automation.buttons[5].text.Text=tr("Настроить тренажёр  →","Machine settings  →")
-        teleport.buttons[5].text.Text=tr("Все локации  →","All destinations  →")
-        self.handle.Text=self.visible and tr("СКРЫТЬ  ·  RB","HIDE  ·  RB") or tr("ПОКАЗАТЬ  ·  RB","SHOW  ·  RB")
-        self.menu.Text=tr("МЕНЮ","MENU")
-        session.goal.text.Text=tr("Цель →","Goal →"); progress.back.text.Text=tr("Сессия →","Session →")
-        for _,b in ipairs(nav.buttons) do
-            b.text.Text=tr(b.ru,b.en)
-            b.node.BackgroundTransparency=(b.page==self.page or b.page=="session" and self.page=="progress") and 0.72 or 0.96
-        end
+        local maximum=1;for _,value in ipairs(self.samples)do maximum=math.max(maximum,value)end
+        for i,bar in ipairs(strength.bars)do bar.Size=UDim2.fromOffset(11,math.max(2,(self.samples[i]or 0)/maximum*57))end
+        self.menu.Text=tr("НАСТРОЙКИ","SETTINGS")
     end
 
     function self:Hit(x,y)
-        if self.destroyed or not self.visible or self.suspended or not self.ready or not self.inputReady or input:GetFocusedTextBox() or guiService.MenuIsOpen then return nil end
+        if self.destroyed or not self.visible or self.suspended or not self.ready or not self.inputReady or self.modalOpen or input:GetFocusedTextBox() or guiService.MenuIsOpen then return nil end
         local camera=workspace.CurrentCamera
         if not camera then return nil end
         local objects=playerGui:GetGuiObjectsAtPosition(x,y)
@@ -389,6 +443,7 @@ function HUD.mount(runtime, options)
             if state==Enum.UserInputState.End and pressed.generation==self.inputGeneration and HUD.acceptRelease(pressed,self:Hit(event.Position.X,event.Position.Y),event.Position.X,event.Position.Y) then
                 task.spawn(function()
                     if self.destroyed or not runtime.alive or not self.visible or self.suspended or pressed.generation~=self.inputGeneration then return end
+                    self.actionPanel=pressed.button.owner
                     local ok,reason=pcall(pressed.button.callback)
                     self.nextRefresh=nil
                     if not ok then
@@ -431,7 +486,9 @@ function HUD.mount(runtime, options)
         local now=os.clock()
         self.fps=self.fps==0 and 1/math.max(dt,0.001) or self.fps+(1/math.max(dt,0.001)-self.fps)*math.min(1,dt*2)
         local worldH=2*depth*math.tan(math.rad(camera.FieldOfView/2))
-        local scale=math.min(worldH*(mode=="wide" and 0.82 or 0.94)/designH,worldH*viewport.X/viewport.Y*0.94/designW)
+        local scale=math.min(worldH*(mode=="wide" and 0.82 or 0.9)/designH,worldH*viewport.X/viewport.Y*0.9/designW)*0.88
+        self.cardTabs.Visible=mode=="portrait" and not self.modalOpen
+        self.nav.Position=mode=="wide" and UDim2.new(0.5,0,0.86,0) or UDim2.new(0.5,0,1,-10)
         local progressOpen=math.clamp((now-(self.openedAt or now))/0.28,0,1)
         local spread=1-(1-progressOpen)^3
         self.inputReady=progressOpen>=1
@@ -442,20 +499,17 @@ function HUD.mount(runtime, options)
             local x,y,w,h=p.x,p.y,p.w,p.h
             local enabled=true
             if mode=="compact" then
-                if p.id=="strength" then x,y,w,h=-5.25,0.6,5.4,3.42
-                elseif p.id=="title" then x,y=0,2.75
-                elseif p.id=="nav" then x,y,w,h=0,-3.05,10.5,1.80
-                elseif p.id==self.page then x,y,w,h=5.15,0.45,6.1,6.1*p.ch/p.cw
+                if p.index then x,y,w,h=p.index%2==1 and -5.2 or 5.2,p.index<=2 and 1.25 or -2.10,5.65,3.24875
+                elseif p.id=="title"then x,y,w,h=0,2.75,4.2,1.05
                 else enabled=false end
-            elseif mode=="portrait" then
-                if p.id=="title" then x,y,w,h=0,4.35,5.4,1.35
-                elseif p.id=="nav" then x,y,w,h=0,-7.2,6.5,1.12
-                elseif p.id==self.page then x,y,w,h=0,-3.7,6.5,6.5*p.ch/p.cw
+            elseif mode=="portrait"then
+                if p.index and p.index==self.cardPage then x,y,w,h=0,-3.7,6.5,6.5*p.ch/p.cw
+                elseif p.id=="title"then x,y,w,h=0,4.35,5.4,1.35
                 else enabled=false end
             end
             p.gui.Enabled=enabled
             if enabled then
-                if p.stroke and p.stroke.Parent then p.stroke.Transparency=self.page==p.id and 0 or 0.35 end
+                if p.stroke and p.stroke.Parent then p.stroke.Transparency=p.index==self.cardPage and 0.1 or 0.35 end
                 local yaw=mode=="wide" and (x< -2 and 0.07 or x>2 and -0.07 or 0) or 0
                 p.part.Size=Vector3.new(w*scale,h*scale,0.025)
                 p.part.CFrame=basis*CFrame.new(x*scale*spread,y*scale*spread,0)*CFrame.Angles(0,yaw,0)
@@ -476,10 +530,14 @@ function HUD.mount(runtime, options)
         actions:UnbindAction(binding)
         self:ClearPresses(); self.ready=false; self.inputReady=false
         self.noticeToken+=1; self.notice.Visible=false
-        local show=self.visible and not self.suspended and not self.destroyed
+        local show=self.visible and not self.modalOpen and not self.suspended and not self.destroyed
         self.world.Parent=nil
         for _,p in ipairs(self.panels) do p.gui.Enabled=false end
         if self.overlay then self.overlay.Enabled=not self.suspended and not self.destroyed end
+        self.nav.Visible=show;self.cardTabs.Visible=false
+        self.sheet.Visible=self.modalOpen and not self.suspended
+        self.handle.Visible=not self.modalOpen;self.menu.Visible=not self.modalOpen
+        options.content:HideLegacy()
         if show then
             if options.classicGui then options.classicGui.Enabled=false end
             self.openedAt=os.clock(); self.nextRefresh=nil; self.lastSample=nil
@@ -487,17 +545,21 @@ function HUD.mount(runtime, options)
                 local ok,reason=pcall(render,dt)
                 if not ok then
                     self:SetVisible(false)
-                    options.openClassic("interface")
+                    self:OpenFull("system",nil,"settings")
                     options.report("HUD: "..tostring(reason))
                 end
             end)
             actions:BindActionAtPriority(binding,onInput,false,2500,Enum.UserInputType.MouseButton1,Enum.UserInputType.Touch)
         end
-        self.handle.Text=self.visible and tr("СКРЫТЬ  ·  RB","HIDE  ·  RB") or tr("ПОКАЗАТЬ  ·  RB","SHOW  ·  RB")
+        self.handle.Text=self.visible and tr("СКРЫТЬ · RB","HIDE · RB") or tr("ПОКАЗАТЬ","SHOW · RB")
     end
     function self:SetVisible(value)
         if self.destroyed then return end
         self.visible=value==true
+        if not self.visible then
+            if self.modalTween then self.modalTween:Cancel()end
+            self.modalOpen=false;options.content:Close()
+        end
         options.env.RockBugHologramVisible=self.visible
         self:ApplyVisibility()
     end
@@ -507,7 +569,7 @@ function HUD.mount(runtime, options)
         self:ApplyVisibility()
     end
     connect(self.handle.Activated,function()self:SetVisible(not self.visible)end)
-    connect(self.menu.Activated,function()open(options.env.RockBugHologramLastMenu or "interface")end)
+    connect(self.menu.Activated,function()self:OpenFull("system",nil,"settings")end)
     connect(input.InputChanged,function(event)
         local key=event.UserInputType==Enum.UserInputType.Touch and event or event.UserInputType==Enum.UserInputType.MouseMovement and "mouse" or nil
         local pressed=key and self.pressed[key]

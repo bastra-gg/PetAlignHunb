@@ -14,7 +14,7 @@ bundle = begin + '\ndo (function()\nlocal Hologram = (function()\n' + module + '
 end)()
 local ok, reason = pcall(Hologram.mount, q, {
     player=j, env=n, classicGui=q.uiRoot, report=aP,
-    openClassic=function(tab)q.openClassicPanel(tab)end,
+    content=q.hologramContent,
 })
 if not ok then
     if q.hologram then pcall(function()q.hologram:Destroy()end)end
