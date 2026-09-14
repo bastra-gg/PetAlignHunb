@@ -1,4 +1,4 @@
--- RockBugHub TEST T48: gym-only auto machines + real manual takeover
+-- RockBugHub TEST T49: gym-only auto machines + real manual takeover
 local Players=game:GetService("Players")
 local player=Players.LocalPlayer
 if not player then return end
@@ -115,15 +115,11 @@ end
 
 local function typePriority(machine)
     local text=string.lower(table.concat({tostring(machine.kind or""),tostring(machine.name or""),tostring(machine.label or"")}," "))
-    if text:find("deadlift",1,true)or text:find("dead lift",1,true)then return 900 end
-    if text:find("bench",1,true)or text:find("bench press",1,true)then return 800 end
-    if text:find("bar lift",1,true)or text:find("barlift",1,true)or text:find("barbell",1,true)then return 700 end
-    if text:find(" lift",1,true)or text:find("lifting",1,true)or text:find("weight",1,true)then return 650 end
-    if text:find("squat",1,true)then return 500 end
-    if text:find("pull up",1,true)or text:find("pullup",1,true)or text:find("pull-up",1,true)then return 400 end
-    if text:find("boulder",1,true)then return 300 end
-    if text:find("treadmill",1,true)or text:find("tread",1,true)then return 200 end
-    return 100
+    -- User priority inside the chosen gym: Squat > Bench Press > Bar Lift > everything else.
+    if text:find("squat",1,true)then return 300 end
+    if text:find("bench",1,true)or text:find("bench press",1,true)then return 200 end
+    if text:find("bar lift",1,true)or text:find("barlift",1,true)or text:find("barbell",1,true)then return 100 end
+    return 0
 end
 
 local function sizePriority(machine)
