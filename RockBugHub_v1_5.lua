@@ -1,5 +1,5 @@
--- RockBugHub TEST bootstrap T51: FARM fixes + exact durability + stable card captions
-local VERSION="4.31HOLO-T51"
+-- RockBugHub TEST bootstrap T52: FARM fixes + exclusive direct boss chest claim
+local VERSION="4.31HOLO-T52"
 local CORE_URL="https://raw.githubusercontent.com/bastra-gg/PetAlignHunb/main/RockBugHub_v1_5_core.lua"
 local BOSS_PATCH_URL="https://raw.githubusercontent.com/bastra-gg/PetAlignHunb/main/RockBugHub_TEST_BossChestDirect.lua"
 local ROCK_PATCH_URL="https://raw.githubusercontent.com/bastra-gg/PetAlignHunb/main/RockBugHub_TEST_AdaptiveRocks.lua"
