@@ -79,14 +79,14 @@ end
 function node:GetGuiObjectsAtPosition()return self.hitObjects or {}end
 local Instance={}
 function Instance.new(class)
-    local o=setmetatable({ClassName=class,Name=class,DisplayOrder=0,TextSize=14,InputBegan=signal(),FocusLost=signal(),Activated=signal(),Active=class=="TextButton",Size=UDim2.fromOffset(100,100),Position=UDim2.fromOffset(0,0)},node)
+    local o=setmetatable({ClassName=class,Name=class,DisplayOrder=0,TextSize=14,InputBegan=signal(),FocusLost=signal(),Activated=signal(),MouseButton1Click=signal(),Active=class=="TextButton",Size=UDim2.fromOffset(100,100),Position=UDim2.fromOffset(0,0)},node)
     table.insert(objects,o);return o
 end
 local run={bindings={}}
 function run:BindToRenderStep(name,priority,callback)self.bindings[name]=callback end
 function run:UnbindFromRenderStep(name)self.bindings[name]=nil end
 function run:Step()for _,callback in pairs(self.bindings)do callback(1/60)end end
-local input={InputBegan=signal(),InputChanged=signal()}
+local input={InputBegan=signal(),InputChanged=signal(),InputEnded=signal()}
 function input:GetFocusedTextBox()return self.focus end
 local actions={bindings={}}
 function actions:BindActionAtPriority(name,callback)self.bindings[name]=callback end
