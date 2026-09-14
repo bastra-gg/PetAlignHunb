@@ -1,5 +1,5 @@
--- RockBugHub TEST bootstrap T46: FARM fixes kept + adaptive rocks refresh/manual fix
-local VERSION="4.31HOLO-T46"
+-- RockBugHub TEST bootstrap T47: FARM fixes + gym-first adaptive machines
+local VERSION="4.31HOLO-T47"
 local CORE_URL="https://raw.githubusercontent.com/bastra-gg/PetAlignHunb/main/RockBugHub_v1_5_core.lua"
 local BOSS_PATCH_URL="https://raw.githubusercontent.com/bastra-gg/PetAlignHunb/main/RockBugHub_TEST_BossChestDirect.lua"
 local ROCK_PATCH_URL="https://raw.githubusercontent.com/bastra-gg/PetAlignHunb/main/RockBugHub_TEST_AdaptiveRocks.lua"
