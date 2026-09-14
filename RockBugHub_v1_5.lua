@@ -1,5 +1,5 @@
--- RockBugHub TEST bootstrap T41: preserved T38 core + test patches
-local VERSION="4.31HOLO-T41"
+-- RockBugHub TEST bootstrap T42: preserved T38 core + test patches
+local VERSION="4.31HOLO-T42"
 local CORE_URL="https://raw.githubusercontent.com/bastra-gg/PetAlignHunb/main/RockBugHub_v1_5_core.lua"
 local BOSS_PATCH_URL="https://raw.githubusercontent.com/bastra-gg/PetAlignHunb/main/RockBugHub_TEST_BossChestDirect.lua"
 local ROCK_PATCH_URL="https://raw.githubusercontent.com/bastra-gg/PetAlignHunb/main/RockBugHub_TEST_AdaptiveRocks.lua"
