@@ -11,11 +11,11 @@ local function eventAt(p,b,touch)
  local x,y=screenPoint(p,b)
  return {UserInputType=touch and "Touch"or"MouseButton1",Position=Vector3.new(x,y)}
 end
-local binding="RockBugHologramT37_17"
 local function click(p,b,touch)
- local action=actions.bindings[binding];local e=eventAt(p,b,touch)
- assert(action(binding,"Begin",e)=="Sink")
- assert(action(binding,"End",e)=="Sink")
+ local e=eventAt(p,b,touch)
+ b.node.InputBegan:Fire(e)
+ input.InputEnded:Fire(e)
+ b.node.Activated:Fire(e)
 end
 check("mount provides four farm cards and permanently hides the old shell",function()
  step();assert(h.ready and #h.cards==4 and #h.panels==7 and not classic.Enabled and not n7.Visible and not n_.Visible)
@@ -115,29 +115,30 @@ check("all kill quick controls retain the existing adapters and stop works",func
 end)
 check("dragging away and back cancels mouse and touch clicks",function()
  for _,touch in ipairs({false,true})do
-  local e=eventAt(h.cards[1],h.cards[1].primary,touch);local initial=e.Position
-  local action=actions.bindings[binding];local before=runtime.leverRefs.bug.Get()
-  action(binding,"Begin",e)
+  local b=h.cards[1].primary;local e=eventAt(h.cards[1],b,touch);local initial=e.Position
+  local before=runtime.leverRefs.bug.Get();b.node.InputBegan:Fire(e)
   local movement=touch and e or {UserInputType="MouseMovement"};movement.Position=initial+Vector3.new(30,0,0);input.InputChanged:Fire(movement)
-  e.Position=initial;movement.Position=initial;input.InputChanged:Fire(movement);action(binding,"End",e)
+  e.Position=initial;movement.Position=initial;input.InputChanged:Fire(movement)
+  input.InputEnded:Fire(e);b.node.Activated:Fire(e)
   assert(runtime.leverRefs.bug.Get()==before)
  end
 end)
-check("opening animation, game UI, chat and full modal block hologram hits",function()
- h.openedAt=os.clock()+1;run:Step();local x,y=screenPoint(h.cards[1],h.cards[1].primary);assert(h:Hit(x,y)==nil);step()
- x,y=screenPoint(h.cards[1],h.cards[1].primary)
- playerGui.hitObjects={Instance.new("TextButton")};assert(h:Hit(x,y)==nil);playerGui.hitObjects={}
- input.focus={};assert(h:Hit(x,y)==nil);input.focus=nil
- guiService.MenuIsOpen=true;assert(h:Hit(x,y)==nil);guiService.MenuIsOpen=false
- h:OpenFull("bug");assert(h:Hit(x,y)==nil);h:CloseFull();step()
+check("opening animation, chat and full modal block native actions",function()
+ local b=h.cards[1].primary;local callback=b.callback;local calls=0;b.callback=function()calls+=1 end
+ h.openedAt=os.clock()+1;run:Step();b.node.Activated:Fire();assert(calls==0);step()
+ input.focus={};b.node.Activated:Fire();assert(calls==0);input.focus=nil
+ guiService.MenuIsOpen=true;b.node.Activated:Fire();assert(calls==0);guiService.MenuIsOpen=false
+ h:OpenFull("bug");b.node.Activated:Fire();assert(calls==0);h:CloseFull();step()
+ b.node.Activated:Fire();assert(calls==1);b.callback=callback
 end)
 check("resize, respawn and close camera invalidate held clicks",function()
  for _,kind in ipairs({"resize","respawn","camera"})do
-  local e=eventAt(h.cards[1],h.cards[1].primary);local action=actions.bindings[binding];local before=runtime.leverRefs.bug.Get()
-  action(binding,"Begin",e)
+  local b=h.cards[1].primary;local e=eventAt(h.cards[1],b);local before=runtime.leverRefs.bug.Get()
+  b.node.InputBegan:Fire(e)
   if kind=="resize"then camera.ViewportSize=Vector3.new(390,844)elseif kind=="respawn"then player.Character=nil else camera.CFrame=CFrame.new(0,0,0.5)end
   step();camera.ViewportSize=Vector3.new(1536,864);player.Character=character;camera.CFrame=CFrame.new(0,0,20);step()
-  assert(action(binding,"End",e)=="Pass" and runtime.leverRefs.bug.Get()==before)
+  input.InputEnded:Fire(e);b.node.Activated:Fire(e);assert(runtime.leverRefs.bug.Get()==before)
+  click(h.cards[1],b);assert(runtime.leverRefs.bug.Get()~=before)
  end
 end)
 check("hidden and first-person settings use the new full window",function()
@@ -220,31 +221,34 @@ check("all overview panels render as opaque screen layers above gain popups",fun
  for _,p in ipairs(h.panels)do
   assert(p.gui.ClassName=="ScreenGui" and p.gui.DisplayOrder==1000009 and p.gui.DisplayOrder<h.overlay.DisplayOrder)
   assert(p.gui.IgnoreGuiInset and p.gui.ScreenInsets=="None" and p.gui.ClipToDeviceSafeArea==false)
-  if p.id~="title"then assert(p.frame.ClassName=="TextButton" and p.frame.Active and p.frame.BackgroundTransparency==0)else assert(not p.frame.Active)end
+  assert(p.frame.ClassName=="Frame" and not p.frame.Active)
+  if p.id~="title"then
+   assert(p.frame.BackgroundTransparency==0 and p.shield.Active and p.shield.Parent==p.frame)
+   for _,b in ipairs(p.buttons)do assert(b.node.Parent==p.frame and b.node.ZIndex>p.shield.ZIndex)end
+  else assert(p.shield.destroyed)end
   assert(p.frame.Parent==p.screenRoot and p.screenRoot.Parent==p.gui)
  end
  for _,o in ipairs(h.surfaces:GetDescendants())do assert(o.ClassName~="SurfaceGui")end
 end)
-check("covered game controls do not veto the visible hub button",function()
+check("native activation does not depend on manual coordinates or GUI enumeration",function()
  local group=h.group;h:SelectGroup("farm");step()
- local panel=h.cards[1];local x,y=screenPoint(panel,panel.primary)
- local gameLayer=Instance.new("ScreenGui");gameLayer.Parent=playerGui;gameLayer.DisplayOrder=50
- local gameButton=Instance.new("TextButton");gameButton.Parent=gameLayer
- playerGui.hitObjects={panel.frame,gameButton}
- assert(h:Hit(x,y)==panel.primary)
- local old=runtime.leverRefs.bug.Get();click(panel,panel.primary)
+ local oldQuery=playerGui.GetGuiObjectsAtPosition
+ playerGui.GetGuiObjectsAtPosition=function()error("Native GUI must resolve the target")end
+ local b=h.cards[1].primary;local old=runtime.leverRefs.bug.Get()
+ b.node.Activated:Fire({UserInputType="Touch",Position=Vector3.new(-999,-999)})
  assert(runtime.leverRefs.bug.Get()~=old)
- -- A covered margin has no automation action; the native shield remains the UI target.
- assert(not h:Hit(panel.bounds.x+2,panel.bounds.y+2))
- playerGui.hitObjects={};gameLayer:Destroy();h:SelectGroup(group);step()
+ b.node.Activated:Fire();assert(runtime.leverRefs.bug.Get()==old)
+ b.node.Activated:Fire({UserInputType="Gamepad1"});assert(runtime.leverRefs.bug.Get()~=old)
+ playerGui.GetGuiObjectsAtPosition=oldQuery;h:SelectGroup(group);step()
 end)
-check("native controls and higher-priority dialogs still block overview actions",function()
- local panel=h.cards[1];local x,y=screenPoint(panel,panel.primary)
- playerGui.hitObjects={h.groupButtons.farm,panel.frame};assert(h:Hit(x,y)==nil)
- local dialog=Instance.new("ScreenGui");dialog.Parent=playerGui;dialog.DisplayOrder=h.overlay.DisplayOrder+1
- local control=Instance.new("TextButton");control.Parent=dialog
- playerGui.hitObjects={control,panel.frame};assert(h:Hit(x,y)==nil)
- playerGui.hitObjects={};dialog:Destroy()
+check("background shield and release events cannot trigger automation",function()
+ local b=h.cards[1].primary;local callback=b.callback;local calls=0;b.callback=function()calls+=1 end
+ local e=eventAt(h.cards[1],b,true)
+ h.cards[1].shield.Activated:Fire(e);input.InputBegan:Fire(e);input.InputEnded:Fire(e)
+ b.node.MouseButton1Click:Fire();assert(calls==0)
+ b.node.Activated:Fire(e);assert(calls==1)
+ assert(next(actions.bindings)==nil)
+ b.callback=callback
 end)
 check("projection follows the character, camera and FOV using viewport coordinates",function()
  local oldRoot,oldCamera,oldFOV,oldGroup=root.Position,camera.CFrame,camera.FieldOfView,h.group
@@ -255,7 +259,11 @@ check("projection follows the character, camera and FOV using viewport coordinat
    local point=camera:WorldToViewportPoint(panel.part.CFrame.Position)
    assert(math.abs(panel.screenRoot.Position.X.Offset-point.X)<0.001 and math.abs(panel.screenRoot.Position.Y.Offset-point.Y)<0.001)
    assert(math.abs(panel.bounds.w-panel.cw*panel.scale.Scale)<0.001 and math.abs(panel.bounds.h-panel.ch*panel.scale.Scale)<0.001)
-   for _,button in ipairs(panel.buttons)do local x,y=screenPoint(panel,button);assert(h:Hit(x,y)==button)end
+   for _,button in ipairs(panel.buttons)do
+    local x,y=screenPoint(panel,button)
+    assert(x>=panel.bounds.x and x<=panel.bounds.x+panel.bounds.w and y>=panel.bounds.y and y<=panel.bounds.y+panel.bounds.h)
+    assert(h:CanActivateButton(button))
+   end
   end end
  end
  camera.ViewportSize=Vector3.new(1536,864);root.Position=oldRoot;camera.CFrame=oldCamera;camera.FieldOfView=oldFOV;h:SelectGroup(oldGroup);step()
@@ -266,34 +274,62 @@ check("hiding, missing character and chest collection disable every projected la
  player.Character=character;step();h:SetChestInput(true);for _,panel in ipairs(h.panels)do assert(not panel.gui.Enabled)end
  h:SetChestInput(false);step();assert(h.cards[1].gui.Enabled)
 end)
-check("native mobile activation works even when the GUI consumes the context action",function()
- local group=h.group;h:SelectGroup("farm");step()
- local panel=h.cards[1];local b=panel.primary;local e=eventAt(panel,b,true)
- playerGui.hitObjects={b.node,panel.frame}
- local before=runtime.leverRefs.bug.Get();b.node.InputBegan:Fire(e);b.node.Activated:Fire(e)
- assert(runtime.leverRefs.bug.Get()~=before)
- b.node.Activated:Fire(e);assert(runtime.leverRefs.bug.Get()~=before)
- playerGui.hitObjects={};h:SelectGroup(group);step()
-end)
-check("native and context routes toggle only once regardless of release ordering",function()
- local group=h.group;h:SelectGroup("farm");step()
- for _,nativeFirst in ipairs({false,true})do
-  local panel=h.cards[1];local b=panel.primary;local e=eventAt(panel,b,true);local action=actions.bindings[binding]
-  local before=runtime.leverRefs.bug.Get()
-  action(binding,"Begin",e);b.node.InputBegan:Fire(e)
-  if nativeFirst then b.node.Activated:Fire(e);action(binding,"End",e)
-  else action(binding,"End",e);b.node.Activated:Fire(e)end
-  assert(runtime.leverRefs.bug.Get()~=before)
+check("all overview quick actions and expansion buttons use native activation",function()
+ local saved=h.group
+ for _,group in ipairs({"farm","growth","kill"})do
+  h:SelectGroup(group);step()
+  for _,card in ipairs(h.cards)do
+   local def=HUD.groups[group].cards[card.index]
+   if def.key then
+    local ref=runtime.leverRefs
+    for component in def.key:gmatch("[^.]+")do ref=ref[component]end
+    local before=ref.Get();card.primary.node.Activated:Fire();assert(ref.Get()~=before)
+    card.primary.node.Activated:Fire();assert(ref.Get()==before)
+   else
+    card.primary.node.Activated:Fire()
+    if def.actionTab then assert(h.modalOpen and h.modalTab==def.actionTab);h:CloseFull();step()end
+   end
+   card.more.node.Activated:Fire();assert(h.modalOpen and h.modalTab==def.tab)
+   h.close.Activated:Fire();step()
+  end
  end
- h:SelectGroup(group);step()
+ h:SelectGroup(saved);step()
 end)
-check("native drags and hide invalidate an activation without a context callback",function()
- local panel=h.cards[1];local b=panel.primary;local e=eventAt(panel,b,true);local calls=0;local callback=b.callback
+check("touch and mouse release ordering invokes exactly one action",function()
+ local b=h.cards[1].primary;local callback=b.callback;local calls=0;b.callback=function()calls+=1 end
+ for _,touch in ipairs({false,true})do for _,nativeFirst in ipairs({false,true})do
+  local before=calls;local e=eventAt(h.cards[1],b,touch)
+  b.node.InputBegan:Fire(e)
+  if nativeFirst then b.node.Activated:Fire(e);input.InputEnded:Fire(e)
+  else input.InputEnded:Fire(e);b.node.Activated:Fire(e)end
+  b.node.MouseButton1Click:Fire();assert(calls==before+1)
+ end end
+ b.callback=callback
+end)
+check("hide and show cancel a held touch but the next tap still works",function()
+ local b=h.cards[1].primary;local e=eventAt(h.cards[1],b,true);local calls=0;local callback=b.callback
  b.callback=function()calls+=1 end
- b.node.InputBegan:Fire(e);local position=e.Position;e.Position=position+Vector3.new(40,0,0);input.InputChanged:Fire(e)
- e.Position=position;input.InputChanged:Fire(e);b.node.Activated:Fire(e);assert(calls==0)
- b.node.InputBegan:Fire(e);h:SetVisible(false);b.node.Activated:Fire(e);assert(calls==0)
- b.callback=callback;h:SetVisible(true);step()
+ b.node.InputBegan:Fire(e);h:SetVisible(false);h:SetVisible(true);step()
+ input.InputEnded:Fire(e);b.node.Activated:Fire(e);assert(calls==0)
+ click(h.cards[1],b,true);assert(calls==1)
+ b.callback=callback
+end)
+check("moving another finger does not cancel a button tap",function()
+ local b=h.cards[1].primary;local e=eventAt(h.cards[1],b,true);local calls=0;local callback=b.callback
+ b.callback=function()calls+=1 end
+ b.node.InputBegan:Fire(e)
+ input.InputChanged:Fire({UserInputType="Touch",Position=Vector3.new(-999,-999)})
+ input.InputEnded:Fire(e);b.node.Activated:Fire(e);assert(calls==1)
+ b.callback=callback
+end)
+check("teal panel colors are not multiplied by a dark base",function()
+ for _,p in ipairs(h.cards)do
+  local base=p.frame.BackgroundColor3;assert(base.R==1 and base.G==1 and base.B==1)
+  local gradient=p.frame:FindFirstChildOfClass("UIGradient")
+  assert(gradient and gradient.Color[1].G>0.3 and gradient.Color[2].B>0.25)
+  assert(p.primary.node.BackgroundTransparency<0.85 and p.primary.text.TextColor3.G>0.9)
+ end
+ assert(h.window.BackgroundColor3.B>0.3 and h.handle.BackgroundColor3.B>0.3)
 end)
 check("destroy cleans native/full/world UI and repeat launch stays hidden",function()
  h:SetVisible(false);local connections=table.clone(h.connections);local tabs=table.clone(h.modalTabs)
