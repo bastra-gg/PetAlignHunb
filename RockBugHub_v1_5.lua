@@ -21,12 +21,48 @@ if type(runtime)=="table"then runtime.testVersion=VERSION end
 local ok,problem=pcall(function()run(PATCH_URL,"direct chest patch")end)
 if not ok then warn("[RockBugHub TEST "..VERSION.."] chest patch failed: "..tostring(problem))end
 pcall(function()
-    local pg=game:GetService("Players").LocalPlayer:FindFirstChildOfClass("PlayerGui")
-    if not pg then return end
-    for _,obj in ipairs(pg:GetDescendants())do
-        if (obj:IsA("TextLabel")or obj:IsA("TextButton"))and type(obj.Text)=="string"and obj.Text:find("4.31HOLO%-T38")then
-            obj.Text=obj.Text:gsub("4.31HOLO%-T38",VERSION)
-        end
-    end
+    if type(runtime)~="table"or type(runtime.layoutUI)~="table"then return end
+    local page=runtime.layoutUI.interfacePage
+    if not page or not page.Parent then return end
+    local old=page:FindFirstChild("TestBuildVersionRow")
+    if old then old:Destroy()end
+    local row=Instance.new("Frame")
+    row.Name="TestBuildVersionRow"
+    row.Size=UDim2.new(1,-4,0,28)
+    row.LayoutOrder=999
+    row.BackgroundColor3=Color3.fromRGB(24,25,32)
+    row.BackgroundTransparency=0.22
+    row.BorderSizePixel=0
+    row.Parent=page
+    local corner=Instance.new("UICorner")
+    corner.CornerRadius=UDim.new(0,8)
+    corner.Parent=row
+    local stroke=Instance.new("UIStroke")
+    stroke.Color=Color3.fromRGB(142,118,255)
+    stroke.Transparency=0.72
+    stroke.Thickness=1
+    stroke.Parent=row
+    local caption=Instance.new("TextLabel")
+    caption.Name="Caption"
+    caption.BackgroundTransparency=1
+    caption.Position=UDim2.fromOffset(10,0)
+    caption.Size=UDim2.new(0.45,-10,1,0)
+    caption.Font=Enum.Font.GothamMedium
+    caption.TextSize=9
+    caption.TextXAlignment=Enum.TextXAlignment.Left
+    caption.TextColor3=Color3.fromRGB(145,147,160)
+    caption.Text="TEST BUILD"
+    caption.Parent=row
+    local value=Instance.new("TextLabel")
+    value.Name="Version"
+    value.BackgroundTransparency=1
+    value.Position=UDim2.new(0.45,0,0,0)
+    value.Size=UDim2.new(0.55,-10,1,0)
+    value.Font=Enum.Font.GothamBold
+    value.TextSize=9
+    value.TextXAlignment=Enum.TextXAlignment.Right
+    value.TextColor3=Color3.fromRGB(194,184,255)
+    value.Text=VERSION
+    value.Parent=row
 end)
 return runtime
