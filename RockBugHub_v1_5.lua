@@ -1,5 +1,5 @@
--- RockBugHub TEST bootstrap T48: FARM fixes + gym-only machine controller
-local VERSION="4.31HOLO-T48"
+-- RockBugHub TEST bootstrap T49: FARM fixes + gym-only machine controller
+local VERSION="4.31HOLO-T49"
 local CORE_URL="https://raw.githubusercontent.com/bastra-gg/PetAlignHunb/main/RockBugHub_v1_5_core.lua"
 local BOSS_PATCH_URL="https://raw.githubusercontent.com/bastra-gg/PetAlignHunb/main/RockBugHub_TEST_BossChestDirect.lua"
 local ROCK_PATCH_URL="https://raw.githubusercontent.com/bastra-gg/PetAlignHunb/main/RockBugHub_TEST_AdaptiveRocks.lua"
