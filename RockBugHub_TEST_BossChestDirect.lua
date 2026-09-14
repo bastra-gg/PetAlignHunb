@@ -1,5 +1,5 @@
--- RockBugHub TEST direct Boss Chest patch v2
--- Physical ProximityPrompt claiming + lightweight confirmed-loot report.
+-- RockBugHub TEST direct Boss Chest patch v3
+-- Physical ProximityPrompt claiming + full per-victory loot capture.
 local Players=game:GetService("Players")
 local lp=Players.LocalPlayer
 while not lp do task.wait()lp=Players.LocalPlayer end
@@ -9,11 +9,13 @@ local q=env.RockBugRuntime
 if type(q)~="table"then error("RockBugHub TEST chest patch: runtime not found",0)end
 if env.RockBugDirectChestAddon and type(env.RockBugDirectChestAddon.Stop)=="function"then pcall(env.RockBugDirectChestAddon.Stop)end
 
-local state={alive=true,nextAt=0,attempts=0,lastPrompt=nil,lastChest=nil,claimCount=0,lastClaimAt=nil,lastClaimChest=nil,lastLootText=nil,lastLootAt=nil,awaitingClaim=false,pendingChest=nil,pendingAt=nil,captureToken=0,candidates={}}
+local state={alive=true,nextAt=0,attempts=0,lastPrompt=nil,lastChest=nil,claimCount=0,lastClaimAt=nil,lastClaimChest=nil,lastLootText=nil,lastLootAt=nil,awaitingClaim=false,pendingChest=nil,pendingAt=nil,captureToken=0,candidates={},captureDone=true}
 env.RockBugDirectChestAddon=state
 q.directBossChestAddon=state
 q.bossLootReport=q.bossLootReport or nil
 q.bossLootCount=q.bossLootCount or 0
+q.bossLootItems=q.bossLootItems or{}
+q.bossLootItemCount=q.bossLootItemCount or 0
 
 local function low(v)return string.lower(tostring(v or""))end
 local tiers={
@@ -104,7 +106,7 @@ local function press(prompt)
  return ok
 end
 
--- Only runs around a chest press, never continuously.
+-- Only scans PlayerGui for a short window after the chest press.
 local function visible(obj)
  if not obj:IsA("TextLabel")and not obj:IsA("TextButton")then return false end
  if not obj.Visible or obj.TextTransparency>=1 then return false end
@@ -151,6 +153,7 @@ local function startCapture()
  local token=state.captureToken
  local before=snapshot()
  state.candidates={}
+ state.captureDone=false
  task.spawn(function()
   local seen={} local best={}
   for _=1,8 do
@@ -166,18 +169,28 @@ local function startCapture()
   end
   table.sort(best,function(a,b)if a.score~=b.score then return a.score>b.score end return #a.text<#b.text end)
   local out={}
-  for i=1,math.min(3,#best)do out[#out+1]=best[i].text end
-  if token==state.captureToken then state.candidates=out end
+  -- Keep the whole reward set for one victory. Hard cap only protects against a broken GUI flood.
+  for i=1,math.min(20,#best)do out[#out+1]=best[i].text end
+  if token==state.captureToken then state.candidates=out state.captureDone=true end
  end)
 end
 local function confirmClaim()
+ local deadline=os.clock()+0.55
+ while state.alive and not state.captureDone and os.clock()<deadline do task.wait(0.05)end
  state.claimCount+=1
  state.lastClaimAt=os.clock()
  state.lastClaimChest=state.pendingChest or state.lastChest or"Boss Chest"
- local text=#(state.candidates or{})>0 and table.concat(state.candidates," • ")or state.lastClaimChest
+ local items={}
+ for i,v in ipairs(state.candidates or{})do items[i]=v end
+ local text=#items>0 and table.concat(items," • ")or state.lastClaimChest
  state.lastLootText=text state.lastLootAt=state.lastClaimAt
- q.bossLootReport=text q.bossLootChest=state.lastClaimChest q.bossLootCount=state.claimCount q.bossLootAt=state.lastClaimAt
- state.awaitingClaim=false state.pendingChest=nil state.pendingAt=nil state.candidates={}
+ q.bossLootReport=text
+ q.bossLootChest=state.lastClaimChest
+ q.bossLootCount=state.claimCount
+ q.bossLootAt=state.lastClaimAt
+ q.bossLootItems=items
+ q.bossLootItemCount=#items
+ state.awaitingClaim=false state.pendingChest=nil state.pendingAt=nil state.candidates={} state.captureDone=true
 end
 
 function state.TryOnce()
