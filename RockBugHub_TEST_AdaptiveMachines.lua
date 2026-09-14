@@ -1,4 +1,4 @@
--- RockBugHub TEST T42: low-overhead strength-adaptive machine selection
+-- RockBugHub TEST T47: gym-first adaptive machines + manual override
 local Players=game:GetService("Players")
 local player=Players.LocalPlayer
 if not player then return end
@@ -12,19 +12,10 @@ if env.RockBugAdaptiveMachines and type(env.RockBugAdaptiveMachines.Destroy)=="f
     pcall(env.RockBugAdaptiveMachines.Destroy)
 end
 
-local patch={alive=true,lastStrength=nil,lastMachineId=nil,switching=false,connections={},candidates={},nextThreshold=nil,catalogCount=-1}
+local patch={alive=true,auto=true,applying=false,switching=false,lastStrength=nil,lastAutoMachineId=nil,lastSelectedId=nil,nextThreshold=nil,catalogCount=-1,candidates={},connections={},strengthConnection=nil,originalPrimary=nil,primaryButton=nil}
 env.RockBugAdaptiveMachines=patch
 runtime.adaptiveMachine=true
 
-local function disconnectAll()
-    for _,c in ipairs(patch.connections)do pcall(function()c:Disconnect()end)end
-    patch.connections={}
-end
-local function connect(signal,fn)
-    local c=signal:Connect(fn)
-    table.insert(patch.connections,c)
-    return c
-end
 local function compact(value)
     value=tonumber(value)
     if not value then return "—" end
@@ -37,6 +28,7 @@ local function compact(value)
     end
     return tostring(math.floor(value+0.5))
 end
+
 local function parseNumber(value)
     if type(value)=="number"then return value end
     local s=tostring(value or""):lower():gsub("%s+","")
@@ -48,13 +40,10 @@ local function parseNumber(value)
     else n=n:gsub(",","")end
     local num=tonumber(n)
     if not num then return nil end
-    local mul={k=1e3,m=1e6,b=1e9,t=1e12,q=1e15}
-    return num*(mul[suffix]or 1)
+    return num*(({k=1e3,m=1e6,b=1e9,t=1e12,q=1e15})[suffix]or 1)
 end
 
--- Use the counter the base script already found. No repeated GetDescendants scans.
 local strengthCounter=nil
-local strengthConnection=nil
 local function findStrengthCounter()
     local c=runtime.sessionStrengthCounter
     if c and c.Parent and c:IsA("ValueBase")then return c end
@@ -70,16 +59,18 @@ local function findStrengthCounter()
     return nil
 end
 local function readStrength()
-    local c=strengthCounter
-    if c and c.Parent then
-        local ok,v=pcall(function()return parseNumber(c.Value)end)
+    if strengthCounter and strengthCounter.Parent then
+        local ok,v=pcall(function()return parseNumber(strengthCounter.Value)end)
         if ok and v and v>=0 then return v end
     end
     local v=parseNumber(runtime.sessionStrengthCurrent)
     return v and math.max(0,v)or nil
 end
 
--- Priority requested by the user. Requirement only decides whether the machine is accessible.
+local function isGym(machine)
+    local zone=string.lower(tostring(machine and machine.zone or""))
+    return zone:find("gym",1,true)~=nil or zone:find("зал",1,true)~=nil
+end
 local function typePriority(machine)
     local text=string.lower(table.concat({tostring(machine.kind or""),tostring(machine.name or""),tostring(machine.label or"")}," "))
     if text:find("deadlift",1,true)or text:find("dead lift",1,true)then return 900 end
@@ -99,52 +90,55 @@ local function sizePriority(machine)
     if v:find("tiny",1,true)or v:find("small",1,true)or v:find("mini",1,true)then return 10 end
     return tonumber(machine.variantOrder)or tonumber(machine.sizeScore)or 0
 end
-local function better(a,b)
-    if not b then return true end
-    local ap,bp=typePriority(a),typePriority(b)
-    if ap~=bp then return ap>bp end
-    local ar,br=tonumber(a.requirement)or 0,tonumber(b.requirement)or 0
-    if ar~=br then return ar>br end
-    local as,bs=sizePriority(a),sizePriority(b)
-    if as~=bs then return as>bs end
-    local az,bz=tonumber(a.zoneOrder)or 0,tonumber(b.zoneOrder)or 0
-    if az~=bz then return az>bz end
-    return tostring(a.id or"")<tostring(b.id or"")
-end
 local function machineName(machine)
     if not machine then return "—" end
     local base=tostring(machine.label or machine.name or machine.kind or"Тренажёр")
-    local variant=tostring(machine.variant or"")
+    local variant=tostring(machine.variant or machine.explicitVariant or"")
     if variant~=""and not string.lower(base):find(string.lower(variant),1,true)then base=base.." • "..variant end
     return base
 end
+local function machineId(machine)return machine and tostring(machine.id or"")or nil end
 
--- Cache the already-scanned machine catalog. This never walks workspace itself.
 local function rebuildCandidates()
     local list={}
     for _,machine in ipairs(runtime.machineCatalog or{})do
-        if machine and machine.seat and machine.seat.Parent then list[#list+1]=machine end
+        if machine and machine.seat and machine.seat.Parent and isGym(machine)then list[#list+1]=machine end
     end
     patch.candidates=list
     patch.catalogCount=#(runtime.machineCatalog or{})
 end
-local function requestCatalogOnce(force)
-    if type(runtime.refreshMachineCatalog)=="function"and not runtime.machineScanInFlight then
-        pcall(runtime.refreshMachineCatalog,force==true)
-    end
+local function requestCatalog(force)
+    if type(runtime.refreshMachineCatalog)=="function"and not runtime.machineScanInFlight then pcall(runtime.refreshMachineCatalog,force==true)end
 end
 local function ensureCatalog()
     local count=#(runtime.machineCatalog or{})
-    if count==0 then requestCatalogOnce(false)return false end
+    if count==0 then requestCatalog(false)return false end
     if count~=patch.catalogCount then rebuildCandidates()end
     return #patch.candidates>0
 end
+
+-- First choose the highest gym the player can actually use. Only then choose
+-- the best machine inside that gym. Starter/Tiny/Beach machines never win auto mode.
 local function bestMachineFor(strength)
+    local bestZoneOrder=nil
+    local bestZone=nil
+    for _,machine in ipairs(patch.candidates)do
+        local req=tonumber(machine.requirement)or 0
+        if req<=strength then
+            local zo=tonumber(machine.zoneOrder)or 0
+            if bestZoneOrder==nil or zo>bestZoneOrder then bestZoneOrder=zo bestZone=machine.zone end
+        end
+    end
+    if not bestZone then return nil end
     local best=nil
     for _,machine in ipairs(patch.candidates)do
-        if machine.seat and machine.seat.Parent then
-            local req=tonumber(machine.requirement)or 0
-            if req<=strength and better(machine,best)then best=machine end
+        if machine.zone==bestZone and (tonumber(machine.requirement)or 0)<=strength then
+            if not best then best=machine else
+                local ap,bp=typePriority(machine),typePriority(best)
+                local ar,br=tonumber(machine.requirement)or 0,tonumber(best.requirement)or 0
+                local as,bs=sizePriority(machine),sizePriority(best)
+                if ap>bp or (ap==bp and (ar>br or (ar==br and as>bs)))then best=machine end
+            end
         end
     end
     return best
@@ -158,131 +152,173 @@ local function computeNextThreshold(strength)
     patch.nextThreshold=threshold
 end
 
+local function refreshUI()
+    if type(runtime.refreshMachineUI)=="function"then pcall(runtime.refreshMachineUI)end
+    local holo=runtime.hologram
+    if type(holo)~="table"or holo.destroyed or holo.group~="farm"then return end
+    local card=type(holo.cards)=="table"and holo.cards[2]or nil
+    if not card then return end
+    local ru=runtime.language~="en"
+    local selected=runtime.selectedMachine
+    local strength=runtime.adaptiveMachineStrength or readStrength()
+    if card.primary and card.primary.text then card.primary.text.Text=ru and"Автотренажёр"or"Auto machine"end
+    if card.more and card.more.text then card.more.text.Text=ru and"Залы и тренажёры  →"or"Gyms & machines  →"end
+    if card.hint then
+        if patch.auto then
+            local zone=selected and tostring(selected.zone or"")or"—"
+            card.hint.Text=strength and((ru and"Сила: "or"Strength: ")..compact(strength).."  •  "..zone.." • "..machineName(selected))or(ru and"Сила не найдена"or"Strength not found")
+        else
+            card.hint.Text=(ru and"Вручную: "or"Manual: ")..machineName(selected)
+        end
+    end
+end
+
+local function chooseBest(force,strength)
+    if not patch.alive or not patch.auto then return nil,false end
+    if not ensureCatalog()then
+        runtime.adaptiveMachineStatus=runtime.language=="en"and"Searching gyms..."or"Ищу залы..."
+        return nil,false
+    end
+    strength=strength or readStrength()
+    runtime.adaptiveMachineStrength=strength
+    if strength==nil then runtime.adaptiveMachineStatus=runtime.language=="en"and"Strength not found"or"Сила не найдена"return nil,false end
+    local best=bestMachineFor(strength)
+    if not best then
+        runtime.adaptiveMachineStatus=(runtime.language=="en"and"Strength "or"Сила ")..compact(strength)..(runtime.language=="en"and" • no accessible gym machine"or" • в залах нет доступного тренажёра")
+        computeNextThreshold(strength) refreshUI() return nil,false
+    end
+    local changed=force or machineId(runtime.selectedMachine)~=machineId(best)
+    patch.applying=true
+    runtime.selectedMachine=best
+    runtime.machineZone=best.zone
+    patch.lastAutoMachineId=machineId(best)
+    patch.lastSelectedId=patch.lastAutoMachineId
+    patch.lastStrength=strength
+    runtime.adaptiveMachineName=machineName(best)
+    runtime.adaptiveMachineRequirement=tonumber(best.requirement)or 0
+    runtime.adaptiveMachineStatus=(runtime.language=="en"and"Strength "or"Сила ")..compact(strength).." • "..tostring(best.zone).." • "..machineName(best)
+    computeNextThreshold(strength)
+    patch.applying=false
+    refreshUI()
+    return best,changed
+end
+
 local machineRef=runtime.leverRefs and runtime.leverRefs.machineFarm
 local originalSet=machineRef and machineRef.Set or nil
 local function switchIfNeeded(best,changed)
-    if not changed or not best or not runtime.machineActive or patch.switching then return end
+    if not patch.auto or not changed or not best or not runtime.machineActive or patch.switching then return end
     if runtime.machineAttachInFlight or runtime.networkPaused or runtime.fuseSession or runtime.bossRestorePending then return end
     patch.switching=true
     task.spawn(function()
         local wanted=best
         if type(runtime.stopMachineFarm)=="function"then pcall(runtime.stopMachineFarm,nil)
         elseif originalSet then pcall(originalSet,false,false)end
-        runtime.selectedMachine=wanted
-        runtime.machineZone=wanted.zone
+        patch.applying=true runtime.selectedMachine=wanted runtime.machineZone=wanted.zone patch.applying=false
         task.wait(0.18)
-        if patch.alive and runtime.alive and originalSet and wanted.seat and wanted.seat.Parent then pcall(originalSet,true,false)end
+        if patch.alive and runtime.alive and patch.auto and originalSet and wanted.seat and wanted.seat.Parent then pcall(originalSet,true,false)end
         patch.switching=false
     end)
 end
-local function chooseBest(force,strength)
-    if not patch.alive or not ensureCatalog()then
-        runtime.adaptiveMachineStatus=runtime.language=="en"and"Searching for machines..."or"Ищу тренажёры..."
-        return nil,false
-    end
-    strength=strength or readStrength()
-    runtime.adaptiveMachineStrength=strength
-    if strength==nil then
-        runtime.adaptiveMachineStatus=runtime.language=="en"and"Strength not found"or"Сила не найдена"
-        return nil,false
-    end
-    local best=bestMachineFor(strength)
-    if not best then
-        runtime.adaptiveMachineStatus=(runtime.language=="en"and"Strength "or"Сила ")..compact(strength)..(runtime.language=="en"and" • no accessible machine"or" • доступный тренажёр не найден")
-        computeNextThreshold(strength)
-        return nil,false
-    end
-    local changed=force or not runtime.selectedMachine or runtime.selectedMachine.id~=best.id
-    runtime.selectedMachine=best
-    runtime.machineZone=best.zone
-    runtime.adaptiveMachineName=machineName(best)
-    runtime.adaptiveMachineRequirement=tonumber(best.requirement)or 0
-    runtime.adaptiveMachineStatus=(runtime.language=="en"and"Strength "or"Сила ")..compact(strength).." • "..machineName(best)
-    patch.lastStrength=strength
-    patch.lastMachineId=best.id
-    computeNextThreshold(strength)
-    if changed and type(runtime.refreshMachineUI)=="function"then pcall(runtime.refreshMachineUI)end
-    return best,changed
-end
 
 local function onStrengthChanged()
-    if not patch.alive then return end
+    if not patch.alive or not patch.auto then return end
     local strength=readStrength()
     if strength==nil then return end
     runtime.adaptiveMachineStrength=strength
-    -- Most strength gains do nothing: only recalculate when a machine threshold is crossed.
     if patch.lastStrength==nil or strength<patch.lastStrength or (patch.nextThreshold and strength>=patch.nextThreshold)then
         local best,changed=chooseBest(false,strength)
         switchIfNeeded(best,changed)
-    else
-        patch.lastStrength=strength
-    end
+    else patch.lastStrength=strength end
 end
 local function bindStrengthCounter()
     local current=findStrengthCounter()
     if current==strengthCounter then return end
-    if strengthConnection then pcall(function()strengthConnection:Disconnect()end)strengthConnection=nil end
+    if patch.strengthConnection then pcall(function()patch.strengthConnection:Disconnect()end)patch.strengthConnection=nil end
     strengthCounter=current
-    if current then
-        strengthConnection=current:GetPropertyChangedSignal("Value"):Connect(onStrengthChanged)
-        table.insert(patch.connections,strengthConnection)
-    end
+    if current then patch.strengthConnection=current:GetPropertyChangedSignal("Value"):Connect(onStrengthChanged)end
 end
 
+-- Detailed/manual machine toggle respects manual selection. It no longer silently
+-- replaces a manually chosen machine with the old automatic one.
 if machineRef and type(originalSet)=="function"then
     machineRef.Set=function(nextValue,silent)
-        if nextValue then
+        if nextValue and patch.auto then
             bindStrengthCounter()
-            local best=chooseBest(true)
-            if not best then requestCatalogOnce(true)task.wait(0.15)chooseBest(true)end
+            local best=chooseBest(false)
+            if not best then requestCatalog(true)task.wait(0.15)chooseBest(false)end
         end
         return originalSet(nextValue,silent)
     end
 end
 
-local function applyHologramUI()
-    local holo=runtime.hologram
-    if type(holo)~="table"or holo.destroyed or holo.group~="farm"then return end
-    local card=type(holo.cards)=="table"and holo.cards[2]or nil
-    if not card then return end
-    local ru=runtime.language~="en"
-    local best=runtime.selectedMachine
-    local strength=runtime.adaptiveMachineStrength or readStrength()
-    if card.primary and card.primary.text then card.primary.text.Text=ru and"Автотренажёр"or"Auto machine"end
-    if card.more and card.more.text then card.more.text.Text=(ru and"Лучший: "or"Best: ")..machineName(best).."  →"end
-    if card.hint then card.hint.Text=strength and((ru and"Сила: "or"Strength: ")..compact(strength).."  •  "..machineName(best))or(ru and"Сила не найдена"or"Strength not found")end
+local function setAuto(value)
+    patch.auto=value==true
+    runtime.adaptiveMachineAuto=patch.auto
+    if patch.auto then
+        bindStrengthCounter()
+        local best=chooseBest(true)
+        if not best then requestCatalog(true)end
+    else refreshUI()end
 end
 
--- Slow housekeeping only. No RenderStepped/Heartbeat loop and no periodic workspace scan.
+-- The MAIN card is the explicit automatic mode. Clicking it re-enables gym auto.
+-- Manual selection in the detailed page disables auto and remains authoritative.
+local function bindMainCard()
+    local holo=runtime.hologram
+    local card=type(holo)=="table"and type(holo.cards)=="table"and holo.cards[2]or nil
+    local primary=card and card.primary or nil
+    if not primary or patch.primaryButton==primary then return end
+    patch.primaryButton=primary
+    patch.originalPrimary=primary.callback
+    primary.callback=function()
+        if not machineRef or type(machineRef.Get)~="function"or type(machineRef.Set)~="function"then return end
+        local turningOn=not machineRef.Get()
+        if turningOn then setAuto(true)end
+        machineRef.Set(turningOn,false)
+        refreshUI()
+    end
+end
+
+bindStrengthCounter()
+requestCatalog(false)
 task.spawn(function()
-    requestCatalogOnce(false)
     while patch.alive and runtime.alive do
         bindStrengthCounter()
+        bindMainCard()
         local count=#(runtime.machineCatalog or{})
         if count>0 and count~=patch.catalogCount then
             rebuildCandidates()
-            local best,changed=chooseBest(false)
-            switchIfNeeded(best,changed)
-        elseif runtime.selectedMachine and (not runtime.selectedMachine.seat or not runtime.selectedMachine.seat.Parent)then
-            requestCatalogOnce(true)
+            if patch.auto then local best,changed=chooseBest(false) switchIfNeeded(best,changed)end
         end
-        if not strengthCounter then onStrengthChanged()end -- fallback only when no ValueBase is available
-        applyHologramUI()
-        task.wait(0.75)
+
+        -- Detect a real manual picker/slider change. Once the user chooses another
+        -- machine (or clears it by changing location), auto stops owning selection.
+        local currentId=machineId(runtime.selectedMachine)
+        if not patch.applying and not patch.switching and patch.lastSelectedId~=nil and currentId~=patch.lastSelectedId then
+            patch.auto=false
+            runtime.adaptiveMachineAuto=false
+            patch.lastAutoMachineId=nil
+            refreshUI()
+        end
+        patch.lastSelectedId=currentId
+
+        if runtime.selectedMachine and (not runtime.selectedMachine.seat or not runtime.selectedMachine.seat.Parent)then requestCatalog(true)end
+        if patch.auto and not strengthCounter then onStrengthChanged()end
+        refreshUI()
+        task.wait(0.4)
     end
 end)
 
 function patch.Destroy()
     if not patch.alive then return end
     patch.alive=false
-    if strengthConnection then pcall(function()strengthConnection:Disconnect()end)strengthConnection=nil end
-    disconnectAll()
+    if patch.strengthConnection then pcall(function()patch.strengthConnection:Disconnect()end)patch.strengthConnection=nil end
+    for _,c in ipairs(patch.connections)do pcall(function()c:Disconnect()end)end
     if machineRef and originalSet and machineRef.Set~=originalSet then machineRef.Set=originalSet end
+    if patch.primaryButton and patch.originalPrimary and patch.primaryButton.callback~=patch.originalPrimary then patch.primaryButton.callback=patch.originalPrimary end
     if env.RockBugAdaptiveMachines==patch then env.RockBugAdaptiveMachines=nil end
 end
 
-bindStrengthCounter()
-if #(runtime.machineCatalog or{})>0 then rebuildCandidates()end
-chooseBest(true)
-applyHologramUI()
+setAuto(true)
+refreshUI()
 return patch
