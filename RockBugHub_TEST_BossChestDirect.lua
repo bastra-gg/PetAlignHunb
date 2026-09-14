@@ -1,6 +1,5 @@
--- RockBugHub TEST direct Boss Chest patch v1
--- Experimental: while the built-in boss cycle is in rewards phase, use the same
--- simple physical ProximityPrompt approach as the standalone chest tester.
+-- RockBugHub TEST direct Boss Chest patch v2
+-- Physical ProximityPrompt claiming + lightweight confirmed-loot report.
 local Players=game:GetService("Players")
 local lp=Players.LocalPlayer
 while not lp do task.wait()lp=Players.LocalPlayer end
@@ -9,9 +8,12 @@ if type(getgenv)=="function"then local ok,v=pcall(getgenv)if ok and type(v)=="ta
 local q=env.RockBugRuntime
 if type(q)~="table"then error("RockBugHub TEST chest patch: runtime not found",0)end
 if env.RockBugDirectChestAddon and type(env.RockBugDirectChestAddon.Stop)=="function"then pcall(env.RockBugDirectChestAddon.Stop)end
-local state={alive=true,nextAt=0,attempts=0,lastPrompt=nil,lastChest=nil}
+
+local state={alive=true,nextAt=0,attempts=0,lastPrompt=nil,lastChest=nil,claimCount=0,lastClaimAt=nil,lastClaimChest=nil,lastLootText=nil,lastLootAt=nil,awaitingClaim=false,pendingChest=nil,pendingAt=nil,captureToken=0,candidates={}}
 env.RockBugDirectChestAddon=state
 q.directBossChestAddon=state
+q.bossLootReport=q.bossLootReport or nil
+q.bossLootCount=q.bossLootCount or 0
 
 local function low(v)return string.lower(tostring(v or""))end
 local tiers={
@@ -89,26 +91,95 @@ local function moveTo(prompt)
  local _,root,hum=characterParts()
  if not root or not hum or hum.Health<=0 then return false end
  local cf=worldCF(prompt)if not cf then return false end
- root.Anchored=false
- hum.Sit=false
+ root.Anchored=false hum.Sit=false
  root.CFrame=cf*CFrame.new(0,3,-4)
- root.AssemblyLinearVelocity=Vector3.zero
- root.AssemblyAngularVelocity=Vector3.zero
+ root.AssemblyLinearVelocity=Vector3.zero root.AssemblyAngularVelocity=Vector3.zero
  return true
 end
 local function press(prompt)
  if not prompt or not prompt.Parent or not prompt.Enabled then return false end
  local ok=false
  if type(fireproximityprompt)=="function"then ok=pcall(function()fireproximityprompt(prompt,0)end)end
- if not ok then
-  ok=pcall(function()
-   prompt:InputHoldBegin()
-   task.wait(math.max(0.05,tonumber(prompt.HoldDuration)or 0)+0.03)
-   prompt:InputHoldEnd()
-  end)
- end
+ if not ok then ok=pcall(function()prompt:InputHoldBegin()task.wait(math.max(0.05,tonumber(prompt.HoldDuration)or 0)+0.03)prompt:InputHoldEnd()end)end
  return ok
 end
+
+-- Only runs around a chest press, never continuously.
+local function visible(obj)
+ if not obj:IsA("TextLabel")and not obj:IsA("TextButton")then return false end
+ if not obj.Visible or obj.TextTransparency>=1 then return false end
+ local node=obj.Parent
+ while node and node~=lp.PlayerGui do
+  if node:IsA("GuiObject")and not node.Visible then return false end
+  if node:IsA("LayerCollector")and not node.Enabled then return false end
+  node=node.Parent
+ end
+ return node~=nil
+end
+local function clean(text)
+ local s=tostring(text or""):gsub("<[^>]+>",""):gsub("%s+"," "):gsub("^%s+",""):gsub("%s+$","")
+ if #s<2 or #s>90 then return nil end
+ return s
+end
+local function rewardScore(obj,text)
+ local s=low(text)
+ if claimText(s)then return -100 end
+ if s=="стоп"or s=="stop"or s=="настройки"or s=="settings"then return -100 end
+ local ctx="" local node=obj
+ for _=1,6 do if not node or node==lp.PlayerGui then break end;ctx=ctx.." "..low(node.Name)node=node.Parent end
+ local score=0
+ for _,w in ipairs({"reward","chest","loot","prize","result","drop","item","pet","aura","награ","сундук","лут","предмет","питом","аура"})do
+  if ctx:find(w,1,true)then score+=5 end
+  if s:find(w,1,true)then score+=3 end
+ end
+ if s:find("%+")or s:find("x%d")or s:find("×%d")then score+=1 end
+ return score
+end
+local function snapshot()
+ local map={}
+ local pg=lp:FindFirstChildOfClass("PlayerGui")if not pg then return map end
+ local ok,nodes=pcall(function()return pg:GetDescendants()end)if not ok then return map end
+ for _,obj in ipairs(nodes)do
+  if (obj:IsA("TextLabel")or obj:IsA("TextButton"))and visible(obj)then
+   local t=clean(obj.Text)if t then map[obj]=t end
+  end
+ end
+ return map
+end
+local function startCapture()
+ state.captureToken+=1
+ local token=state.captureToken
+ local before=snapshot()
+ state.candidates={}
+ task.spawn(function()
+  local seen={} local best={}
+  for _=1,8 do
+   task.wait(0.22)
+   if not state.alive or token~=state.captureToken then return end
+   local after=snapshot()
+   for obj,text in pairs(after)do
+    if before[obj]~=text and not seen[text]then
+     local score=rewardScore(obj,text)
+     if score>=5 then seen[text]=true table.insert(best,{score=score,text=text})end
+    end
+   end
+  end
+  table.sort(best,function(a,b)if a.score~=b.score then return a.score>b.score end return #a.text<#b.text end)
+  local out={}
+  for i=1,math.min(3,#best)do out[#out+1]=best[i].text end
+  if token==state.captureToken then state.candidates=out end
+ end)
+end
+local function confirmClaim()
+ state.claimCount+=1
+ state.lastClaimAt=os.clock()
+ state.lastClaimChest=state.pendingChest or state.lastChest or"Boss Chest"
+ local text=#(state.candidates or{})>0 and table.concat(state.candidates," • ")or state.lastClaimChest
+ state.lastLootText=text state.lastLootAt=state.lastClaimAt
+ q.bossLootReport=text q.bossLootChest=state.lastClaimChest q.bossLootCount=state.claimCount q.bossLootAt=state.lastClaimAt
+ state.awaitingClaim=false state.pendingChest=nil state.pendingAt=nil state.candidates={}
+end
+
 function state.TryOnce()
  if not state.alive or not q.alive then return false,"stopped"end
  local cycle=q.bossCycle
@@ -119,28 +190,29 @@ function state.TryOnce()
  if not moveTo(prompt)then return false,"move failed"end
  task.wait(0.30)
  if not state.alive or not q.alive or not q.bossCycle or q.bossCycle.phase~="rewards"then return false,"phase changed"end
+ if not state.awaitingClaim then state.awaitingClaim=true state.pendingChest=name state.pendingAt=os.clock()startCapture()end
  local fired=press(prompt)
  state.attempts+=1
- if fired then
-  q.bossCycleStatus="Сундук: direct ProximityPrompt • "..tostring(name or"Boss Chest")
-  return true,name
- end
+ if fired then q.bossCycleStatus="Сундук: direct ProximityPrompt • "..tostring(name or"Boss Chest")return true,name end
  return false,"prompt press failed"
 end
 function state.Stop()
- state.alive=false
+ state.alive=false state.captureToken+=1
  if env.RockBugDirectChestAddon==state then env.RockBugDirectChestAddon=nil end
  if q.directBossChestAddon==state then q.directBossChestAddon=nil end
 end
+
 task.spawn(function()
+ local lastPhase=nil
  while state.alive and q.alive do
-  local cycle=q.bossCycle
-  if cycle and cycle.phase=="rewards"and os.clock()>=(state.nextAt or 0)then
-   state.nextAt=os.clock()+1.25
-   pcall(state.TryOnce)
-  else
-   state.nextAt=0
+  local cycle=q.bossCycle local phase=cycle and cycle.phase or nil
+  if state.awaitingClaim and lastPhase=="rewards"and phase and phase~="rewards"then
+   if phase=="returning"or phase=="waiting"or phase=="arena"then confirmClaim()else state.awaitingClaim=false end
   end
+  if cycle and phase=="rewards"and os.clock()>=(state.nextAt or 0)then
+   state.nextAt=os.clock()+1.25 pcall(state.TryOnce)
+  elseif phase~="rewards"then state.nextAt=0 end
+  lastPhase=phase
   task.wait(0.12)
  end
  state.Stop()
