@@ -1,15 +1,25 @@
--- RockBugHub TEST direct Boss Chest patch v3
--- Physical ProximityPrompt claiming + full per-victory loot capture.
+-- RockBugHub TEST direct Boss Chest patch v4
+-- Exclusive direct ProximityPrompt claim. The legacy T38 chest collector is bypassed while rewards are active.
 local Players=game:GetService("Players")
 local lp=Players.LocalPlayer
 while not lp do task.wait()lp=Players.LocalPlayer end
+
 local env=_G
 if type(getgenv)=="function"then local ok,v=pcall(getgenv)if ok and type(v)=="table"then env=v end end
 local q=env.RockBugRuntime
 if type(q)~="table"then error("RockBugHub TEST chest patch: runtime not found",0)end
 if env.RockBugDirectChestAddon and type(env.RockBugDirectChestAddon.Stop)=="function"then pcall(env.RockBugDirectChestAddon.Stop)end
 
-local state={alive=true,nextAt=0,attempts=0,lastPrompt=nil,lastChest=nil,claimCount=0,lastClaimAt=nil,lastClaimChest=nil,lastLootText=nil,lastLootAt=nil,awaitingClaim=false,pendingChest=nil,pendingAt=nil,captureToken=0,candidates={},captureDone=true}
+local cycle=q.bossCycle
+if type(cycle)~="table"or type(cycle.Tick)~="function"then error("RockBugHub TEST chest patch: boss cycle not found",0)end
+local originalTick=cycle.Tick
+
+local state={
+ alive=true,nextAt=0,attempts=0,lastPrompt=nil,lastChest=nil,
+ claimCount=tonumber(q.bossLootCount)or 0,lastClaimAt=nil,lastClaimChest=nil,lastLootText=nil,lastLootAt=nil,
+ awaitingClaim=false,pendingChest=nil,pendingAt=nil,pressSucceededAt=nil,rewardsSince=nil,
+ captureToken=0,candidates={},captureDone=true,originalTick=originalTick,
+}
 env.RockBugDirectChestAddon=state
 q.directBossChestAddon=state
 q.bossLootReport=q.bossLootReport or nil
@@ -82,7 +92,7 @@ local function findPrompt()
    if tier then
     local score=tier+(claimText(actionText)and 500 or claimText(full)and 250 or 0)
     local cf=worldCF(obj)
-    if cf then score=score-math.min((root.Position-cf.Position).Magnitude,1500)*0.01 else score=score-10000 end
+    if cf then score=score-math.min((root.Position-cf.Position).Magnitude,1500)*0.01 else score-=10000 end
     if score>bestScore then best,bestName,bestScore=obj,name,score end
    end
   end
@@ -94,19 +104,25 @@ local function moveTo(prompt)
  if not root or not hum or hum.Health<=0 then return false end
  local cf=worldCF(prompt)if not cf then return false end
  root.Anchored=false hum.Sit=false
- root.CFrame=cf*CFrame.new(0,3,-4)
+ -- One stable position in front of the prompt. No legacy chest movement loop is allowed to fight this.
+ root.CFrame=cf*CFrame.new(0,2.6,-3.1)
  root.AssemblyLinearVelocity=Vector3.zero root.AssemblyAngularVelocity=Vector3.zero
  return true
 end
 local function press(prompt)
  if not prompt or not prompt.Parent or not prompt.Enabled then return false end
- local ok=false
- if type(fireproximityprompt)=="function"then ok=pcall(function()fireproximityprompt(prompt,0)end)end
- if not ok then ok=pcall(function()prompt:InputHoldBegin()task.wait(math.max(0.05,tonumber(prompt.HoldDuration)or 0)+0.03)prompt:InputHoldEnd()end)end
- return ok
+ local hold=math.max(0.08,tonumber(prompt.HoldDuration)or 0)
+ local held=pcall(function()
+  prompt:InputHoldBegin()
+  task.wait(hold+0.08)
+  prompt:InputHoldEnd()
+ end)
+ -- Some executors expose fireproximityprompt but silently no-op. Use it only as a second shot,
+ -- never as the success criterion by itself.
+ if type(fireproximityprompt)=="function"then pcall(function()fireproximityprompt(prompt,0)end)end
+ return held
 end
 
--- Only scans PlayerGui for a short window after the chest press.
 local function visible(obj)
  if not obj:IsA("TextLabel")and not obj:IsA("TextButton")then return false end
  if not obj.Visible or obj.TextTransparency>=1 then return false end
@@ -142,9 +158,7 @@ local function snapshot()
  local pg=lp:FindFirstChildOfClass("PlayerGui")if not pg then return map end
  local ok,nodes=pcall(function()return pg:GetDescendants()end)if not ok then return map end
  for _,obj in ipairs(nodes)do
-  if (obj:IsA("TextLabel")or obj:IsA("TextButton"))and visible(obj)then
-   local t=clean(obj.Text)if t then map[obj]=t end
-  end
+  if (obj:IsA("TextLabel")or obj:IsA("TextButton"))and visible(obj)then local t=clean(obj.Text)if t then map[obj]=t end end
  end
  return map
 end
@@ -152,10 +166,9 @@ local function startCapture()
  state.captureToken+=1
  local token=state.captureToken
  local before=snapshot()
- state.candidates={}
- state.captureDone=false
+ state.candidates={} state.captureDone=false
  task.spawn(function()
-  local seen={} local best={}
+  local seen,best={},{}
   for _=1,8 do
    task.wait(0.22)
    if not state.alive or token~=state.captureToken then return end
@@ -163,19 +176,19 @@ local function startCapture()
    for obj,text in pairs(after)do
     if before[obj]~=text and not seen[text]then
      local score=rewardScore(obj,text)
-     if score>=5 then seen[text]=true table.insert(best,{score=score,text=text})end
+     if score>=5 then seen[text]=true best[#best+1]={score=score,text=text}end
     end
    end
   end
   table.sort(best,function(a,b)if a.score~=b.score then return a.score>b.score end return #a.text<#b.text end)
   local out={}
-  -- Keep the whole reward set for one victory. Hard cap only protects against a broken GUI flood.
   for i=1,math.min(20,#best)do out[#out+1]=best[i].text end
   if token==state.captureToken then state.candidates=out state.captureDone=true end
  end)
 end
-local function confirmClaim()
- local deadline=os.clock()+0.55
+local function publishClaim()
+ if not state.awaitingClaim then return end
+ local deadline=os.clock()+0.65
  while state.alive and not state.captureDone and os.clock()<deadline do task.wait(0.05)end
  state.claimCount+=1
  state.lastClaimAt=os.clock()
@@ -184,49 +197,81 @@ local function confirmClaim()
  for i,v in ipairs(state.candidates or{})do items[i]=v end
  local text=#items>0 and table.concat(items," • ")or state.lastClaimChest
  state.lastLootText=text state.lastLootAt=state.lastClaimAt
- q.bossLootReport=text
- q.bossLootChest=state.lastClaimChest
- q.bossLootCount=state.claimCount
- q.bossLootAt=state.lastClaimAt
- q.bossLootItems=items
- q.bossLootItemCount=#items
+ q.bossLootReport=text q.bossLootChest=state.lastClaimChest q.bossLootCount=state.claimCount q.bossLootAt=state.lastClaimAt
+ q.bossLootItems=items q.bossLootItemCount=#items
  state.awaitingClaim=false state.pendingChest=nil state.pendingAt=nil state.candidates={} state.captureDone=true
 end
 
 function state.TryOnce()
  if not state.alive or not q.alive then return false,"stopped"end
- local cycle=q.bossCycle
- if not cycle or cycle.phase~="rewards"then return false,"not rewards phase"end
+ local c=q.bossCycle
+ if not c or c.phase~="rewards"then return false,"not rewards phase"end
+ if state.pressSucceededAt then return true,state.lastChest end
  local prompt,name=findPrompt()
  if not prompt then return false,"boss chest prompt not found"end
  state.lastPrompt=prompt state.lastChest=name
  if not moveTo(prompt)then return false,"move failed"end
- task.wait(0.30)
+ task.wait(0.16)
  if not state.alive or not q.alive or not q.bossCycle or q.bossCycle.phase~="rewards"then return false,"phase changed"end
- if not state.awaitingClaim then state.awaitingClaim=true state.pendingChest=name state.pendingAt=os.clock()startCapture()end
+ state.awaitingClaim=true state.pendingChest=name state.pendingAt=os.clock()
+ startCapture()
  local fired=press(prompt)
  state.attempts+=1
- if fired then q.bossCycleStatus="Сундук: direct ProximityPrompt • "..tostring(name or"Boss Chest")return true,name end
+ if fired then
+  state.pressSucceededAt=os.clock()
+  q.bossCycleStatus="Сундук: нажимаю напрямую • "..tostring(name or"Boss Chest")
+  return true,name
+ end
+ state.awaitingClaim=false
  return false,"prompt press failed"
 end
+
+-- Replace only the rewards step of the cycle. Everything before/after rewards stays T38.
+-- This is the important part: collector:Step() from the old implementation never runs here,
+-- so it cannot keep teleporting the character around the chest or fight the direct prompt press.
+cycle.Tick=function(self)
+ if not state.alive then return originalTick(self)end
+ if self.phase~="rewards"then
+  state.rewardsSince=nil state.pressSucceededAt=nil state.nextAt=0
+  return originalTick(self)
+ end
+ local now=os.clock()
+ if not state.rewardsSince then state.rewardsSince=now end
+ if state.pressSucceededAt and now-state.pressSucceededAt>=0.38 then
+  publishClaim()
+  self.phase="returning"
+  q.bossCycleStatus="Награда нажата • возвращаюсь"
+  return
+ end
+ if now-state.rewardsSince>=8 then
+  state.awaitingClaim=false
+  self.phase="returning"
+  q.bossCycleError="Сундук: direct prompt не сработал за 8 сек"
+  q.bossCycleStatus="Сундук не подтверждён • возвращаюсь"
+  return
+ end
+ -- Old reward tick intentionally skipped.
+end
+
 function state.Stop()
+ if not state.alive then return end
  state.alive=false state.captureToken+=1
+ if q.bossCycle==cycle and cycle.Tick~=originalTick then cycle.Tick=originalTick end
  if env.RockBugDirectChestAddon==state then env.RockBugDirectChestAddon=nil end
  if q.directBossChestAddon==state then q.directBossChestAddon=nil end
 end
 
 task.spawn(function()
- local lastPhase=nil
  while state.alive and q.alive do
-  local cycle=q.bossCycle local phase=cycle and cycle.phase or nil
-  if state.awaitingClaim and lastPhase=="rewards"and phase and phase~="rewards"then
-   if phase=="returning"or phase=="waiting"or phase=="arena"then confirmClaim()else state.awaitingClaim=false end
+  local c=q.bossCycle
+  local phase=c and c.phase or nil
+  if phase=="rewards"and not state.pressSucceededAt and os.clock()>=(state.nextAt or 0)then
+   state.nextAt=os.clock()+1.15
+   pcall(state.TryOnce)
+  elseif phase~="rewards"then
+   state.nextAt=0
   end
-  if cycle and phase=="rewards"and os.clock()>=(state.nextAt or 0)then
-   state.nextAt=os.clock()+1.25 pcall(state.TryOnce)
-  elseif phase~="rewards"then state.nextAt=0 end
-  lastPhase=phase
-  task.wait(0.12)
+  task.wait(0.10)
  end
  state.Stop()
 end)
