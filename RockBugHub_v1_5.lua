@@ -1,10 +1,11 @@
--- RockBugHub TEST bootstrap T49: FARM fixes + gym-only machine controller
-local VERSION="4.31HOLO-T49"
+-- RockBugHub TEST bootstrap T50: FARM fixes + stable card captions
+local VERSION="4.31HOLO-T50"
 local CORE_URL="https://raw.githubusercontent.com/bastra-gg/PetAlignHunb/main/RockBugHub_v1_5_core.lua"
 local BOSS_PATCH_URL="https://raw.githubusercontent.com/bastra-gg/PetAlignHunb/main/RockBugHub_TEST_BossChestDirect.lua"
 local ROCK_PATCH_URL="https://raw.githubusercontent.com/bastra-gg/PetAlignHunb/main/RockBugHub_TEST_AdaptiveRocks.lua"
 local MACHINE_PATCH_URL="https://raw.githubusercontent.com/bastra-gg/PetAlignHunb/main/RockBugHub_TEST_AdaptiveMachines.lua"
 local BOSS_UI_PATCH_URL="https://raw.githubusercontent.com/bastra-gg/PetAlignHunb/main/RockBugHub_TEST_BossCompact.lua"
+local CARD_PATCH_URL="https://raw.githubusercontent.com/bastra-gg/PetAlignHunb/main/RockBugHub_TEST_StableFarmCards.lua"
 local env=_G
 if type(getgenv)=="function"then local ok,v=pcall(getgenv)if ok and type(v)=="table"then env=v end end
 env.RockBugTestVersion=VERSION
@@ -29,6 +30,8 @@ local okMachine,problemMachine=pcall(function()run(MACHINE_PATCH_URL,"adaptive m
 if not okMachine then warn("[RockBugHub TEST "..VERSION.."] adaptive machines patch failed: "..tostring(problemMachine))end
 local okBossUI,problemBossUI=pcall(function()run(BOSS_UI_PATCH_URL,"boss compact UI patch")end)
 if not okBossUI then warn("[RockBugHub TEST "..VERSION.."] boss UI patch failed: "..tostring(problemBossUI))end
+local okCards,problemCards=pcall(function()run(CARD_PATCH_URL,"stable farm cards patch")end)
+if not okCards then warn("[RockBugHub TEST "..VERSION.."] stable cards patch failed: "..tostring(problemCards))end
 pcall(function()
     local pg=game:GetService("Players").LocalPlayer:FindFirstChildOfClass("PlayerGui")
     if not pg then return end
