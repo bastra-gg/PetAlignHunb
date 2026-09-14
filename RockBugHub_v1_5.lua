@@ -1,10 +1,6 @@
--- RockBugHub TEST bootstrap T44: preserved T38 core + test patches
-local VERSION="4.31HOLO-T44"
+-- RockBugHub TEST bootstrap T45: stable baseline before rebuilding FARM
+local VERSION="4.31HOLO-T45"
 local CORE_URL="https://raw.githubusercontent.com/bastra-gg/PetAlignHunb/main/RockBugHub_v1_5_core.lua"
-local BOSS_PATCH_URL="https://raw.githubusercontent.com/bastra-gg/PetAlignHunb/main/RockBugHub_TEST_BossChestDirect.lua"
-local ROCK_PATCH_URL="https://raw.githubusercontent.com/bastra-gg/PetAlignHunb/main/RockBugHub_TEST_AdaptiveRocks.lua"
-local MACHINE_PATCH_URL="https://raw.githubusercontent.com/bastra-gg/PetAlignHunb/main/RockBugHub_TEST_AdaptiveMachines.lua"
-local BOSS_UI_PATCH_URL="https://raw.githubusercontent.com/bastra-gg/PetAlignHunb/main/RockBugHub_TEST_BossCompact.lua"
 local env=_G
 if type(getgenv)=="function"then local ok,v=pcall(getgenv)if ok and type(v)=="table"then env=v end end
 env.RockBugTestVersion=VERSION
@@ -21,23 +17,19 @@ end
 local result=run(CORE_URL,"core")
 local runtime=env.RockBugRuntime or result
 if type(runtime)=="table"then runtime.testVersion=VERSION end
-local okBoss,problemBoss=pcall(function()run(BOSS_PATCH_URL,"direct chest patch")end)
-if not okBoss then warn("[RockBugHub TEST "..VERSION.."] chest patch failed: "..tostring(problemBoss))end
-local okRock,problemRock=pcall(function()run(ROCK_PATCH_URL,"adaptive rocks patch")end)
-if not okRock then warn("[RockBugHub TEST "..VERSION.."] adaptive rocks patch failed: "..tostring(problemRock))end
-local okMachine,problemMachine=pcall(function()run(MACHINE_PATCH_URL,"adaptive machines patch")end)
-if not okMachine then warn("[RockBugHub TEST "..VERSION.."] adaptive machines patch failed: "..tostring(problemMachine))end
-local okBossUI,problemBossUI=pcall(function()run(BOSS_UI_PATCH_URL,"boss compact UI patch")end)
-if not okBossUI then warn("[RockBugHub TEST "..VERSION.."] boss UI patch failed: "..tostring(problemBossUI))end
+
+-- T45 intentionally does NOT load the experimental rock/machine/boss patches.
+-- They are kept in the repo for reference and will be rebuilt one-by-one on top
+-- of the stable T38 core instead of stacking more patches over broken patches.
 pcall(function()
     local pg=game:GetService("Players").LocalPlayer:FindFirstChildOfClass("PlayerGui")
     if not pg then return end
     local stop=nil
     for _=1,30 do
         for _,obj in ipairs(pg:GetDescendants())do
-            if obj:IsA("TextButton") then
+            if obj:IsA("TextButton")then
                 local t=tostring(obj.Text or""):gsub("%s+",""):upper()
-                if t=="СТОП" or t=="STOP" then stop=obj break end
+                if t=="СТОП"or t=="STOP"then stop=obj break end
             end
         end
         if stop then break end
@@ -58,20 +50,12 @@ pcall(function()
     badge.TextSize=8
     badge.ZIndex=math.max(1,stop.ZIndex)
     badge.Parent=parent
-    local corner=Instance.new("UICorner")
-    corner.CornerRadius=UDim.new(0,8)
-    corner.Parent=badge
-    local stroke=Instance.new("UIStroke")
-    stroke.Color=Color3.fromRGB(142,118,255)
-    stroke.Transparency=0.62
-    stroke.Thickness=1
-    stroke.Parent=badge
+    local corner=Instance.new("UICorner")corner.CornerRadius=UDim.new(0,8)corner.Parent=badge
+    local stroke=Instance.new("UIStroke")stroke.Color=Color3.fromRGB(142,118,255)stroke.Transparency=0.62 stroke.Thickness=1 stroke.Parent=badge
     local function place()
         if not badge.Parent or not stop.Parent then return end
-        local p=parent.AbsolutePosition
-        local s=stop.AbsolutePosition
-        local h=math.max(22,math.min(28,stop.AbsoluteSize.Y-2))
-        local w=60
+        local p=parent.AbsolutePosition local s=stop.AbsolutePosition
+        local h=math.max(22,math.min(28,stop.AbsoluteSize.Y-2)) local w=60
         badge.Size=UDim2.fromOffset(w,h)
         badge.Position=UDim2.fromOffset(math.floor(s.X-p.X-w-7),math.floor(s.Y-p.Y+(stop.AbsoluteSize.Y-h)/2))
     end
