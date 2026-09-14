@@ -1,6 +1,5 @@
--- RockBugHub TEST T40: durability-adaptive rocks
+-- RockBugHub TEST T46: event-driven durability-adaptive rocks + manual selection
 local Players=game:GetService("Players")
-local RunService=game:GetService("RunService")
 local player=Players.LocalPlayer
 if not player then return end
 
@@ -13,12 +12,10 @@ if env.RockBugAdaptiveRocks and type(env.RockBugAdaptiveRocks.Destroy)=="functio
     pcall(env.RockBugAdaptiveRocks.Destroy)
 end
 
-local patch={alive=true,lastDurability=nil,lastRock=nil,lastSource=nil}
+local patch={alive=true,auto=true,lastDurability=nil,lastRock=nil,lastSource=nil,applying=false,connections={},sourceConnection=nil}
 env.RockBugAdaptiveRocks=patch
 runtime.adaptiveRocks=true
-runtime.autoRockSelection=false -- the old rebirth/XP alignment picker must not fight this selector
 
--- Ordered from strongest requirement to weakest. These are the game's neededDurability values.
 local rocks={
     {id="AncientJungle",label="Древний лес",en="Ancient Jungle",req=10000000,mult=16.25},
     {id="MuscleKing",label="Король мышц",en="Muscle King",req=5000000,mult=12.5},
@@ -39,8 +36,7 @@ local function compact(value)
     for _,unit in ipairs({{1e15,"Q"},{1e12,"T"},{1e9,"B"},{1e6,"M"},{1e3,"K"}})do
         if abs>=unit[1]then
             local s=("%.2f%s"):format(value/unit[1],unit[2])
-            s=s:gsub("%.00([KMBTQ])$","%1"):gsub("(%.[0-9])0([KMBTQ])$","%1%2")
-            return s
+            return s:gsub("%.00([KMBTQ])$","%1"):gsub("(%.[0-9])0([KMBTQ])$","%1%2")
         end
     end
     return tostring(math.floor(value+0.5))
@@ -51,7 +47,6 @@ local function parseNumber(value)
     local s=tostring(value or""):lower():gsub("%s+","")
     local n,suffix=s:match("^([%+%-]?[%d%.,]+)([kmbtq]?)$")
     if not n then return tonumber(value)end
-    -- Game values are normally raw numbers; this also tolerates 1.5M-style strings.
     if n:find(",",1,true)and not n:find("%.")then
         local a,b=n:match("^(%-?%d+),(%d+)$")
         if a and b and #b<=2 then n=a.."."..b else n=n:gsub(",","")end
@@ -60,11 +55,9 @@ local function parseNumber(value)
     end
     local num=tonumber(n)
     if not num then return nil end
-    local mul={k=1e3,m=1e6,b=1e9,t=1e12,q=1e15}
-    return num*(mul[suffix]or 1)
+    return num*(({k=1e3,m=1e6,b=1e9,t=1e12,q=1e15})[suffix]or 1)
 end
 
-local cachedValue=nil
 local function durabilityScore(object)
     if not object or not object:IsA("ValueBase")then return nil end
     local name=string.lower(tostring(object.Name or""))
@@ -74,21 +67,15 @@ local function durabilityScore(object)
     elseif name=="endurance"or name:find("endurance",1,true)then score=620
     elseif name:find("долговеч",1,true)or name:find("прочност",1,true)or name:find("вынослив",1,true)then score=600
     else return nil end
-    if name:find("mult",1,true)or name:find("boost",1,true)or name:find("gain",1,true)or name:find("percent",1,true)then score=score-800 end
+    if name:find("mult",1,true)or name:find("boost",1,true)or name:find("gain",1,true)or name:find("percent",1,true)or name:find("required",1,true)or name:find("needed",1,true)then score-=900 end
     local leader=player:FindFirstChild("leaderstats")
-    if leader and object:IsDescendantOf(leader)then score=score+150 end
+    if leader and object:IsDescendantOf(leader)then score+=180 end
     return score
 end
 
-local function readDurability()
-    if cachedValue and cachedValue.Parent then
-        local ok,v=pcall(function()return parseNumber(cachedValue.Value)end)
-        if ok and v and v>=0 then return v,cachedValue:GetFullName()end
-    end
-    for _,key in ipairs({"Durability","durability"})do
-        local ok,v=pcall(function()return player:GetAttribute(key)end)
-        if ok then v=parseNumber(v)if v and v>=0 then return v,"attribute:"..key end end
-    end
+local source=nil
+local function findSource()
+    if source and source.Parent then return source end
     local best,bestScore=nil,-math.huge
     local ok,list=pcall(function()return player:GetDescendants()end)
     if ok then
@@ -100,19 +87,26 @@ local function readDurability()
             end
         end
     end
-    cachedValue=best
-    if best then
-        local good,v=pcall(function()return parseNumber(best.Value)end)
-        if good and v then return v,best:GetFullName()end
+    source=best
+    return source
+end
+
+local function readDurability()
+    local object=findSource()
+    if object then
+        local ok,v=pcall(function()return parseNumber(object.Value)end)
+        if ok and v and v>=0 then return v,object:GetFullName()end
+    end
+    for _,key in ipairs({"Durability","durability"})do
+        local ok,v=pcall(function()return parseNumber(player:GetAttribute(key))end)
+        if ok and v and v>=0 then return v,"attribute:"..key end
     end
     return nil,nil
 end
 
 local function bestRockFor(durability)
     if durability==nil then return nil end
-    for _,rock in ipairs(rocks)do
-        if durability>=rock.req then return rock end
-    end
+    for _,rock in ipairs(rocks)do if durability>=rock.req then return rock end end
     return rocks[#rocks]
 end
 
@@ -125,22 +119,96 @@ local function rockName(rock)
     return runtime.language=="en"and rock.en or rock.label
 end
 
+local function findRefreshButton()
+    local root=runtime.uiRoot
+    if not root then return nil end
+    for _,obj in ipairs(root:GetDescendants())do
+        if obj:IsA("TextButton")then
+            local t=tostring(obj.Text or""):upper()
+            if t:find("↻",1,true)and(t:find("КАМНИ",1,true)or t:find("ROCKS",1,true))then return obj end
+        end
+    end
+    return nil
+end
+
+local refreshBusy=false
+local function refreshPhysicalRocks()
+    if refreshBusy then return end
+    local button=findRefreshButton()
+    if not button then return end
+    refreshBusy=true
+    task.spawn(function()
+        local fired=false
+        if type(firesignal)=="function"then fired=pcall(function()firesignal(button.Activated)end)end
+        if not fired then pcall(function()button:Activate()end)end
+        task.wait(0.15)
+        -- The base refresh temporarily re-enables its rebirth selector; adaptive mode owns it here.
+        runtime.autoRockSelection=false
+        refreshBusy=false
+    end)
+end
+
+local function applyClassicUI()
+    local ui=runtime.ui
+    local layout=runtime.layoutUI
+    if type(ui)~="table"or type(layout)~="table"then return end
+    local ru=runtime.language~="en"
+    if layout.autoRockButton and layout.autoRockButton.Parent then layout.autoRockButton.Visible=true end
+    if layout.chooseRockButton and layout.chooseRockButton.Parent then
+        layout.chooseRockButton.Visible=true
+        layout.chooseRockButton.Parent.Visible=true
+    end
+    if ui.autoRockTitle and ui.autoRockTitle.Parent then
+        ui.autoRockTitle.Text=patch.auto and(ru and"АВТОПОБОР ПО ДОЛГОВЕЧНОСТИ"or"AUTO ROCK BY DURABILITY")or(ru and"РУЧНАЯ НАСТРОЙКА"or"MANUAL SELECTION")
+    end
+    local selected=runtime.selectedRock
+    if ui.autoRockName and ui.autoRockName.Parent and selected then
+        ui.autoRockName.Text=rockName(selected)..(patch.auto and""or(ru and"  •  вручную"or"  •  manual"))
+    end
+    if ui.autoRockStats and ui.autoRockStats.Parent then
+        local d=runtime.adaptiveRockDurability
+        if patch.auto then
+            ui.autoRockStats.Text=d and((ru and"Долговечность: "or"Durability: ")..compact(d).."  •  "..rockName(selected))or(ru and"Долговечность не найдена"or"Durability not found")
+        elseif selected then
+            ui.autoRockStats.Text=(ru and"Выбран вручную: "or"Manual: ")..rockName(selected)..(d and("  •  "..(ru and"долговечность "or"durability ")..compact(d))or"")
+        end
+    end
+    if type(runtime.refreshRockList)=="function"then pcall(runtime.refreshRockList)end
+end
+
+local function applyHologramUI()
+    local holo=runtime.hologram
+    if type(holo)~="table"or holo.destroyed or holo.group~="farm"then return end
+    local card=type(holo.cards)=="table"and holo.cards[1]or nil
+    if not card then return end
+    local ru=runtime.language~="en"
+    local selected=runtime.selectedRock
+    local d=runtime.adaptiveRockDurability
+    if card.primary and card.primary.text then card.primary.text.Text=ru and"Автоудар"or"Auto punch"end
+    if card.more and card.more.text then
+        card.more.text.Text=(patch.auto and(ru and"Лучший: "or"Best: ")or(ru and"Вручную: "or"Manual: "))..rockName(selected).."  →"
+    end
+    if card.hint then
+        card.hint.Text=d and((ru and"Долговечность: "or"Durability: ")..compact(d).."  •  "..rockName(selected))or(ru and"Долговечность не найдена"or"Durability not found")
+    end
+end
+
 local function applySelection(force)
-    if not patch.alive then return false end
-    local durability,source=readDurability()
+    if not patch.alive or not patch.auto then return false end
+    local durability,sourceName=readDurability()
+    runtime.adaptiveRockDurability=durability
+    patch.lastSource=sourceName
     if durability==nil then
-        patch.lastDurability=nil
-        patch.lastSource=nil
-        runtime.adaptiveRockDurability=nil
         runtime.adaptiveRockStatus=runtime.language=="en"and"Durability not found"or"Долговечность не найдена"
+        applyClassicUI()applyHologramUI()
         return false
     end
     local rock=bestRockFor(durability)
     if not rock then return false end
-    local changed=force or patch.lastDurability~=durability or not runtime.selectedRock or runtime.selectedRock.id~=rock.id
+    local changed=force or not runtime.selectedRock or runtime.selectedRock.id~=rock.id
+    patch.applying=true
     runtime.autoRockSelection=false
     runtime.selectedRock=rock
-    runtime.adaptiveRockDurability=durability
     runtime.adaptiveRockRequirement=rock.req
     runtime.adaptiveRockName=rockName(rock)
     runtime.adaptiveRockStatus=(runtime.language=="en"and"Durability "or"Долговечность ")..compact(durability).." • "..rockName(rock)
@@ -148,110 +216,96 @@ local function applySelection(force)
     runtime.autoRockCalc={durability=durability,requirement=rock.req,adaptive=true}
     patch.lastDurability=durability
     patch.lastRock=rock.id
-    patch.lastSource=source
+    patch.applying=false
+    if changed then refreshPhysicalRocks()end
+    applyClassicUI()applyHologramUI()
     return changed
 end
 
-local function applyClassicUI()
-    local ui=runtime.ui
-    local layout=runtime.layoutUI
-    if type(ui)~="table"or type(layout)~="table"then return end
-    local title=ui.autoRockTitle
-    local name=ui.autoRockName
-    local stats=ui.autoRockStats
-    local rock=runtime.selectedRock
-    local durability=runtime.adaptiveRockDurability
-    local rn=rockName(rock)
-    local ru=runtime.language~="en"
-    if title and title.Parent then
-        title.Text=ru and"АДАПТИВНЫЙ КАМЕНЬ"or"ADAPTIVE ROCK"
-        title.Size=UDim2.new(1,-16,0,36)
-        title.Position=UDim2.fromOffset(8,3)
-    end
-    if layout.autoRockButton and layout.autoRockButton.Parent then layout.autoRockButton.Visible=false end
-    if name and name.Parent then
-        name.Text=rn..(rock and("  •  "..(ru and"нужно "or"needs ")..compact(rock.req))or"")
-    end
-    if stats and stats.Parent then
-        if durability then
-            stats.Text=(ru and"Долговечность: "or"Durability: ")..compact(durability)..(ru and"  •  лучший доступный камень меняется автоматически"or"  •  best available rock updates automatically")
-        else
-            stats.Text=ru and"Долговечность не найдена — проверь данные игрока"or"Durability not found — check player data"
-        end
-    end
-    if layout.chooseRockButton and layout.chooseRockButton.Parent then
-        layout.chooseRockButton.Parent.Visible=false
-    end
-    if title and title.Parent and title.Parent.Parent and title.Parent.Parent.Parent then
-        local body=title.Parent.Parent
-        local panel=body.Parent
-        pcall(function()panel.Size=UDim2.new(1,0,0,136)end)
-        for _,node in ipairs(panel:GetChildren())do
-            if node:IsA("TextLabel")then
-                local t=string.upper(tostring(node.Text or""))
-                if t:find("ВЫБОР КАМНЯ",1,true)or t:find("SELECT ROCK",1,true)then node.Text=ru and"КАМЕНЬ"or"ROCK"end
-            end
-        end
-    end
-    if layout.sectionInfo and layout.sectionInfo.bug then
-        layout.sectionInfo.bug.hint=ru and"Камень выбирается автоматически по долговечности."or"The best rock is selected automatically from durability."
-    end
+local function setAuto(value)
+    patch.auto=value==true
+    runtime.autoRockSelection=false
+    if patch.auto then applySelection(true)else applyClassicUI()applyHologramUI()end
 end
 
-local function applyHologramUI()
-    local holo=runtime.hologram
-    if type(holo)~="table"or holo.destroyed or holo.group~="farm"then return end
-    local cards=holo.cards
-    local card=type(cards)=="table"and cards[1]or nil
-    if not card then return end
-    local ru=runtime.language~="en"
-    local rock=runtime.selectedRock
-    local durability=runtime.adaptiveRockDurability
-    local rn=rockName(rock)
-    if card.primary and card.primary.text then card.primary.text.Text=ru and"Автоудар"or"Auto punch"end
-    if card.more and card.more.text then
-        card.more.text.Text=(ru and"Лучший: "or"Best: ")..rn.."  →"
-    end
-    if card.hint then
-        card.hint.Text=durability and((ru and"Долговечность: "or"Durability: ")..compact(durability).."  •  "..rn)or(ru and"Долговечность не найдена"or"Durability not found")
-    end
+local function disconnectSource()
+    if patch.sourceConnection then pcall(function()patch.sourceConnection:Disconnect()end)patch.sourceConnection=nil end
+end
+local function bindSource()
+    disconnectSource()
+    local object=findSource()
+    if not object then return end
+    patch.sourceConnection=object:GetPropertyChangedSignal("Value"):Connect(function()
+        if not patch.alive then return end
+        local value=parseNumber(object.Value)
+        if patch.auto and value~=patch.lastDurability then applySelection(false)end
+    end)
 end
 
--- Guarantee that both the hologram button and the detailed toggle select the current rock before starting.
 local bugRef=runtime.leverRefs and runtime.leverRefs.bug
-local originalBugSet=nil
-if bugRef and type(bugRef.Set)=="function"then
-    originalBugSet=bugRef.Set
+local originalBugSet=bugRef and bugRef.Set or nil
+if bugRef and type(originalBugSet)=="function"then
     bugRef.Set=function(nextValue,silent)
-        if nextValue then applySelection(true)applyClassicUI()end
+        if nextValue and patch.auto then applySelection(false)end
         return originalBugSet(nextValue,silent)
     end
 end
 
-local binding="RockBugAdaptiveRocksT40_"..tostring(player.UserId)
-local nextRead=0
-pcall(function()RunService:UnbindFromRenderStep(binding)end)
-RunService:BindToRenderStep(binding,Enum.RenderPriority.Camera.Value+2,function()
-    if not patch.alive or not runtime.alive then return end
-    local now=os.clock()
-    if now>=nextRead then
-        nextRead=now+0.35
-        applySelection(false)
-        applyClassicUI()
+local autoButton=runtime.layoutUI and runtime.layoutUI.autoRockButton
+if autoButton then
+    table.insert(patch.connections,autoButton.Activated:Connect(function()
+        task.defer(function()if patch.alive then setAuto(true)end end)
+    end))
+end
+
+local chooseButton=runtime.layoutUI and runtime.layoutUI.chooseRockButton
+if chooseButton then
+    table.insert(patch.connections,chooseButton.Activated:Connect(function()
+        -- Do not disable immediately; the picker may be cancelled. A selectedRock change below switches to manual.
+    end))
+end
+
+for _,key in ipairs({"Durability","durability"})do
+    table.insert(patch.connections,player:GetAttributeChangedSignal(key):Connect(function()
+        if patch.auto then applySelection(false)end
+    end))
+end
+
+table.insert(patch.connections,player.DescendantAdded:Connect(function(obj)
+    if durabilityScore(obj)then
+        source=nil
+        bindSource()
+        if patch.auto then applySelection(false)end
     end
-    -- The base T38 hologram redraws its hint every frame, so overwrite only this one card after it renders.
-    applyHologramUI()
+end))
+table.insert(patch.connections,player.DescendantRemoving:Connect(function(obj)
+    if obj==source then source=nil disconnectSource()end
+end))
+
+-- Lightweight watchdog: detects manual slider/picker changes and recovers if the stat object respawns.
+task.spawn(function()
+    local nextUI=0
+    while patch.alive and runtime.alive do
+        if patch.auto and not patch.applying and runtime.selectedRock and patch.lastRock and runtime.selectedRock.id~=patch.lastRock then
+            patch.auto=false
+            runtime.autoRockSelection=false
+            applyClassicUI()applyHologramUI()
+        end
+        if not source or not source.Parent then source=nil bindSource()if patch.auto then applySelection(false)end end
+        if os.clock()>=nextUI then nextUI=os.clock()+0.6 applyHologramUI()end
+        task.wait(0.25)
+    end
 end)
 
 function patch.Destroy()
     if not patch.alive then return end
     patch.alive=false
-    pcall(function()RunService:UnbindFromRenderStep(binding)end)
+    disconnectSource()
+    for _,connection in ipairs(patch.connections)do pcall(function()connection:Disconnect()end)end
     if bugRef and originalBugSet and bugRef.Set~=originalBugSet then bugRef.Set=originalBugSet end
     if env.RockBugAdaptiveRocks==patch then env.RockBugAdaptiveRocks=nil end
 end
 
-applySelection(true)
-applyClassicUI()
-applyHologramUI()
+bindSource()
+setAuto(true)
 return patch
