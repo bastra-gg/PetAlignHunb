@@ -1,7 +1,8 @@
--- RockBugHub TEST bootstrap T39: preserved T38 core + direct boss-chest test patch
-local VERSION="4.31HOLO-T39"
+-- RockBugHub TEST bootstrap T40: preserved T38 core + test patches
+local VERSION="4.31HOLO-T40"
 local CORE_URL="https://raw.githubusercontent.com/bastra-gg/PetAlignHunb/main/RockBugHub_v1_5_core.lua"
-local PATCH_URL="https://raw.githubusercontent.com/bastra-gg/PetAlignHunb/main/RockBugHub_TEST_BossChestDirect.lua"
+local BOSS_PATCH_URL="https://raw.githubusercontent.com/bastra-gg/PetAlignHunb/main/RockBugHub_TEST_BossChestDirect.lua"
+local ROCK_PATCH_URL="https://raw.githubusercontent.com/bastra-gg/PetAlignHunb/main/RockBugHub_TEST_AdaptiveRocks.lua"
 local env=_G
 if type(getgenv)=="function"then local ok,v=pcall(getgenv)if ok and type(v)=="table"then env=v end end
 env.RockBugTestVersion=VERSION
@@ -18,8 +19,10 @@ end
 local result=run(CORE_URL,"core")
 local runtime=env.RockBugRuntime or result
 if type(runtime)=="table"then runtime.testVersion=VERSION end
-local ok,problem=pcall(function()run(PATCH_URL,"direct chest patch")end)
-if not ok then warn("[RockBugHub TEST "..VERSION.."] chest patch failed: "..tostring(problem))end
+local okBoss,problemBoss=pcall(function()run(BOSS_PATCH_URL,"direct chest patch")end)
+if not okBoss then warn("[RockBugHub TEST "..VERSION.."] chest patch failed: "..tostring(problemBoss))end
+local okRock,problemRock=pcall(function()run(ROCK_PATCH_URL,"adaptive rocks patch")end)
+if not okRock then warn("[RockBugHub TEST "..VERSION.."] adaptive rocks patch failed: "..tostring(problemRock))end
 pcall(function()
     local pg=game:GetService("Players").LocalPlayer:FindFirstChildOfClass("PlayerGui")
     if not pg then return end
@@ -44,7 +47,7 @@ pcall(function()
     badge.BackgroundTransparency=0.12
     badge.BorderSizePixel=0
     badge.Font=Enum.Font.GothamBold
-    badge.Text="TEST • T39"
+    badge.Text="TEST • "..(VERSION:match("T%d+$")or VERSION)
     badge.TextColor3=Color3.fromRGB(194,184,255)
     badge.TextSize=8
     badge.ZIndex=math.max(1,stop.ZIndex)
