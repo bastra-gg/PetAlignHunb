@@ -1,9 +1,10 @@
--- RockBugHub TEST bootstrap T42: preserved T38 core + test patches
-local VERSION="4.31HOLO-T42"
+-- RockBugHub TEST bootstrap T43: preserved T38 core + test patches
+local VERSION="4.31HOLO-T43"
 local CORE_URL="https://raw.githubusercontent.com/bastra-gg/PetAlignHunb/main/RockBugHub_v1_5_core.lua"
 local BOSS_PATCH_URL="https://raw.githubusercontent.com/bastra-gg/PetAlignHunb/main/RockBugHub_TEST_BossChestDirect.lua"
 local ROCK_PATCH_URL="https://raw.githubusercontent.com/bastra-gg/PetAlignHunb/main/RockBugHub_TEST_AdaptiveRocks.lua"
 local MACHINE_PATCH_URL="https://raw.githubusercontent.com/bastra-gg/PetAlignHunb/main/RockBugHub_TEST_AdaptiveMachines.lua"
+local BOSS_UI_PATCH_URL="https://raw.githubusercontent.com/bastra-gg/PetAlignHunb/main/RockBugHub_TEST_BossCompact.lua"
 local env=_G
 if type(getgenv)=="function"then local ok,v=pcall(getgenv)if ok and type(v)=="table"then env=v end end
 env.RockBugTestVersion=VERSION
@@ -26,6 +27,8 @@ local okRock,problemRock=pcall(function()run(ROCK_PATCH_URL,"adaptive rocks patc
 if not okRock then warn("[RockBugHub TEST "..VERSION.."] adaptive rocks patch failed: "..tostring(problemRock))end
 local okMachine,problemMachine=pcall(function()run(MACHINE_PATCH_URL,"adaptive machines patch")end)
 if not okMachine then warn("[RockBugHub TEST "..VERSION.."] adaptive machines patch failed: "..tostring(problemMachine))end
+local okBossUI,problemBossUI=pcall(function()run(BOSS_UI_PATCH_URL,"boss compact UI patch")end)
+if not okBossUI then warn("[RockBugHub TEST "..VERSION.."] boss UI patch failed: "..tostring(problemBossUI))end
 pcall(function()
     local pg=game:GetService("Players").LocalPlayer:FindFirstChildOfClass("PlayerGui")
     if not pg then return end
