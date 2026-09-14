@@ -1,5 +1,5 @@
--- RockBugHub TEST direct Boss Chest patch v4
--- Exclusive direct ProximityPrompt claim. The legacy T38 chest collector is bypassed while rewards are active.
+-- RockBugHub TEST direct Boss Chest patch v5
+-- Exclusive direct ProximityPrompt claim + pre-teleport as soon as the boss reward phase starts forming.
 local Players=game:GetService("Players")
 local lp=Players.LocalPlayer
 while not lp do task.wait()lp=Players.LocalPlayer end
@@ -19,6 +19,7 @@ local state={
  claimCount=tonumber(q.bossLootCount)or 0,lastClaimAt=nil,lastClaimChest=nil,lastLootText=nil,lastLootAt=nil,
  awaitingClaim=false,pendingChest=nil,pendingAt=nil,pressSucceededAt=nil,rewardsSince=nil,
  captureToken=0,candidates={},captureDone=true,originalTick=originalTick,
+ prePrompt=nil,preName=nil,preMoved=false,descendantConn=nil,enabledConn=nil,
 }
 env.RockBugDirectChestAddon=state
 q.directBossChestAddon=state
@@ -63,6 +64,16 @@ local function context(prompt)
  for _=1,7 do if not node or node==workspace then break end;add(node.Name)node=node.Parent end
  return table.concat(out," ")
 end
+local function bossPromptInfo(prompt)
+ if not prompt or not prompt:IsA("ProximityPrompt")then return nil,nil end
+ local objectText,actionText="",""
+ pcall(function()objectText=tostring(prompt.ObjectText or"")actionText=tostring(prompt.ActionText or"")end)
+ local full=context(prompt)
+ local tier,name=tierOf(objectText.." "..full)
+ if not tier then return nil,nil end
+ local score=tier+(claimText(actionText)and 500 or claimText(full)and 250 or 0)
+ return name,score
+end
 local function worldCF(obj)
  local node=obj
  for _=1,8 do
@@ -78,19 +89,15 @@ local function characterParts()
  local ch=lp.Character
  return ch,ch and ch:FindFirstChild("HumanoidRootPart"),ch and ch:FindFirstChildWhichIsA("Humanoid")
 end
-local function findPrompt()
+local function findPrompt(allowDisabled)
  local _,root=characterParts()if not root then return nil,nil end
  local ok,nodes=pcall(function()return workspace:GetDescendants()end)if not ok then return nil,nil end
  local best,bestName,bestScore=nil,nil,-math.huge
  for index,obj in ipairs(nodes)do
   if index>28000 then break end
-  if obj:IsA("ProximityPrompt")and obj.Enabled then
-   local objectText,actionText="",""
-   pcall(function()objectText=tostring(obj.ObjectText or"")actionText=tostring(obj.ActionText or"")end)
-   local full=context(obj)
-   local tier,name=tierOf(objectText.." "..full)
-   if tier then
-    local score=tier+(claimText(actionText)and 500 or claimText(full)and 250 or 0)
+  if obj:IsA("ProximityPrompt")and(allowDisabled or obj.Enabled)then
+   local name,score=bossPromptInfo(obj)
+   if score then
     local cf=worldCF(obj)
     if cf then score=score-math.min((root.Position-cf.Position).Magnitude,1500)*0.01 else score-=10000 end
     if score>bestScore then best,bestName,bestScore=obj,name,score end
@@ -104,21 +111,43 @@ local function moveTo(prompt)
  if not root or not hum or hum.Health<=0 then return false end
  local cf=worldCF(prompt)if not cf then return false end
  root.Anchored=false hum.Sit=false
- -- One stable position in front of the prompt. No legacy chest movement loop is allowed to fight this.
  root.CFrame=cf*CFrame.new(0,2.6,-3.1)
  root.AssemblyLinearVelocity=Vector3.zero root.AssemblyAngularVelocity=Vector3.zero
  return true
+end
+local function cachePrompt(prompt,name)
+ if not prompt or not prompt.Parent then return false end
+ state.prePrompt=prompt state.preName=name or state.preName
+ if state.enabledConn then pcall(function()state.enabledConn:Disconnect()end)state.enabledConn=nil end
+ state.enabledConn=prompt:GetPropertyChangedSignal("Enabled"):Connect(function()
+  if not state.alive or not prompt.Parent then return end
+  local c=q.bossCycle local phase=c and c.phase
+  if prompt.Enabled and(phase=="arena"or phase=="rewards")then
+   if not state.preMoved then state.preMoved=moveTo(prompt)end
+   if phase=="rewards"and not state.pressSucceededAt then task.defer(function()if state.alive then pcall(state.TryOnce)end end)end
+  end
+ end)
+ return true
+end
+local function preTeleport()
+ if not state.alive then return false end
+ local c=q.bossCycle local phase=c and c.phase
+ if phase~="arena"and phase~="rewards"then return false end
+ local prompt,name=state.prePrompt,state.preName
+ if not prompt or not prompt.Parent then prompt,name=findPrompt(true);if prompt then cachePrompt(prompt,name)end end
+ if not prompt then return false end
+ if not state.preMoved then state.preMoved=moveTo(prompt)end
+ if state.preMoved then q.bossCycleStatus="Сундук: быстрый ТП • "..tostring(name or"Boss Chest")end
+ return state.preMoved
 end
 local function press(prompt)
  if not prompt or not prompt.Parent or not prompt.Enabled then return false end
  local hold=math.max(0.08,tonumber(prompt.HoldDuration)or 0)
  local held=pcall(function()
   prompt:InputHoldBegin()
-  task.wait(hold+0.08)
+  task.wait(hold+0.04)
   prompt:InputHoldEnd()
  end)
- -- Some executors expose fireproximityprompt but silently no-op. Use it only as a second shot,
- -- never as the success criterion by itself.
  if type(fireproximityprompt)=="function"then pcall(function()fireproximityprompt(prompt,0)end)end
  return held
 end
@@ -207,11 +236,13 @@ function state.TryOnce()
  local c=q.bossCycle
  if not c or c.phase~="rewards"then return false,"not rewards phase"end
  if state.pressSucceededAt then return true,state.lastChest end
- local prompt,name=findPrompt()
+ local prompt,name=state.prePrompt,state.preName
+ if not prompt or not prompt.Parent or not prompt.Enabled then prompt,name=findPrompt(false);if prompt then cachePrompt(prompt,name)end end
  if not prompt then return false,"boss chest prompt not found"end
  state.lastPrompt=prompt state.lastChest=name
- if not moveTo(prompt)then return false,"move failed"end
- task.wait(0.16)
+ if not state.preMoved then state.preMoved=moveTo(prompt)end
+ if not state.preMoved then return false,"move failed"end
+ task.wait(0.02)
  if not state.alive or not q.alive or not q.bossCycle or q.bossCycle.phase~="rewards"then return false,"phase changed"end
  state.awaitingClaim=true state.pendingChest=name state.pendingAt=os.clock()
  startCapture()
@@ -226,18 +257,30 @@ function state.TryOnce()
  return false,"prompt press failed"
 end
 
--- Replace only the rewards step of the cycle. Everything before/after rewards stays T38.
--- This is the important part: collector:Step() from the old implementation never runs here,
--- so it cannot keep teleporting the character around the chest or fight the direct prompt press.
+-- Old T38 reward collector never runs. We also pre-position during the arena phase,
+-- so the character is moved to the chest before the one-second reward wait can become dangerous.
 cycle.Tick=function(self)
  if not state.alive then return originalTick(self)end
  if self.phase~="rewards"then
-  state.rewardsSince=nil state.pressSucceededAt=nil state.nextAt=0
-  return originalTick(self)
+  local before=self.phase
+  local result=originalTick(self)
+  local after=self.phase
+  if after=="arena"then
+   if before~="arena"then
+    state.prePrompt=nil state.preName=nil state.preMoved=false state.pressSucceededAt=nil state.rewardsSince=nil state.nextAt=0
+    task.defer(preTeleport)
+   end
+  elseif after=="rewards"then
+   if not state.rewardsSince then state.rewardsSince=os.clock()end
+   task.defer(function()if state.alive then preTeleport()pcall(state.TryOnce)end end)
+  elseif after~="rewards"then
+   state.prePrompt=nil state.preName=nil state.preMoved=false state.pressSucceededAt=nil state.rewardsSince=nil state.nextAt=0
+  end
+  return result
  end
  local now=os.clock()
- if not state.rewardsSince then state.rewardsSince=now end
- if state.pressSucceededAt and now-state.pressSucceededAt>=0.38 then
+ if not state.rewardsSince then state.rewardsSince=now task.defer(function()if state.alive then preTeleport()pcall(state.TryOnce)end end)end
+ if state.pressSucceededAt and now-state.pressSucceededAt>=0.30 then
   publishClaim()
   self.phase="returning"
   q.bossCycleStatus="Награда нажата • возвращаюсь"
@@ -250,12 +293,28 @@ cycle.Tick=function(self)
   q.bossCycleStatus="Сундук не подтверждён • возвращаюсь"
   return
  end
- -- Old reward tick intentionally skipped.
 end
+
+-- If the chest/prompt spawns during the arena wait, catch it immediately instead of polling all workspace.
+state.descendantConn=workspace.DescendantAdded:Connect(function(obj)
+ if not state.alive or not obj:IsA("ProximityPrompt")then return end
+ local c=q.bossCycle local phase=c and c.phase
+ if phase~="arena"and phase~="rewards"then return end
+ task.defer(function()
+  if not state.alive or not obj.Parent then return end
+  local name,score=bossPromptInfo(obj)
+  if not score then return end
+  cachePrompt(obj,name)
+  preTeleport()
+  if q.bossCycle and q.bossCycle.phase=="rewards"and obj.Enabled then pcall(state.TryOnce)end
+ end)
+end)
 
 function state.Stop()
  if not state.alive then return end
  state.alive=false state.captureToken+=1
+ if state.descendantConn then pcall(function()state.descendantConn:Disconnect()end)state.descendantConn=nil end
+ if state.enabledConn then pcall(function()state.enabledConn:Disconnect()end)state.enabledConn=nil end
  if q.bossCycle==cycle and cycle.Tick~=originalTick then cycle.Tick=originalTick end
  if env.RockBugDirectChestAddon==state then env.RockBugDirectChestAddon=nil end
  if q.directBossChestAddon==state then q.directBossChestAddon=nil end
@@ -263,15 +322,17 @@ end
 
 task.spawn(function()
  while state.alive and q.alive do
-  local c=q.bossCycle
-  local phase=c and c.phase or nil
-  if phase=="rewards"and not state.pressSucceededAt and os.clock()>=(state.nextAt or 0)then
-   state.nextAt=os.clock()+1.15
+  local c=q.bossCycle local phase=c and c.phase or nil
+  if phase=="arena"and not state.preMoved then
+   preTeleport()
+  elseif phase=="rewards"and not state.pressSucceededAt and os.clock()>=(state.nextAt or 0)then
+   state.nextAt=os.clock()+0.35
+   preTeleport()
    pcall(state.TryOnce)
-  elseif phase~="rewards"then
+  elseif phase~="arena"and phase~="rewards"then
    state.nextAt=0
   end
-  task.wait(0.10)
+  task.wait(0.05)
  end
  state.Stop()
 end)
