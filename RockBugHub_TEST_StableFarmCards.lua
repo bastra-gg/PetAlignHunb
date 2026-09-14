@@ -1,7 +1,4 @@
--- RockBugHub TEST T50: single owner for FARM card captions.
--- T38 refreshes the HUD every 0.5s; older patches repainted the same labels on
--- different timers, so captions visibly alternated. This locks the final text
--- synchronously when T38 tries to overwrite it.
+-- RockBugHub TEST T51: one owner for FARM card captions; no caption flicker.
 local env=_G
 if type(getgenv)=="function"then local ok,v=pcall(getgenv)if ok and type(v)=="table"then env=v end end
 local q=env.RockBugRuntime
@@ -34,6 +31,9 @@ local function machineName(m)
  if v~=""and not string.lower(base):find(string.lower(v),1,true)then base=base.." • "..v end
  return base
 end
+
+-- T38 rewrites card strings every 0.5s. Lock the final caption synchronously,
+-- instead of repainting from several patches on different timers.
 local function desired(node,text)
  if not node or not node.Parent then return end
  local lock=state.locks[node]
@@ -45,42 +45,46 @@ local function desired(node,text)
    if node.Text~=lock.value then lock.busy=true node.Text=lock.value lock.busy=false end
   end)
   table.insert(state.connections,lock.connection)
- else lock.value=text end
+ else
+  lock.value=text
+ end
  if node.Text~=text then lock.busy=true node.Text=text lock.busy=false end
 end
-local function clearDead()
- for node in pairs(state.locks)do if not node.Parent then state.locks[node]=nil end end
-end
+
 local function update()
  local holo=q.hologram
  if type(holo)~="table"or holo.destroyed or holo.group~="farm"or type(holo.cards)~="table"then return end
  local isRu=ru()
+
  local rock=holo.cards[1]
  if rock then
-  local auto=not(q.adaptiveRockAuto==false or (env.RockBugAdaptiveRocks and env.RockBugAdaptiveRocks.auto==false))
-  local rn=rockName()
   desired(rock.primary and rock.primary.text,isRu and"Автоудар"or"Auto punch")
-  desired(rock.more and rock.more.text,(auto and(isRu and"Лучший: "or"Best: ")or(isRu and"Вручную: "or"Manual: "))..rn.."  →")
+  desired(rock.more and rock.more.text,isRu and"Выбрать камень  →"or"Choose rock  →")
   local d=q.adaptiveRockDurability
-  desired(rock.hint,d and((isRu and"Долговечность: "or"Durability: ")..compact(d).." • "..rn)or(isRu and"Долговечность не найдена"or"Durability not found"))
+  local mode=q.adaptiveRockAuto==false and(isRu and"ВРУЧНУЮ"or"MANUAL")or(isRu and"АВТО"or"AUTO")
+  desired(rock.hint,d and(mode.." • "..compact(d).." • "..rockName())or(mode.." • "..(isRu and"долговечность не найдена"or"durability not found")))
  end
+
  local machine=holo.cards[2]
  if machine then
-  local auto=q.adaptiveMachineAuto==true
-  local m=q.selectedMachine
   desired(machine.primary and machine.primary.text,isRu and"Автотренажёр"or"Auto machine")
   desired(machine.more and machine.more.text,isRu and"Залы и тренажёры  →"or"Gyms & machines  →")
-  local text
-  if auto then text=(isRu and"АВТО • "or"AUTO • ")..tostring(m and m.zone or"—").." • "..machineName(m)
-  elseif m then text=(isRu and"Вручную • "or"Manual • ")..tostring(m.zone or"—").." • "..machineName(m)
-  else text=isRu and"Тренажёр не выбран"or"Machine not selected"end
+  local m=q.selectedMachine
+  local mode=q.adaptiveMachineAuto==true and(isRu and"АВТО"or"AUTO")or(isRu and"ВРУЧНУЮ"or"MANUAL")
+  local text=m and(mode.." • "..tostring(m.zone or"—").." • "..machineName(m))or(mode.." • "..(isRu and"тренажёр не выбран"or"machine not selected"))
   desired(machine.hint,text)
  end
+
+ local training=holo.cards[3]
+ if training then
+  -- Leave the untouched training card exactly as the base UI defines it.
+ end
+
  local boss=holo.cards[4]
  if boss then
   desired(boss.primary and boss.primary.text,isRu and"Автобосс"or"Autoboss")
-  local loot=tostring(q.bossLootReport or"")
-  if loot==""then loot=isRu and"пока нет"or"none yet"end
+  local itemCount=tonumber(q.bossLootItemCount)or 0
+  local loot=itemCount>0 and(tostring(itemCount)..(isRu and" наград"or" rewards"))or(isRu and"пока нет"or"none yet")
   desired(boss.more and boss.more.text,(isRu and"Лут: "or"Loot: ")..loot.."  →")
   local status=tostring(q.bossCycleStatus or"")
   if status==""then status=(q.bossCycle and q.bossCycle.enabled)and(isRu and"Работает в фоне"or"Running in background")or(isRu and"Выключен"or"Off")end
@@ -89,11 +93,12 @@ local function update()
 end
 
 task.spawn(function()
- while state.alive and q.alive do update()clearDead()task.wait(0.12)end
+ while state.alive and q.alive do update()task.wait(0.25)end
 end)
 
 function state.Destroy()
- if not state.alive then return end state.alive=false
+ if not state.alive then return end
+ state.alive=false
  for _,c in ipairs(state.connections)do pcall(function()c:Disconnect()end)end
  state.connections={}state.locks={}
  if env.RockBugStableFarmCards==state then env.RockBugStableFarmCards=nil end
