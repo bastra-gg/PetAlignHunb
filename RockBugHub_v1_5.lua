@@ -1,5 +1,5 @@
--- RockBugHub TEST bootstrap T53: FARM fixes + faster boss chest teleport
-local VERSION="4.31HOLO-T53"
+-- RockBugHub TEST bootstrap T54: verified boss reward auto-claim
+local VERSION="4.31HOLO-T54"
 local CORE_URL="https://raw.githubusercontent.com/bastra-gg/PetAlignHunb/main/RockBugHub_v1_5_core.lua"
 local BOSS_PATCH_URL="https://raw.githubusercontent.com/bastra-gg/PetAlignHunb/main/RockBugHub_TEST_BossChestDirect.lua"
 local ROCK_PATCH_URL="https://raw.githubusercontent.com/bastra-gg/PetAlignHunb/main/RockBugHub_TEST_AdaptiveRocks.lua"
@@ -23,7 +23,20 @@ local result=run(CORE_URL,"core")
 local runtime=env.RockBugRuntime or result
 if type(runtime)=="table"then runtime.testVersion=VERSION end
 local okBoss,problemBoss=pcall(function()run(BOSS_PATCH_URL,"direct chest patch")end)
-if not okBoss then warn("[RockBugHub TEST "..VERSION.."] chest patch failed: "..tostring(problemBoss))end
+if not okBoss then
+    pcall(function()
+        if type(runtime)=="table"then
+            runtime.bossCycleError="Direct Boss Chest patch не загрузился"
+            runtime.bossCycleStatus="Автобосс остановлен: нет безопасного автосбора"
+            local c=runtime.bossCycle
+            if type(c)=="table"then
+                if type(c.Cancel)=="function"then c:Cancel(false)end
+                c.enabled=false
+            end
+        end
+    end)
+    warn("[RockBugHub TEST "..VERSION.."] chest patch failed: "..tostring(problemBoss))
+end
 local okRock,problemRock=pcall(function()run(ROCK_PATCH_URL,"adaptive rocks patch")end)
 if not okRock then warn("[RockBugHub TEST "..VERSION.."] adaptive rocks patch failed: "..tostring(problemRock))end
 local okMachine,problemMachine=pcall(function()run(MACHINE_PATCH_URL,"adaptive machines patch")end)
