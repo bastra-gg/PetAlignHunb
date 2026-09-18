@@ -1,5 +1,5 @@
--- RockBugHub TEST bootstrap T58: integrated boss rewards + machine rebirth guard
-local VERSION="4.31HOLO-T58"
+-- RockBugHub TEST bootstrap T59: boss/rebirth machine recovery without moving machines
+local VERSION="4.31HOLO-T59"
 local CORE_URL="https://raw.githubusercontent.com/bastra-gg/PetAlignHunb/09719f8e7536f55acda625e8e18ae0ff44ce9cdb/RockBugHub_v1_5_core.lua"
 local BOSS_RUNTIME_URL="https://raw.githubusercontent.com/bastra-gg/PetAlignHunb/09719f8e7536f55acda625e8e18ae0ff44ce9cdb/RockBugHub_TEST_RuntimeA.lua"
 local ROCK_PATCH_URL="https://raw.githubusercontent.com/bastra-gg/PetAlignHunb/09719f8e7536f55acda625e8e18ae0ff44ce9cdb/RockBugHub_TEST_AdaptiveRocks.lua"
@@ -46,50 +46,31 @@ if not okMachine then warn("[RockBugHub TEST "..VERSION.."] adaptive machines pa
 local okMachineGuard,problemMachineGuard=pcall(function()run(MACHINE_GUARD_URL,"machine rebirth guard")end)
 if not okMachineGuard then warn("[RockBugHub TEST "..VERSION.."] machine rebirth guard failed: "..tostring(problemMachineGuard))end
 
--- T58 machine/boss hotfix:
--- 1) never move the machine model/seat itself;
--- 2) detach before rebirth/boss movement so the seat weld cannot drag the machine;
--- 3) autoboss waits until the auto-machine has finished its post-rebirth strength warm-up.
+-- T59 machine/boss recovery:
+-- Keep the original controlled rebirth flow (rebirth -> warm strength -> sit -> continue),
+-- but never PivotTo/CFrame the machine itself.
 pcall(function()
     if type(runtime)~="table"then return end
     local Players=game:GetService("Players")
     local player=Players.LocalPlayer
     if not player then return end
 
-    -- Remove the old guard because it intentionally PivotTo/CFrame-restored displaced machines.
+    -- Replace the historical guard because its drift repair moved machine models.
     local oldGuard=env.RockBugMachineRebirthGuard
-    if type(oldGuard)=="table"and type(oldGuard.Destroy)=="function"then
-        pcall(oldGuard.Destroy)
-    end
+    if type(oldGuard)=="table"and type(oldGuard.Destroy)=="function"then pcall(oldGuard.Destroy)end
 
     local rawStop=runtime.stopMachineFarm
-    local function stopWithoutMovingMachine(reason)
-        if type(rawStop)~="function"then return end
-        local machine=runtime.selectedMachine
-        local homePivot,homeSeatCF
-        if machine then
-            homePivot=machine.homePivot
-            homeSeatCF=machine.homeSeatCF
-            -- Core stop only moves the machine when these restore targets exist.
-            machine.homePivot=nil
-            machine.homeSeatCF=nil
-        end
-        local ok,err=pcall(rawStop,reason)
-        if machine then
-            machine.homePivot=homePivot
-            machine.homeSeatCF=homeSeatCF
-        end
-        if not ok then error(err,0)end
-    end
-    runtime.stopMachineFarm=stopWithoutMovingMachine
-
     local lever=runtime.leverRefs and runtime.leverRefs.machineFarm
     local originalAllowed=runtime.machineRebirthAllowed
+    if type(rawStop)~="function"or type(originalAllowed)~="function"
+        or type(lever)~="table"or type(lever.Set)~="function"then return end
+
     local state={
         alive=true,
         rebirthBusy=false,
         phase="idle",
         savedMachine=nil,
+        resumeMachine=false,
         wrapper=nil,
     }
     env.RockBugMachineRebirthGuard=state
@@ -112,6 +93,26 @@ pcall(function()
         return h.SeatPart==machine.seat
     end
 
+    -- Core stop can restore homePivot/homeSeatCF. Temporarily hide those values so
+    -- it only detaches the player and NEVER moves the machine/model.
+    local function stopWithoutMovingMachine(reason)
+        local machine=runtime.selectedMachine
+        local homePivot,homeSeatCF
+        if machine then
+            homePivot=machine.homePivot
+            homeSeatCF=machine.homeSeatCF
+            machine.homePivot=nil
+            machine.homeSeatCF=nil
+        end
+        local ok,err=pcall(rawStop,reason)
+        if machine then
+            machine.homePivot=homePivot
+            machine.homeSeatCF=homeSeatCF
+        end
+        if not ok then error(err,0)end
+    end
+    runtime.stopMachineFarm=stopWithoutMovingMachine
+
     local function restartExact(machine)
         if not state.alive or not runtime.alive or not machine or not machine.seat or not machine.seat.Parent then return false end
         runtime.selectedMachine=machine
@@ -119,79 +120,127 @@ pcall(function()
         local a=adaptive()
         local oldManual=a and a.manualArmed or false
         if a then a.manualArmed=true end
-        local ok=false
-        if type(lever)=="table"and type(lever.Set)=="function"then
-            ok=pcall(lever.Set,true,false)
-        end
+        local ok=pcall(lever.Set,true,false)
         if a and a.alive~=false then a.manualArmed=oldManual end
         return ok and runtime.machineActive==true
     end
 
-    local function beginDetach(machine)
+    local function waitCharacter(timeout)
+        local deadline=os.clock()+(timeout or 2)
+        while state.alive and os.clock()<deadline do
+            local c=player.Character
+            local h=c and c:FindFirstChildOfClass("Humanoid")
+            if c and c:FindFirstChild("HumanoidRootPart")and h and h.Health>0 then return true end
+            task.wait(0.04)
+        end
+        return false
+    end
+
+    local function waitRecovered(machine,timeout)
+        local deadline=os.clock()+(timeout or 30)
+        while state.alive and runtime.alive and os.clock()<deadline do
+            local a=adaptive()
+            if not a or not a.auto then return false,"auto machine off"end
+            if runtime.machineActive and machinePresent(machine) and not runtime.machineRecovering then
+                return true
+            end
+            task.wait(0.08)
+        end
+        return false,"timeout"
+    end
+
+    local function beginRebirth(machine)
         if state.rebirthBusy or not state.alive or not machine then return end
         state.rebirthBusy=true
         state.phase="detaching"
         state.savedMachine=machine
+        local a=adaptive()
+        state.resumeMachine=a and a.auto==true
+
         task.spawn(function()
-            -- Important: only detach the PLAYER. Do not restore/reposition the machine.
-            local a=adaptive()
-            local oldSwitch=a and a.switching or false
-            if a then a.switching=true end
+            local aa=adaptive()
+            local oldSwitch=aa and aa.switching or false
+            if aa then aa.switching=true end
             if runtime.machineActive then pcall(stopWithoutMovingMachine,nil)end
-            if a and a.alive~=false then a.switching=oldSwitch end
+            if aa and aa.alive~=false then aa.switching=oldSwitch end
 
             local stopDeadline=os.clock()+1.5
             while state.alive and runtime.machineActive and os.clock()<stopDeadline do task.wait(0.025)end
             if not state.alive then return end
 
+            -- Permit exactly the pending rebirth while the player is detached.
             state.phase="waiting"
             local startDeadline=os.clock()+3
-            while state.alive and runtime.autoRebirth and not runtime.rebirthInFlight and os.clock()<startDeadline do task.wait(0.01)end
+            while state.alive and runtime.autoRebirth and not runtime.rebirthInFlight and os.clock()<startDeadline do
+                task.wait(0.01)
+            end
             if runtime.rebirthInFlight then
                 state.phase="rebirthing"
                 while state.alive and runtime.rebirthInFlight do task.wait(0.01)end
             end
             if not state.alive then return end
 
-            state.phase="restart"
-            local charDeadline=os.clock()+2
-            while state.alive and os.clock()<charDeadline do
-                local c=player.Character
-                local h=c and c:FindFirstChildOfClass("Humanoid")
-                if c and c:FindFirstChild("HumanoidRootPart")and h and h.Health>0 then break end
-                task.wait(0.04)
-            end
+            -- IMPORTANT: after rebirth keep all further rebirths blocked.
+            -- Restart the exact machine; core recovery uses the dumbbell at 0 strength,
+            -- gains the requirement, then seats the player.
+            state.phase="warming"
+            waitCharacter(2.5)
             task.wait(0.08)
-
-            local saved=state.savedMachine
-            local aa=adaptive()
-            if state.alive and runtime.alive and runtime.autoRebirth and aa and aa.auto and not runtime.machineActive then
-                restartExact(saved)
+            local machineNow=state.savedMachine
+            if state.resumeMachine and adaptive() and adaptive().auto and not runtime.machineActive then
+                restartExact(machineNow)
             end
+
+            if state.resumeMachine and adaptive() and adaptive().auto then
+                local recovered,problem=waitRecovered(machineNow,35)
+                if not recovered and state.alive then
+                    runtime.autoRebirth=false
+                    local rb=runtime.leverRefs and runtime.leverRefs.autoRebirth
+                    if rb and type(rb.Set)=="function"then pcall(rb.Set,false,true)end
+                    runtime.machineRecoveryStatus="ТРЕНАЖЁР: не удалось восстановить посадку • ребирты остановлены"
+                    if problem=="timeout"then
+                        runtime.bossCycleStatus="Жду ручной проверки тренажёра"
+                    end
+                end
+            end
+
             state.phase="idle"
             state.rebirthBusy=false
             state.savedMachine=nil
+            state.resumeMachine=false
         end)
     end
 
-    if type(originalAllowed)=="function"then
-        state.wrapper=function()
-            if not state.alive then return originalAllowed()end
-            if state.rebirthBusy then
-                if state.phase=="waiting"or state.phase=="rebirthing"then return not runtime.machineActive end
-                return false
+    state.wrapper=function()
+        if not state.alive then return originalAllowed()end
+
+        -- During the one controlled rebirth, allow it only while detached.
+        -- During warm-up/reattach absolutely block every next rebirth.
+        if state.rebirthBusy then
+            if state.phase=="waiting"or state.phase=="rebirthing"then
+                return not runtime.machineActive
             end
-            local ok,value=pcall(originalAllowed)
-            local allowed=ok and value==true
-            local a=adaptive()
-            if allowed and runtime.autoRebirth and runtime.machineActive and a and a.auto and not a.switching and not a.manualArmed then
-                beginDetach(runtime.selectedMachine)
-                return false
-            end
-            return allowed
+            return false
         end
-        runtime.machineRebirthAllowed=state.wrapper
+
+        local a=adaptive()
+        if a and a.auto and runtime.selectedMachine then
+            -- Boss return / respawn recovery still in progress: no rebirth yet.
+            if runtime.machineRecovering or not runtime.machineActive or not machinePresent(runtime.selectedMachine) then
+                return false
+            end
+        end
+
+        local ok,value=pcall(originalAllowed)
+        local allowed=ok and value==true
+        if allowed and runtime.autoRebirth and runtime.machineActive and a and a.auto
+            and not a.switching and not a.manualArmed then
+            beginRebirth(runtime.selectedMachine)
+            return false
+        end
+        return allowed
     end
+    runtime.machineRebirthAllowed=state.wrapper
 
     function state.Destroy()
         if not state.alive then return end
@@ -202,8 +251,7 @@ pcall(function()
         if runtime.machineRebirthGuard==state then runtime.machineRebirthGuard=nil end
     end
 
-    -- Boss must not interrupt post-rebirth warm-up. Wait until the same machine is
-    -- actually ready/seated; then the ordinary T58 boss cycle can snapshot and detach.
+    -- A boss may start only after post-rebirth warm-up and seating finished.
     local cycle=runtime.bossCycle
     if type(cycle)=="table"and type(cycle.Tick)=="function"then
         local oldTick=cycle.Tick
@@ -211,12 +259,11 @@ pcall(function()
             if self.enabled and self.phase=="waiting"then
                 local a=adaptive()
                 local machine=runtime.selectedMachine
-                local autoMachine=a and a.auto and machine and machine.seat and machine.seat.Parent
-                if autoMachine then
-                    local waitingForMachine=state.rebirthBusy or runtime.rebirthInFlight
+                if a and a.auto and machine and machine.seat and machine.seat.Parent then
+                    local waiting=state.rebirthBusy or runtime.rebirthInFlight
                         or runtime.machineRecovering or not runtime.machineActive or not machinePresent(machine)
-                    if waitingForMachine then
-                        runtime.bossCycleStatus="Перед боссом: добираю силу и сажусь на тренажёр"
+                    if waiting then
+                        runtime.bossCycleStatus="Перед боссом: сначала сила → тренажёр → потом бой"
                         return
                     end
                 end
