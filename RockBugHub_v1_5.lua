@@ -1,5 +1,5 @@
--- RockBugHub TEST bootstrap T64: strength-before-boss, machine-before-rebirth
-local VERSION="4.31HOLO-T64"
+-- RockBugHub TEST bootstrap T65: orbit UI; preserves T64 boss/machine coordination
+local VERSION="4.31HOLO-T65"
 local CORE_URL="https://raw.githubusercontent.com/bastra-gg/PetAlignHunb/09719f8e7536f55acda625e8e18ae0ff44ce9cdb/RockBugHub_v1_5_core.lua"
 local BOSS_RUNTIME_URL="https://raw.githubusercontent.com/bastra-gg/PetAlignHunb/09719f8e7536f55acda625e8e18ae0ff44ce9cdb/RockBugHub_TEST_RuntimeA.lua"
 local ROCK_PATCH_URL="https://raw.githubusercontent.com/bastra-gg/PetAlignHunb/09719f8e7536f55acda625e8e18ae0ff44ce9cdb/RockBugHub_TEST_AdaptiveRocks.lua"
@@ -7,6 +7,7 @@ local MACHINE_PATCH_URL="https://raw.githubusercontent.com/bastra-gg/PetAlignHun
 local MACHINE_GUARD_URL="https://raw.githubusercontent.com/bastra-gg/PetAlignHunb/09719f8e7536f55acda625e8e18ae0ff44ce9cdb/RockBugHub_TEST_MachineRebirthGuard.lua"
 local BOSS_UI_PATCH_URL="https://raw.githubusercontent.com/bastra-gg/PetAlignHunb/09719f8e7536f55acda625e8e18ae0ff44ce9cdb/RockBugHub_TEST_BossCompact.lua"
 local CARD_PATCH_URL="https://raw.githubusercontent.com/bastra-gg/PetAlignHunb/09719f8e7536f55acda625e8e18ae0ff44ce9cdb/RockBugHub_TEST_StableFarmCards.lua"
+local ORBIT_UI_URL="https://raw.githubusercontent.com/bastra-gg/PetAlignHunb/main/RockBugHub_TEST_OrbitUI.lua"
 local env=_G
 if type(getgenv)=="function"then local ok,v=pcall(getgenv)if ok and type(v)=="table"then env=v end end
 env.RockBugTestVersion=VERSION
@@ -23,6 +24,10 @@ end
 local result=run(CORE_URL,"core")
 local runtime=env.RockBugRuntime or result
 if type(runtime)=="table"then runtime.testVersion=VERSION end
+-- ORBIT_BOOT_BEGIN
+local okOrbit,problemOrbit=pcall(function()run(ORBIT_UI_URL,"orbit UI")end)
+if not okOrbit then warn("[RockBugHub TEST "..VERSION.."] orbit UI failed: "..tostring(problemOrbit))end
+-- ORBIT_BOOT_END
 local okBossRuntime,problemBossRuntime=pcall(function()run(BOSS_RUNTIME_URL,"boss reward runtime")end)
 if not okBossRuntime then
     pcall(function()
@@ -559,6 +564,7 @@ pcall(function()
     end
     if not stop or not stop.Parent then return end
     local parent=stop.Parent
+    if parent:FindFirstChild("OrbitContext")then return end -- Version is already in the console header.
     local old=parent:FindFirstChild("TestBuildBadge")
     if old then old:Destroy()end
     local badge=Instance.new("TextLabel")
