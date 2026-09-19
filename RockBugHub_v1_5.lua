@@ -1,5 +1,5 @@
--- RockBugHub TEST bootstrap T63: strict machine-before-rebirth boss recovery
-local VERSION="4.31HOLO-T63"
+-- RockBugHub TEST bootstrap T64: strength-before-boss, machine-before-rebirth
+local VERSION="4.31HOLO-T64"
 local CORE_URL="https://raw.githubusercontent.com/bastra-gg/PetAlignHunb/09719f8e7536f55acda625e8e18ae0ff44ce9cdb/RockBugHub_v1_5_core.lua"
 local BOSS_RUNTIME_URL="https://raw.githubusercontent.com/bastra-gg/PetAlignHunb/09719f8e7536f55acda625e8e18ae0ff44ce9cdb/RockBugHub_TEST_RuntimeA.lua"
 local ROCK_PATCH_URL="https://raw.githubusercontent.com/bastra-gg/PetAlignHunb/09719f8e7536f55acda625e8e18ae0ff44ce9cdb/RockBugHub_TEST_AdaptiveRocks.lua"
@@ -46,11 +46,10 @@ if not okMachine then warn("[RockBugHub TEST "..VERSION.."] adaptive machines pa
 local okMachineGuard,problemMachineGuard=pcall(function()run(MACHINE_GUARD_URL,"machine rebirth guard")end)
 if not okMachineGuard then warn("[RockBugHub TEST "..VERSION.."] machine rebirth guard failed: "..tostring(problemMachineGuard))end
 
--- T63 strict boss/machine coordinator:
--- 1) Detect boss BEFORE core starts it and pause auto-rebirth.
--- 2) Boss cannot start at 0/unknown Strength.
--- 3) If auto-machine was intended, require strength recovery + stable seat before battle.
--- 4) After reward/return, require the same stable seat BEFORE auto-rebirth is restored.
+-- T64 boss/machine coordinator:
+-- BEFORE BOSS: pause rebirth, gain enough strength with Weight, then fight immediately.
+-- NO machine seat is required before boss.
+-- AFTER BOSS: restore exact machine, confirm stable seat, only then resume auto-rebirth.
 pcall(function()
     if type(runtime)~="table"then return end
     local Players=game:GetService("Players")
@@ -64,6 +63,7 @@ pcall(function()
     local originalAllowed=runtime.machineRebirthAllowed
     local machineLever=runtime.leverRefs and runtime.leverRefs.machineFarm
     local rebirthLever=runtime.leverRefs and runtime.leverRefs.autoRebirth
+    local weightLever=runtime.leverRefs and runtime.leverRefs.train and runtime.leverRefs.train.Weight
     local cycle=runtime.bossCycle
 
     if type(rawStop)~="function"or type(originalAllowed)~="function"
@@ -72,17 +72,17 @@ pcall(function()
 
     local state={
         alive=true,
-        phase="idle",
         machine=nil,
         machineIntent=false,
         resumeAutoRebirth=false,
         preparingBoss=false,
         prepareStarted=0,
-        readySince=nil,
         postBoss=false,
         postBusy=false,
-        rewardAt=nil,
         rewardQuietAt=nil,
+        tempWeight=false,
+        weightWasActive=false,
+        nextWeightTry=0,
         originalTick=cycle.Tick,
         wrapper=nil,
     }
@@ -120,7 +120,6 @@ pcall(function()
     end
 
     local function readStrength()
-        -- Force the core to refresh its own exact replicated counter first.
         if type(runtime.updateSessionStats)=="function"then
             pcall(runtime.updateSessionStats,os.clock())
         end
@@ -160,21 +159,11 @@ pcall(function()
         return n and math.max(1,n)or nil
     end
 
-    local function strengthReady(machine)
-        local strength=readStrength()
-        if strength==nil or strength<=0 then return false,strength end
-        local need=machineNeed(machine)
-        if need and strength<need then return false,strength end
-        return true,strength
-    end
-
     local function autoMachineWanted()
         local a=adaptive()
         return (a and a.auto==true)or runtime.adaptiveMachineAuto==true
     end
 
-    -- Keep the core's tested detach. Only suppress its legacy "move machine home" branch
-    -- and tell AdaptiveMachines that this OFF is internal, not a user's manual switch.
     local function safeStopMachine(reason)
         local machine=runtime.selectedMachine
         local a=adaptive()
@@ -198,7 +187,10 @@ pcall(function()
         end
         if a and a.alive~=false then
             a.switching=oldSwitch
-            if autoBefore then a.auto=true runtime.adaptiveMachineAuto=true end
+            if autoBefore or state.machineIntent then
+                a.auto=true
+                runtime.adaptiveMachineAuto=true
+            end
         end
         if not ok then error(err,0)end
     end
@@ -218,19 +210,64 @@ pcall(function()
         setAutoRebirth(false)
     end
 
+    local function weightActive()
+        return type(runtime.activeTrains)=="table"and runtime.activeTrains.Weight~=nil
+    end
+
+    local function startWeight()
+        if weightActive()then return true end
+        if not weightLever or type(weightLever.Set)~="function"then return false end
+        if os.clock()<state.nextWeightTry then return false end
+        state.nextWeightTry=os.clock()+0.6
+        local a=adaptive()
+        local autoBefore=(a and a.auto==true)or runtime.adaptiveMachineAuto==true
+        local ok=pcall(weightLever.Set,true,false)
+        if ok then state.tempWeight=true end
+        if a and a.alive~=false and (autoBefore or state.machineIntent)then
+            a.auto=true
+            runtime.adaptiveMachineAuto=true
+        end
+        return ok
+    end
+
+    local function stopTempWeight()
+        if not state.tempWeight then return end
+        state.tempWeight=false
+        if weightLever and type(weightLever.Set)=="function"then
+            pcall(weightLever.Set,false,false)
+        end
+        local a=adaptive()
+        if a and a.alive~=false and state.machineIntent then
+            a.auto=true
+            runtime.adaptiveMachineAuto=true
+        end
+    end
+
+    local function requiredBeforeBoss()
+        if state.machineIntent and state.machine then
+            return machineNeed(state.machine)or 1
+        end
+        return 1
+    end
+
+    local function bossStrengthReady()
+        local strength=readStrength()
+        if strength==nil then return false,nil,requiredBeforeBoss()end
+        local need=requiredBeforeBoss()
+        return strength>=need,strength,need
+    end
+
     local function restartExact(machine)
         if not state.alive or not runtime.alive or not machine or not machine.seat or not machine.seat.Parent then return false end
         runtime.selectedMachine=machine
         runtime.machineZone=machine.zone
-
         local a=adaptive()
-        local autoBefore=(a and a.auto==true)or runtime.adaptiveMachineAuto==true
         local oldManual=a and a.manualArmed or false
         if a then a.manualArmed=true end
         local ok=pcall(machineLever.Set,true,false)
         if a and a.alive~=false then
             a.manualArmed=oldManual
-            if autoBefore or state.machineIntent then
+            if state.machineIntent then
                 a.auto=true
                 runtime.adaptiveMachineAuto=true
             end
@@ -239,37 +276,22 @@ pcall(function()
         return ok
     end
 
-    local function kickRecovery(machine)
-        if not machine or not machine.seat or not machine.seat.Parent then return false end
-
-        local ready,strength=strengthReady(machine)
-        -- Core recovery checks "attached" first. At 0 strength, force a clean core detach
-        -- so recovery enters dumbbell/warming instead of accepting a stale seat.
-        if (strength==nil or strength<=0)and runtime.machineActive and machinePresent(machine)then
-            pcall(safeStopMachine,nil)
-        end
-
-        if not runtime.machineActive then restartExact(machine)end
-        if type(runtime.runMachineRecovery)=="function"then pcall(runtime.runMachineRecovery)end
-        return ready
-    end
-
     local function machineReady(machine)
         if not machine or not machine.seat or not machine.seat.Parent then return false end
-        local strengthOk=strengthReady(machine)
-        return strengthOk==true
-            and runtime.machineActive==true
+        return runtime.machineActive==true
             and runtime.machineRecovering~=true
             and runtime.machineAttachInFlight~=true
             and machinePresent(machine)
     end
 
-    local function waitMachine(machine,timeout,statusPrefix)
-        local deadline=os.clock()+(timeout or 45)
+    local function waitMachine(machine,timeout)
+        local deadline=os.clock()+(timeout or 50)
         local stable=nil
         while state.alive and runtime.alive and os.clock()<deadline do
             pauseAutoRebirth()
-            kickRecovery(machine)
+
+            if not runtime.machineActive then restartExact(machine)end
+            if type(runtime.runMachineRecovery)=="function"then pcall(runtime.runMachineRecovery)end
 
             if machineReady(machine)then
                 stable=stable or os.clock()
@@ -278,10 +300,8 @@ pcall(function()
                 stable=nil
             end
 
-            if statusPrefix then
-                local strength=readStrength()
-                runtime.bossCycleStatus=statusPrefix.." • сила "..tostring(strength==nil and"?"or math.floor(strength))
-            end
+            local strength=readStrength()
+            runtime.bossCycleStatus="После босса: сажусь на тренажёр • сила "..tostring(strength==nil and"?"or math.floor(strength))
             task.wait(0.08)
         end
         return false
@@ -293,10 +313,7 @@ pcall(function()
         if not ok or type(list)~="table"then return false end
         for _,candidate in ipairs(list)do
             if candidate and candidate.model then
-                if type(runtime.bossAdapter.targetAlive)=="function"then
-                    local aliveOk,alive=pcall(runtime.bossAdapter.targetAlive,candidate.model)
-                    if aliveOk and alive then return true end
-                elseif type(runtime.bossAdapter.info)=="function"then
+                if type(runtime.bossAdapter.info)=="function"then
                     local infoOk,info=pcall(runtime.bossAdapter.info,candidate.model)
                     if infoOk and info and info.alive then return true end
                 else
@@ -311,40 +328,30 @@ pcall(function()
         if state.preparingBoss or state.postBoss then return end
         state.preparingBoss=true
         state.prepareStarted=os.clock()
-        state.readySince=nil
         state.machine=runtime.selectedMachine
         state.machineIntent=state.machine~=nil and (runtime.machineActive==true or autoMachineWanted())
         state.resumeAutoRebirth=runtime.autoRebirth==true
+        state.weightWasActive=weightActive()
+        state.tempWeight=false
         pauseAutoRebirth()
-
-        if state.machineIntent and state.machine then
-            kickRecovery(state.machine)
-        end
     end
 
     local function cancelBossPreparation()
+        stopTempWeight()
         local resume=state.resumeAutoRebirth
         state.preparingBoss=false
         state.prepareStarted=0
-        state.readySince=nil
         state.machine=nil
         state.machineIntent=false
         state.resumeAutoRebirth=false
+        state.weightWasActive=false
         if resume then setAutoRebirth(true)end
     end
 
-    -- Absolute rebirth gate: during boss preparation/return the seat must exist first.
+    -- During boss prep and post-boss restore rebirth is absolutely blocked.
     state.wrapper=function()
         if not state.alive then return originalAllowed()end
-
-        if state.preparingBoss or state.postBoss then
-            if state.machineIntent and state.machine then
-                if not machineReady(state.machine)then return false end
-            end
-            -- During preparation auto-rebirth is intentionally paused.
-            if state.preparingBoss then return false end
-        end
-
+        if state.preparingBoss or state.postBoss then return false end
         local ok,value=pcall(originalAllowed)
         return ok and value==true
     end
@@ -355,31 +362,33 @@ pcall(function()
         state.postBusy=true
         task.spawn(function()
             pauseAutoRebirth()
+            stopTempWeight()
 
-            local machine=state.machine
             local ok=true
-            if state.machineIntent and machine then
-                ok=waitMachine(machine,50,"После босса: сила → тренажёр → потом реб")
+            if state.machineIntent and state.machine then
+                ok=waitMachine(state.machine,50)
             end
 
             if ok and state.alive then
-                runtime.bossCycleStatus="После босса: тренажёр подтверждён • возвращаю ребирты"
+                runtime.bossCycleStatus=state.machineIntent
+                    and"После босса: сел на тренажёр • теперь возвращаю реб"
+                    or"После босса: возвращаю реб"
                 task.wait(0.15)
                 local resume=state.resumeAutoRebirth
                 state.postBoss=false
                 state.postBusy=false
                 state.preparingBoss=false
-                state.readySince=nil
                 state.machine=nil
                 state.machineIntent=false
                 state.resumeAutoRebirth=false
+                state.weightWasActive=false
                 if resume then setAutoRebirth(true)end
             else
                 state.postBoss=false
                 state.postBusy=false
                 state.preparingBoss=false
-                runtime.bossCycleError="Не удалось подтвердить посадку после босса • автореб оставлен OFF"
                 state.resumeAutoRebirth=false
+                runtime.bossCycleError="Не сел на тренажёр после босса • автореб оставлен OFF"
                 setAutoRebirth(false)
             end
         end)
@@ -390,8 +399,7 @@ pcall(function()
         if not state.alive then return oldTick(self,...)end
         local now=os.clock()
 
-        -- Reward collection remains independent, but never call core restore while collector
-        -- is physically busy around the chest.
+        -- Don't let core return while reward collector is still moving/pressing the chest.
         local collector=env.RockBugBossAutoCollectMenu
         if self.phase=="rewards"then
             if collector and collector.busy then
@@ -409,46 +417,33 @@ pcall(function()
         end
 
         if self.enabled and self.phase=="waiting"and not state.postBoss then
-            if not state.preparingBoss then
-                -- Do not pause rebirth until a real boss is present.
-                if now>=(state.nextBossProbe or 0)then
-                    state.nextBossProbe=now+0.55
-                    if bossExists()then beginBossPreparation()end
-                end
+            if not state.preparingBoss and now>=(state.nextBossProbe or 0)then
+                state.nextBossProbe=now+0.55
+                if bossExists()then beginBossPreparation()end
             end
 
             if state.preparingBoss then
                 pauseAutoRebirth()
 
-                local strength=readStrength()
-                if strength==nil or strength<=0 then
-                    state.readySince=nil
-                    if state.machineIntent and state.machine then kickRecovery(state.machine)end
-                    runtime.bossCycleStatus="БОСС ЗАБЛОКИРОВАН: сила 0 → сначала кач"
+                local ready,strength,need=bossStrengthReady()
+                if not ready then
+                    startWeight()
+                    runtime.bossCycleStatus="Перед боссом: качаю силу "..tostring(strength==nil and"?"or math.floor(strength))
+                        .." / "..tostring(math.floor(need or 1))
                     return
                 end
 
-                if state.machineIntent and state.machine then
-                    kickRecovery(state.machine)
-                    if not machineReady(state.machine)then
-                        state.readySince=nil
-                        runtime.bossCycleStatus="Перед боссом: сила есть → сажусь на тренажёр"
-                        return
-                    end
-                end
-
-                state.readySince=state.readySince or now
-                if now-state.readySince<0.75 then
-                    runtime.bossCycleStatus="Перед боссом: проверяю стабильную посадку"
+                -- Strength is ready. Stop only our temporary Weight and go directly to boss.
+                -- No machine seating here.
+                if state.tempWeight then
+                    stopTempWeight()
+                    runtime.bossCycleStatus="Перед боссом: сила готова • иду к боссу"
                     return
                 end
 
-                -- Ready. Core snapshots with autoRebirth OFF, so it cannot resurrect rebirth
-                -- before our post-boss machine barrier.
                 local before=self.phase
                 local result=oldTick(self,...)
                 if before=="waiting"and self.phase=="waiting"and now-state.prepareStarted>6 then
-                    -- Boss vanished between our probe and the core scan.
                     cancelBossPreparation()
                 end
                 return result
@@ -458,8 +453,7 @@ pcall(function()
         local before=self.phase
         local result=oldTick(self,...)
 
-        -- Core has finished its own return. Keep rebirth OFF and run one final independent
-        -- seat barrier. This covers snapshots where machineActive was lost during boss prep.
+        -- Core return finished. Now enforce: machine seat FIRST, rebirth SECOND.
         if before=="returning"and self.phase~="returning"and state.preparingBoss then
             state.preparingBoss=false
             state.postBoss=true
@@ -473,6 +467,7 @@ pcall(function()
     function state.Destroy()
         if not state.alive then return end
         state.alive=false
+        stopTempWeight()
         if runtime.machineRebirthAllowed==state.wrapper then runtime.machineRebirthAllowed=originalAllowed end
         if runtime.stopMachineFarm==safeStopMachine then runtime.stopMachineFarm=rawStop end
         if cycle.Tick~=state.originalTick then cycle.Tick=state.originalTick end
