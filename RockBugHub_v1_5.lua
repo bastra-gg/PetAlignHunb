@@ -1,5 +1,5 @@
--- RockBugHub TEST bootstrap T61: stable boss-machine recovery
-local VERSION="4.31HOLO-T61"
+-- RockBugHub TEST bootstrap T62: decoupled reward and machine restore
+local VERSION="4.31HOLO-T62"
 local CORE_URL="https://raw.githubusercontent.com/bastra-gg/PetAlignHunb/09719f8e7536f55acda625e8e18ae0ff44ce9cdb/RockBugHub_v1_5_core.lua"
 local BOSS_RUNTIME_URL="https://raw.githubusercontent.com/bastra-gg/PetAlignHunb/09719f8e7536f55acda625e8e18ae0ff44ce9cdb/RockBugHub_TEST_RuntimeA.lua"
 local ROCK_PATCH_URL="https://raw.githubusercontent.com/bastra-gg/PetAlignHunb/09719f8e7536f55acda625e8e18ae0ff44ce9cdb/RockBugHub_TEST_AdaptiveRocks.lua"
@@ -46,7 +46,7 @@ if not okMachine then warn("[RockBugHub TEST "..VERSION.."] adaptive machines pa
 local okMachineGuard,problemMachineGuard=pcall(function()run(MACHINE_GUARD_URL,"machine rebirth guard")end)
 if not okMachineGuard then warn("[RockBugHub TEST "..VERSION.."] machine rebirth guard failed: "..tostring(problemMachineGuard))end
 
--- T61 machine/boss recovery:
+-- T62 machine/boss recovery:
 -- Use the core's proven detach path; never manually destroy machine/player welds.
 -- Preserve auto-machine intent during internal boss stops, warm strength before boss,
 -- and unblock the reward phase as soon as the independent collector finishes an attempt.
@@ -79,6 +79,8 @@ pcall(function()
         rewardAttempts=0,
         rewardSuccess=0,
         rewardSawBusy=false,
+        rewardSettledAt=nil,
+        returningSince=nil,
     }
     env.RockBugMachineRebirthGuard=state
     runtime.machineRebirthGuard=state
@@ -356,29 +358,71 @@ pcall(function()
         cycle.Tick=function(self,...)
             local now=os.clock()
 
-            -- Reward collector is independent from boss phase. Once it has actually attempted
-            -- the chest and finished that attempt, do not sit on the core's 15-second fallback.
+            -- Reward collection and restore are deliberately separated.
+            -- Collector may teleport/hold the chest prompt in its own task; never restore in the
+            -- same tick or while that task is still busy.
+            local collector=env.RockBugBossAutoCollectMenu
             if self.phase=="rewards"then
-                local collector=env.RockBugBossAutoCollectMenu
+                state.returningSince=nil
                 if not state.rewardAt then
                     state.rewardAt=now
                     state.rewardAttempts=collector and tonumber(collector.attempts)or 0
                     state.rewardSuccess=collector and tonumber(collector.success)or 0
                     state.rewardSawBusy=collector and collector.busy==true or false
+                    state.rewardSettledAt=nil
                 elseif collector then
-                    if collector.busy then state.rewardSawBusy=true end
-                    local attempted=(tonumber(collector.attempts)or 0)>state.rewardAttempts
-                    local succeeded=(tonumber(collector.success)or 0)>state.rewardSuccess
-                    if succeeded or ((attempted or state.rewardSawBusy)and not collector.busy and now-state.rewardAt>=0.35)then
-                        self.phase="returning"
-                        runtime.bossCycleStatus="Награда обработана • возвращаюсь"
-                        state.rewardAt=nil
-                        return oldTick(self,...)
+                    if collector.busy then
+                        state.rewardSawBusy=true
+                        state.rewardSettledAt=nil
+                    else
+                        local attempted=(tonumber(collector.attempts)or 0)>state.rewardAttempts
+                        local succeeded=(tonumber(collector.success)or 0)>state.rewardSuccess
+                        if succeeded then
+                            state.rewardSettledAt=state.rewardSettledAt or now
+                        elseif attempted or state.rewardSawBusy then
+                            -- Some Boss Chest prompts stay enabled even after the server grants reward.
+                            -- Treat a completed attempt as done only after a quiet settling window.
+                            state.rewardSettledAt=state.rewardSettledAt or now
+                        end
+                        if state.rewardSettledAt and now-state.rewardSettledAt>=1.0 then
+                            self.phase="returning"
+                            runtime.bossCycleStatus="Награда обработана • стабилизация перед возвратом"
+                            state.returningSince=now
+                            return
+                        end
                     end
                 end
+            elseif self.phase=="returning"then
+                -- If the old collector itself switched phase to returning on verified success,
+                -- still impose the same settle barrier before touching machine/rebirth state.
+                state.rewardAt=nil
+                state.rewardSawBusy=false
+                state.rewardSettledAt=nil
+                state.returningSince=state.returningSince or now
+                state.bossPreparing=true
+                if collector and collector.busy then
+                    runtime.bossCycleStatus="Награда: жду завершения collector"
+                    return
+                end
+                local lastClaim=collector and tonumber(collector.lastClaimAt)or nil
+                local quietFrom=math.max(state.returningSince,lastClaim or 0)
+                if now-quietFrom<0.75 then
+                    runtime.bossCycleStatus="Награда получена • жду физику перед восстановлением"
+                    return
+                end
+                -- Only now may the original cycle call api.restore(snapshot,...).
+                local before=self.phase
+                local result=oldTick(self,...)
+                if before=="returning"and self.phase~="returning"then
+                    state.bossPreparing=false
+                    state.returningSince=nil
+                end
+                return result
             else
                 state.rewardAt=nil
                 state.rewardSawBusy=false
+                state.rewardSettledAt=nil
+                state.returningSince=nil
             end
 
             if self.enabled and self.phase=="waiting"then
