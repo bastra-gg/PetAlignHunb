@@ -156,8 +156,8 @@ pcall(function()
     end
 
     local function readStrength()
-        local v=tonumber(runtime.sessionStrengthCurrent)
-        if v and v==v and v>=0 then return v end
+        -- Prefer the replicated counter. The session cache can briefly keep the pre-rebirth
+        -- value, which is exactly how an instant boss spawn could skip the 0-strength warm-up.
         local leader=player:FindFirstChild("leaderstats")
         for _,container in ipairs({leader,player})do
             if container then
@@ -170,6 +170,8 @@ pcall(function()
                 end
             end
         end
+        local v=tonumber(runtime.sessionStrengthCurrent)
+        if v and v==v and v>=0 then return v end
         return nil
     end
 
