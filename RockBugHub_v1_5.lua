@@ -1,5 +1,5 @@
--- RockBugHub TEST bootstrap T66: boss rarity filter; preserves T64 boss/machine coordination
-local VERSION="4.31HOLO-T66"
+-- RockBugHub TEST bootstrap T67: autoboss pauses only conflicting modes; keeps unrelated functions running
+local VERSION="4.31HOLO-T67"
 local CORE_URL="https://raw.githubusercontent.com/bastra-gg/PetAlignHunb/09719f8e7536f55acda625e8e18ae0ff44ce9cdb/RockBugHub_v1_5_core.lua"
 local BOSS_RUNTIME_URL="https://raw.githubusercontent.com/bastra-gg/PetAlignHunb/09719f8e7536f55acda625e8e18ae0ff44ce9cdb/RockBugHub_TEST_RuntimeA.lua"
 local ROCK_PATCH_URL="https://raw.githubusercontent.com/bastra-gg/PetAlignHunb/09719f8e7536f55acda625e8e18ae0ff44ce9cdb/RockBugHub_TEST_AdaptiveRocks.lua"
@@ -49,6 +49,68 @@ if type(runtime)=="table"then
     -- Keep the classic core hidden permanently. TEST/consumer UI owns presentation.
     pcall(function()if runtime.uiRoot and runtime.uiRoot:IsA("ScreenGui")then runtime.uiRoot.Enabled=false end end)
 end
+
+-- T67: background autoboss must not call the core's global STOP.
+-- The pinned core's bossAdapter.prepare() points at jT(), which also shuts down
+-- unrelated automation. Pause only modes that physically conflict with boss combat.
+pcall(function()
+    if type(runtime)~="table" or type(runtime.bossAdapter)~="table" then return end
+    local adapter=runtime.bossAdapter
+    local oldPrepare=adapter.prepare
+    if type(oldPrepare)~="function" then return end
+
+    local function setOff(ref)
+        if type(ref)=="table" and type(ref.Set)=="function" then
+            pcall(ref.Set,false,false)
+        end
+    end
+
+    adapter.prepare=function()
+        local cycle=runtime.bossCycle
+        -- Manual boss keeps the old explicit-stop behavior.
+        if not (type(cycle)=="table" and cycle.internal==true) then
+            return oldPrepare()
+        end
+
+        local refs=runtime.leverRefs or {}
+
+        if runtime.bugActive then setOff(refs.bug) end
+
+        local trainIds={}
+        if type(runtime.activeTrains)=="table" then
+            for id in pairs(runtime.activeTrains) do table.insert(trainIds,id) end
+        end
+        for _,id in ipairs(trainIds) do
+            if type(refs.train)=="table" then setOff(refs.train[id]) end
+        end
+
+        if runtime.machineActive and type(runtime.stopMachineFarm)=="function" then
+            pcall(runtime.stopMachineFarm,nil)
+        end
+        if runtime.kingLock then setOff(refs.kingLock) end
+        if runtime.lockRock then setOff(refs.lockRock) end
+        if runtime.lockPosition then setOff(refs.lockPosition) end
+
+        if runtime.autoRebirth then
+            runtime.rebirthToken=(runtime.rebirthToken or 0)+1
+            runtime.autoRebirth=false
+            runtime.nextRebirth=0
+        end
+
+        if runtime.autoQuest then
+            if type(runtime.stopAutoQuest)=="function" then
+                pcall(runtime.stopAutoQuest,nil)
+            else
+                setOff(refs.autoQuest)
+            end
+        end
+
+        local killMode=runtime.killMode
+        if killMode and killMode~="off" and type(refs.kill)=="table" then
+            setOff(refs.kill[killMode])
+        end
+    end
+end)
 -- ORBIT_BOOT_BEGIN
 local okOrbit,problemOrbit=true,nil
 if not bootHeadless then
@@ -235,18 +297,19 @@ pcall(function()
     end
     runtime.stopMachineFarm=safeStopMachine
 
-    local function setAutoRebirth(value)
+    local function setAutoRebirth(value,paintUI)
         value=value==true
         runtime.autoRebirth=value
         if value then runtime.nextRebirth=0 end
-        if rebirthLever and type(rebirthLever.Set)=="function"then
+        if paintUI~=false and rebirthLever and type(rebirthLever.Set)=="function"then
             pcall(rebirthLever.Set,value,true)
         end
     end
 
     local function pauseAutoRebirth()
         if runtime.autoRebirth then state.resumeAutoRebirth=true end
-        setAutoRebirth(false)
+        -- Pause the worker without visually disarming the user's switch.
+        setAutoRebirth(false,false)
     end
 
     local function weightActive()
