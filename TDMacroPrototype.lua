@@ -2,6 +2,7 @@
 -- Input-driven tower-defense macro recorder. No game remotes are required.
 
 local VERSION = 2
+local SCRIPT_VERSION = "1.1.0"
 local ROOT_FOLDER = "TDMacroLab"
 local CONFIG_FILE = ROOT_FOLDER .. "/config.json"
 local FALLBACK_FILE = "td_macro_v2.json"
@@ -1299,9 +1300,9 @@ header.BackgroundColor3 = palette.panel
 header.Size = UDim2.new(1, 0, 0, 42)
 header.Parent = window
 
-local title = label(header, "TD MACRO LAB", UDim2.fromOffset(14, 0), UDim2.new(1, -130, 1, 0), 14)
+local title = label(header, "TD MACRO LAB  ·  v" .. SCRIPT_VERSION, UDim2.fromOffset(14, 0), UDim2.new(1, -180, 1, 0), 14)
 title.Font = Enum.Font.GothamBold
-local versionLabel = label(header, "V1 · schema 2", UDim2.new(1, -178, 0, 0), UDim2.fromOffset(130, 42), 10, palette.muted, Enum.TextXAlignment.Right)
+local versionLabel = label(header, "VERSION " .. SCRIPT_VERSION, UDim2.new(1, -178, 0, 0), UDim2.fromOffset(130, 42), 10, palette.accent, Enum.TextXAlignment.Right)
 local hideButton = button(header, "—", UDim2.new(1, -38, 0, 7), UDim2.fromOffset(30, 28), function()
     window.Visible = false
     shadow.Visible = false
@@ -1686,4 +1687,4 @@ state.Core = Core
 showPage("RECORD")
 refreshMacros()
 refreshAll()
-log("TD Macro Lab V1 загружен" .. (state.memoryOnly and " · MEMORY ONLY" or ""))
+log("TD Macro Lab v" .. SCRIPT_VERSION .. " загружен" .. (state.memoryOnly and " · MEMORY ONLY" or ""))
