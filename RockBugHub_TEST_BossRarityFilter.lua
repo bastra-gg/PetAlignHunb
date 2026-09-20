@@ -1,6 +1,7 @@
 -- RockBugHub TEST boss rarity filter T66
 local Players=game:GetService("Players")
 local RunService=game:GetService("RunService")
+local TeleportService=game:GetService("TeleportService")
 
 local env=_G
 if type(getgenv)=="function"then
@@ -158,7 +159,7 @@ if previous then previous:Destroy()end
 
 local card=Instance.new("Frame")
 card.Name="BossRarityFilterCard"
-card.Size=UDim2.new(1,-4,0,184)
+card.Size=UDim2.new(1,-4,0,226)
 card.BackgroundColor3=Color3.fromRGB(28,61,79)
 card.BackgroundTransparency=0.08
 card.BorderSizePixel=0
@@ -218,6 +219,34 @@ layout.FillDirectionMaxCells=3
 layout.SortOrder=Enum.SortOrder.LayoutOrder
 layout.Parent=grid
 
+local rejoinBtn=Instance.new("TextButton")
+rejoinBtn.Name="BossRejoinSameServer"
+rejoinBtn.Size=UDim2.new(1,-18,0,38)
+rejoinBtn.Position=UDim2.fromOffset(9,178)
+rejoinBtn.BackgroundColor3=Color3.fromRGB(46,77,98)
+rejoinBtn.BorderSizePixel=0
+rejoinBtn.Font=Enum.Font.GothamBold
+rejoinBtn.TextSize=10
+rejoinBtn.TextColor3=Color3.fromRGB(231,244,249)
+rejoinBtn.AutoButtonColor=false
+rejoinBtn.Parent=card
+local rc=Instance.new("UICorner")rc.CornerRadius=UDim.new(0,10)rc.Parent=rejoinBtn
+local rs=Instance.new("UIStroke")rs.Color=Color3.fromRGB(65,224,255)rs.Transparency=.55 rs.Thickness=1 rs.Parent=rejoinBtn
+
+local rejoinBusy=false
+keep(rejoinBtn.Activated:Connect(function()
+    if rejoinBusy then return end
+    rejoinBusy=true
+    rejoinBtn.Text=runtime.language=="en"and"REJOINING…"or"ПЕРЕЗАХОД…"
+    task.spawn(function()
+        local ok=pcall(TeleportService.TeleportToPlaceInstance,TeleportService,game.PlaceId,game.JobId,Players.LocalPlayer)
+        if not ok then
+            rejoinBusy=false
+            rejoinBtn.Text=runtime.language=="en"and"↻ REJOIN SAME SERVER"or"↻ ПЕРЕЗАЙТИ НА ЭТОТ СЕРВЕР"
+        end
+    end)
+end))
+
 local function tr(pair)
     return runtime.language=="en"and pair[2]or pair[1]
 end
@@ -238,6 +267,9 @@ local function refreshText()
     title.Text=runtime.language=="en"and"BOSS RARITY FILTER"or"ФИЛЬТР РЕДКОСТИ БОССА"
     allBtn.Text=runtime.language=="en"and"ALL"or"ВСЕ"
     noneBtn.Text=runtime.language=="en"and"NONE"or"НЕТ"
+    if not rejoinBusy then
+        rejoinBtn.Text=runtime.language=="en"and"↻ REJOIN SAME SERVER"or"↻ ПЕРЕЗАЙТИ НА ЭТОТ СЕРВЕР"
+    end
     for _,r in ipairs(order)do paint(r)end
 end
 
