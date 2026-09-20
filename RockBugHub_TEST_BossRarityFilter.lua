@@ -1,4 +1,4 @@
--- RockBugHub TEST boss rarity filter T66
+-- RockBugHub TEST boss rarity filter T73
 local Players=game:GetService("Players")
 local RunService=game:GetService("RunService")
 local TeleportService=game:GetService("TeleportService")
@@ -276,6 +276,23 @@ end
 local function changed()
     if runtime.bossCycle then runtime.bossCycle.nextScan=0 end
     if type(runtime.refreshBossUI)=="function"then pcall(runtime.refreshBossUI)end
+end
+
+function state.GetSettings()
+    local out={}
+    for _,r in ipairs(order)do out[r]=saved[r]==true end
+    return out
+end
+
+function state.ApplySettings(values)
+    if type(values)~="table"then return false end
+    for _,r in ipairs(order)do
+        if type(values[r])=="boolean"then saved[r]=values[r]end
+        paint(r)
+    end
+    env.RockBugBossRaritySettings=saved
+    changed()
+    return true
 end
 
 for i,r in ipairs(order)do
