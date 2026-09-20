@@ -11,6 +11,25 @@ local ORBIT_UI_URL="https://raw.githubusercontent.com/bastra-gg/PetAlignHunb/mai
 local env=_G
 if type(getgenv)=="function"then local ok,v=pcall(getgenv)if ok and type(v)=="table"then env=v end end
 env.RockBugTestVersion=VERSION
+
+-- Boot invisibly: the pinned core builds the classic UI before TEST replaces it.
+-- Disable every RockBug ScreenGui before Roblox gets a frame to render it.
+local bootHeadless=env.RockBugBootstrapHeadless==true
+local bootHidden={}
+local bootPlayer=game:GetService("Players").LocalPlayer
+local bootGui=bootPlayer and bootPlayer:FindFirstChildOfClass("PlayerGui")
+local function hideBootVisual(obj)
+    if obj and obj:IsA("ScreenGui") and tostring(obj.Name):find("RockBug",1,true) then
+        bootHidden[obj]=true
+        obj.Enabled=false
+    end
+end
+local bootConnection=nil
+if bootGui then
+    for _,obj in ipairs(bootGui:GetDescendants())do hideBootVisual(obj)end
+    bootConnection=bootGui.DescendantAdded:Connect(hideBootVisual)
+end
+
 local compiler=loadstring or env.loadstring
 if type(compiler)~="function"then error("RockBugHub TEST "..VERSION..": executor has no loadstring",0)end
 local function run(url,label)
@@ -22,10 +41,24 @@ local function run(url,label)
     return chunk()
 end
 local result=run(CORE_URL,"core")
+if bootConnection then pcall(function()bootConnection:Disconnect()end)bootConnection=nil end
 local runtime=env.RockBugRuntime or result
-if type(runtime)=="table"then runtime.testVersion=VERSION end
+if type(runtime)=="table"then
+    runtime.testVersion=VERSION
+    -- Keep the classic core hidden permanently. TEST/consumer UI owns presentation.
+    pcall(function()if runtime.uiRoot and runtime.uiRoot:IsA("ScreenGui")then runtime.uiRoot.Enabled=false end end)
+end
 -- ORBIT_BOOT_BEGIN
-local okOrbit,problemOrbit=pcall(function()run(ORBIT_UI_URL,"orbit UI")end)
+local okOrbit,problemOrbit=true,nil
+if not bootHeadless then
+    okOrbit,problemOrbit=pcall(function()run(ORBIT_UI_URL,"orbit UI")end)
+else
+    pcall(function()
+        if type(runtime)=="table"and type(runtime.hologram)=="table"and type(runtime.hologram.SetSuspended)=="function"then
+            runtime.hologram:SetSuspended(true)
+        end
+    end)
+end
 if not okOrbit then warn("[RockBugHub TEST "..VERSION.."] orbit UI failed: "..tostring(problemOrbit))end
 -- ORBIT_BOOT_END
 local okBossRuntime,problemBossRuntime=pcall(function()run(BOSS_RUNTIME_URL,"boss reward runtime")end)
