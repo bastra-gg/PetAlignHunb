@@ -148,12 +148,12 @@ function HUD.mount(runtime, options)
     self.world = create("Model", {Name="RockBugHubHologram"..versionTag})
     self.surfaces = create("Folder", {Name="RockBugHubHologramSurfaces"}, playerGui)
     self.overlay = create("ScreenGui", {Name="RockBugHubHologramControl", ResetOnSpawn=false, DisplayOrder=1000010, ZIndexBehavior=Enum.ZIndexBehavior.Sibling}, playerGui)
-    -- Bottom utility buttons flank the existing bottom navigation instead of
-    -- sitting behind/above the card-tab row.
-    self.menu = create("TextButton", {Name="OpenFullMenu", AnchorPoint=Vector2.new(0.5,1), Position=UDim2.new(0.5,-220,1,-12), Size=UDim2.fromOffset(92,36), BackgroundColor3=background, BackgroundTransparency=0.08, TextColor3=white, TextSize=11, Font=Enum.Font.GothamBold, Text=tr("НАСТРОЙКИ","SETTINGS"), AutoButtonColor=true, ZIndex=12},self.overlay)
-    round(self.menu,14); edge(self.menu,0.5)
-    self.handle = create("TextButton", {Name="ToggleHologram", AnchorPoint=Vector2.new(0.5,1), Position=UDim2.new(0.5,220,1,-12), Size=UDim2.fromOffset(92,36), BackgroundColor3=background, BackgroundTransparency=0.08, TextColor3=cyan, TextSize=11, Font=Enum.Font.GothamBold, Text="", AutoButtonColor=true, ZIndex=12}, self.overlay)
-    round(self.handle,14); edge(self.handle,0.12)
+    -- Compact utility controls live in the lower-right gap between Roblox controls.
+    -- Keep them small and together so they do not sit over the center hotbar.
+    self.menu = create("TextButton", {Name="OpenFullMenu", AnchorPoint=Vector2.new(1,1), Position=UDim2.new(1,-108,1,-66), Size=UDim2.fromOffset(82,34), BackgroundColor3=background, BackgroundTransparency=0.08, TextColor3=white, TextSize=10, Font=Enum.Font.GothamBold, Text=tr("НАСТР.","SET"), AutoButtonColor=true, ZIndex=12},self.overlay)
+    round(self.menu,13); edge(self.menu,0.5)
+    self.handle = create("TextButton", {Name="ToggleHologram", AnchorPoint=Vector2.new(1,1), Position=UDim2.new(1,-20,1,-66), Size=UDim2.fromOffset(82,34), BackgroundColor3=background, BackgroundTransparency=0.08, TextColor3=cyan, TextSize=10, Font=Enum.Font.GothamBold, Text="", AutoButtonColor=true, ZIndex=12}, self.overlay)
+    round(self.handle,13); edge(self.handle,0.12)
     self.noticePanel=create("Frame",{Name="DetailsPopup",AnchorPoint=Vector2.new(0.5,0.5),Size=UDim2.fromOffset(336,180),BackgroundColor3=Color3.fromRGB(45,91,112),BorderSizePixel=0,Visible=false,ZIndex=40,Active=true},self.overlay)
     round(self.noticePanel,24);edge(self.noticePanel,0.2,1.5)
     local noticeTitle=label(self.noticePanel,tr("ПОДРОБНОСТИ","DETAILS"),16,8,270,30,12,cyan,true)
@@ -549,7 +549,7 @@ function HUD.mount(runtime, options)
         setText(strength.value,number(rate))
         local maximum=1;for _,value in ipairs(self.samples)do maximum=math.max(maximum,value)end
         for i,bar in ipairs(strength.bars)do bar.Size=UDim2.fromOffset(11,math.max(2,(self.samples[i]or 0)/maximum*57))end
-        setText(self.menu,tr("НАСТРОЙКИ","SETTINGS"))
+        setText(self.menu,tr("НАСТР.","SET"))
     end
 
     function self:CanActivateButton(button)
