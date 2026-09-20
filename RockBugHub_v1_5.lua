@@ -1,5 +1,5 @@
--- RockBugHub TEST bootstrap T73
-local VERSION="T73"
+-- RockBugHub TEST bootstrap T74
+local VERSION="T74"
 local CORE_URL="https://raw.githubusercontent.com/bastra-gg/PetAlignHunb/09719f8e7536f55acda625e8e18ae0ff44ce9cdb/RockBugHub_v1_5_core.lua"
 local BOSS_RUNTIME_URL="https://raw.githubusercontent.com/bastra-gg/PetAlignHunb/09719f8e7536f55acda625e8e18ae0ff44ce9cdb/RockBugHub_TEST_RuntimeA.lua"
 local ROCK_PATCH_URL="https://raw.githubusercontent.com/bastra-gg/PetAlignHunb/09719f8e7536f55acda625e8e18ae0ff44ce9cdb/RockBugHub_TEST_AdaptiveRocks.lua"
@@ -50,7 +50,7 @@ if type(runtime)=="table"then
     pcall(function()if runtime.uiRoot and runtime.uiRoot:IsA("ScreenGui")then runtime.uiRoot.Enabled=false end end)
 end
 
--- T73: background autoboss must not call the core's global STOP.
+-- T74: background autoboss must not call the core's global STOP.
 -- The pinned core's bossAdapter.prepare() points at jT(), which also shuts down
 -- unrelated automation. Pause only modes that physically conflict with boss combat.
 pcall(function()
@@ -144,7 +144,7 @@ if not okRock then warn("[RockBugHub TEST "..VERSION.."] adaptive rocks patch fa
 local okMachine,problemMachine=pcall(function()run(MACHINE_PATCH_URL,"adaptive machines patch")end)
 if not okMachine then warn("[RockBugHub TEST "..VERSION.."] adaptive machines patch failed: "..tostring(problemMachine))end
 
--- T73: do NOT load the old machine-rebirth guard.
+-- T74: do NOT load the old machine-rebirth guard.
 -- It deliberately detached from the machine before every rebirth. The core already
 -- exposes machineRebirthAllowed(), which waits for a stable confirmed seat without
 -- forcing the player off first.
@@ -686,7 +686,7 @@ pcall(function()
     if type(runtime)~="table"or type(runtime.layoutUI)~="table"
         or type(runtime.layoutUI.captureLastSession)~="function"
         or type(runtime.layoutUI.resumeLastSession)~="function"then return end
-    if runtime.layoutUI.testPersistenceVersion=="T73"then return end
+    if runtime.layoutUI.testPersistenceVersion=="T74"then return end
 
     local originalCapture=runtime.layoutUI.captureLastSession
     local originalResume=runtime.layoutUI.resumeLastSession
@@ -795,7 +795,7 @@ pcall(function()
         return result
     end
 
-    runtime.layoutUI.testPersistenceVersion="T73"
+    runtime.layoutUI.testPersistenceVersion="T74"
 end)
 
 local okCards,problemCards=pcall(function()run(CARD_PATCH_URL,"stable farm cards patch")end)
