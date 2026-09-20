@@ -148,11 +148,11 @@ function HUD.mount(runtime, options)
     self.world = create("Model", {Name="RockBugHubHologram"..versionTag})
     self.surfaces = create("Folder", {Name="RockBugHubHologramSurfaces"}, playerGui)
     self.overlay = create("ScreenGui", {Name="RockBugHubHologramControl", ResetOnSpawn=false, DisplayOrder=1000010, ZIndexBehavior=Enum.ZIndexBehavior.Sibling}, playerGui)
-    -- Thumb-friendly utility controls: centered above the bottom navigation instead
-    -- of being split across the two top corners.
-    self.menu = create("TextButton", {Name="OpenFullMenu", AnchorPoint=Vector2.new(0.5,1), Position=UDim2.new(0.5,-58,1,-62), Size=UDim2.fromOffset(108,36), BackgroundColor3=background, BackgroundTransparency=0.08, TextColor3=white, TextSize=12, Font=Enum.Font.GothamBold, Text=tr("НАСТРОЙКИ","SETTINGS"), AutoButtonColor=true},self.overlay)
+    -- Keep utility controls away from Roblox mobile hotbar/joystick/jump controls.
+    -- Stack them on the left edge, slightly above screen center.
+    self.menu = create("TextButton", {Name="OpenFullMenu", AnchorPoint=Vector2.new(0,0.5), Position=UDim2.new(0,12,0.46,-20), Size=UDim2.fromOffset(108,36), BackgroundColor3=background, BackgroundTransparency=0.08, TextColor3=white, TextSize=12, Font=Enum.Font.GothamBold, Text=tr("НАСТРОЙКИ","SETTINGS"), AutoButtonColor=true},self.overlay)
     round(self.menu,14); edge(self.menu,0.5)
-    self.handle = create("TextButton", {Name="ToggleHologram", AnchorPoint=Vector2.new(0.5,1), Position=UDim2.new(0.5,58,1,-62), Size=UDim2.fromOffset(108,36), BackgroundColor3=background, BackgroundTransparency=0.08, TextColor3=cyan, TextSize=12, Font=Enum.Font.GothamBold, Text="", AutoButtonColor=true}, self.overlay)
+    self.handle = create("TextButton", {Name="ToggleHologram", AnchorPoint=Vector2.new(0,0.5), Position=UDim2.new(0,12,0.46,22), Size=UDim2.fromOffset(108,36), BackgroundColor3=background, BackgroundTransparency=0.08, TextColor3=cyan, TextSize=12, Font=Enum.Font.GothamBold, Text="", AutoButtonColor=true}, self.overlay)
     round(self.handle,14); edge(self.handle,0.12)
     self.noticePanel=create("Frame",{Name="DetailsPopup",AnchorPoint=Vector2.new(0.5,0.5),Size=UDim2.fromOffset(336,180),BackgroundColor3=Color3.fromRGB(45,91,112),BorderSizePixel=0,Visible=false,ZIndex=40,Active=true},self.overlay)
     round(self.noticePanel,24);edge(self.noticePanel,0.2,1.5)
