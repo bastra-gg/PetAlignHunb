@@ -563,9 +563,14 @@ function HUD.mount(runtime, options)
             if generation~=self.inputGeneration or not self:CanActivateButton(button) then return end
             self.actionPanel=button.owner
             local callback=button.callback
-            -- BossCompact patches card 4 once; its loot action belongs to FARM.
-            if self.group~="farm" and runtime.bossCompactUI and button==self.cards[4].more then
-                callback=function()self:OpenFull(HUD.groups[self.group].cards[4].tab,button.owner)end
+            -- Card 4 is shared between groups. In FARM its secondary action is
+            -- always boss settings; in other groups it follows that group's card 4.
+            if runtime.bossCompactUI and button==self.cards[4].more then
+                if self.group=="farm" then
+                    callback=function()self:OpenFull("boss",button.owner)end
+                else
+                    callback=function()self:OpenFull(HUD.groups[self.group].cards[4].tab,button.owner)end
+                end
             end
             local ok,reason=pcall(callback)
             self.nextRefresh=nil
