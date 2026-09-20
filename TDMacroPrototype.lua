@@ -2,7 +2,7 @@
 -- Input-driven tower-defense macro recorder. No game remotes are required.
 
 local VERSION = 2
-local SCRIPT_VERSION = "1.1.0"
+local SCRIPT_VERSION = "1.1.1"
 local ROOT_FOLDER = "TDMacroLab"
 local CONFIG_FILE = ROOT_FOLDER .. "/config.json"
 local FALLBACK_FILE = "td_macro_v2.json"
@@ -124,6 +124,26 @@ function Core.normalizeEvents(events, recordedViewport)
     return filtered
 end
 
+function Core.normalizeCameraTrack(track)
+    local output = {}
+    for index, source in ipairs(type(track) == "table" and track or {}) do
+        if type(source) == "table" and type(source.cframe) == "table" and #source.cframe >= 12 then
+            output[#output + 1] = {
+                t = math.max(0, tonumber(source.t) or 0),
+                cframe = source.cframe,
+                fov = tonumber(source.fov),
+                _order = index,
+            }
+        end
+    end
+    table.sort(output, function(a, b)
+        if a.t == b.t then return a._order < b._order end
+        return a.t < b.t
+    end)
+    for _, frame in ipairs(output) do frame._order = nil end
+    return output
+end
+
 function Core.normalizeMacro(source, fallbackName)
     source = type(source) == "table" and source or {}
     local recordedViewport = type(source.viewport) == "table" and source.viewport or {w = 1920, h = 1080}
@@ -136,6 +156,24 @@ function Core.normalizeMacro(source, fallbackName)
     macroFingerprint.mapKey = tostring(macroFingerprint.mapKey or source.tag or "unknown")
     macroFingerprint.spawnKey = tostring(macroFingerprint.spawnKey or "legacy")
     local events = source.events or source.actions or {}
+    local normalizedEvents = Core.normalizeEvents(events, recordedViewport)
+    local cameraTrack = Core.normalizeCameraTrack(source.cameraTrack)
+    if #cameraTrack == 0 then
+        local initialCamera = type(source.camera) == "table" and source.camera or macroFingerprint.camera
+        if type(initialCamera) == "table" and type(initialCamera.cframe) == "table" then
+            cameraTrack[#cameraTrack + 1] = {t = 0, cframe = initialCamera.cframe, fov = initialCamera.fov}
+        end
+        for _, event in ipairs(normalizedEvents) do
+            if event.kind == "mouse_down" and type(event.camera) == "table" and type(event.camera.cframe) == "table" then
+                cameraTrack[#cameraTrack + 1] = {
+                    t = event.t,
+                    cframe = event.camera.cframe,
+                    fov = event.camera.fov,
+                }
+            end
+        end
+        cameraTrack = Core.normalizeCameraTrack(cameraTrack)
+    end
     return {
         version = VERSION,
         id = tostring(source.id or HttpService:GenerateGUID(false)),
@@ -148,8 +186,9 @@ function Core.normalizeMacro(source, fallbackName)
         },
         viewport = {w = tonumber(recordedViewport.w) or 1920, h = tonumber(recordedViewport.h) or 1080},
         camera = type(source.camera) == "table" and source.camera or macroFingerprint.camera,
+        cameraTrack = cameraTrack,
         slots = type(source.slots) == "table" and source.slots or {"1", "2", "3", "4", "5"},
-        events = Core.normalizeEvents(events, recordedViewport),
+        events = normalizedEvents,
         savedAt = tonumber(source.savedAt) or os.time(),
         lastUsed = tonumber(source.lastUsed) or 0,
         isDefault = source.isDefault == true,
@@ -239,6 +278,7 @@ local state = {
     recordingFingerprint = nil,
     recordingViewport = nil,
     recordingCamera = nil,
+    recordedCameraTrack = {},
     currentSlot = nil,
     pendingPlacementSlot = nil,
     nextUnitId = 0,
@@ -254,6 +294,8 @@ local state = {
     pressedKeys = {},
     pressedButtons = {},
     pressedTouches = {},
+    playbackCameraType = nil,
+    playbackCameraSubject = nil,
     controllerState = "IDLE",
     controllerSince = os.clock(),
     controllerNotBefore = 0,
@@ -420,6 +462,48 @@ local function restoreCamera(snapshot)
     if tonumber(snapshot.fov) then pcall(function() camera.FieldOfView = snapshot.fov end) end
     return true
 end
+
+local function snapshotToCFrame(snapshot)
+    if type(snapshot) ~= "table" or type(snapshot.cframe) ~= "table" or #snapshot.cframe < 12 then return nil end
+    local ok, value = pcall(function() return CFrame.new(table.unpack(snapshot.cframe, 1, 12)) end)
+    return ok and value or nil
+end
+
+local function recordCameraFrame(force)
+    if not state.recording then return end
+    local snapshot = cameraSnapshot()
+    local current = snapshotToCFrame(snapshot)
+    if not current then return end
+    local previous = state.recordedCameraTrack[#state.recordedCameraTrack]
+    if not force and previous then
+        local previousCFrame = snapshotToCFrame(previous)
+        if previousCFrame then
+            local positionChanged = (current.Position - previousCFrame.Position).Magnitude > 0.015
+            local directionChanged = current.LookVector:Dot(previousCFrame.LookVector) < 0.99998
+                or current.UpVector:Dot(previousCFrame.UpVector) < 0.99998
+            local fovChanged = math.abs((snapshot.fov or 70) - (previous.fov or 70)) > 0.02
+            if not positionChanged and not directionChanged and not fovChanged then return end
+        end
+    end
+    state.recordedCameraTrack[#state.recordedCameraTrack + 1] = {
+        t = math.max(0, os.clock() - state.recordingStarted),
+        cframe = snapshot.cframe,
+        fov = snapshot.fov,
+    }
+end
+
+local cameraSampleAccumulator = 0
+keep(RunService.Heartbeat:Connect(function(delta)
+    if not state.recording or state.destroyed then
+        cameraSampleAccumulator = 0
+        return
+    end
+    cameraSampleAccumulator += delta
+    if cameraSampleAccumulator >= 1 / 12 then
+        cameraSampleAccumulator = 0
+        recordCameraFrame(false)
+    end
+end))
 
 local function usefulValue(instance)
     if not instance then return nil end
@@ -647,7 +731,6 @@ keep(UIS.InputBegan:Connect(function(input, processed)
             vw = size.w, vh = size.h,
             button = button, touch = inputType == Enum.UserInputType.Touch,
             touchId = touchId,
-            camera = cameraSnapshot(),
         }
         if state.pendingPlacementSlot then
             state.nextUnitId += 1
@@ -742,11 +825,24 @@ local function releaseAll()
     state.generatedInput = false
 end
 
+local function releaseCameraControl()
+    local camera = workspace.CurrentCamera
+    if camera and state.playbackCameraType then
+        pcall(function()
+            if state.playbackCameraSubject then camera.CameraSubject = state.playbackCameraSubject end
+            camera.CameraType = state.playbackCameraType
+        end)
+    end
+    state.playbackCameraType = nil
+    state.playbackCameraSubject = nil
+end
+
 local function stopPlayback(reason, emergency)
     state.playToken += 1
     state.playing = false
     state.paused = false
     releaseAll()
+    releaseCameraControl()
     if emergency then
         state.config.settings.auto = false
         state.matchSpawnPosition = nil
@@ -828,35 +924,77 @@ local function playMacro(macro, force, fromAuto, expectedFingerprint)
     if fromAuto then transition("PLAYING", macro.name) end
     restoreCamera(macro.camera or (macro.fingerprint and macro.fingerprint.camera))
     local lockedCamera = cameraSnapshot()
+    local speed = math.clamp(tonumber(state.config.settings.playbackSpeed) or 1, 0.25, 3)
+    local playbackStarted = os.clock()
+    local cameraFrames = {}
+    for _, frame in ipairs(type(macro.cameraTrack) == "table" and macro.cameraTrack or {}) do
+        local cframe = snapshotToCFrame(frame)
+        if cframe then cameraFrames[#cameraFrames + 1] = {t = tonumber(frame.t) or 0, cframe = cframe, fov = tonumber(frame.fov)} end
+    end
+    if state.config.settings.lockCamera or #cameraFrames >= 2 then
+        local camera = workspace.CurrentCamera
+        if camera then
+            state.playbackCameraType = camera.CameraType
+            state.playbackCameraSubject = camera.CameraSubject
+            pcall(function() camera.CameraType = Enum.CameraType.Scriptable end)
+        end
+    end
     log((force and "Force Play: " or "Запуск: ") .. macro.name .. " · " .. #macro.events .. " событий")
     refreshAll()
 
+    if state.config.settings.lockCamera and lockedCamera then
+        task.spawn(function()
+            while token == state.playToken and state.playing and not state.destroyed do
+                if not state.paused then restoreCamera(lockedCamera) end
+                RunService.RenderStepped:Wait()
+            end
+        end)
+    elseif #cameraFrames >= 2 then
+        task.spawn(function()
+            local index = 1
+            while token == state.playToken and state.playing and not state.destroyed do
+                if state.paused then
+                    RunService.RenderStepped:Wait()
+                else
+                    local elapsed = (os.clock() - playbackStarted - state.pauseAccum) * speed
+                    while index < #cameraFrames - 1 and cameraFrames[index + 1].t <= elapsed do index += 1 end
+                    local first = cameraFrames[index]
+                    local second = cameraFrames[math.min(index + 1, #cameraFrames)]
+                    local span = math.max(0.001, second.t - first.t)
+                    local alpha = math.clamp((elapsed - first.t) / span, 0, 1)
+                    local camera = workspace.CurrentCamera
+                    if camera then
+                        pcall(function()
+                            camera.CFrame = first.cframe:Lerp(second.cframe, alpha)
+                            if first.fov and second.fov then camera.FieldOfView = first.fov + (second.fov - first.fov) * alpha end
+                        end)
+                    end
+                    RunService.RenderStepped:Wait()
+                end
+            end
+        end)
+    end
+
     task.spawn(function()
-        local speed = math.clamp(tonumber(state.config.settings.playbackSpeed) or 1, 0.25, 3)
         local tolerance = math.max(0.05, tonumber(state.config.settings.lateTolerance) or 0.35)
-        local started = os.clock()
         local lastSent = 0
 
         for _, event in ipairs(macro.events) do
             if token ~= state.playToken or state.destroyed then break end
             while state.paused and token == state.playToken do task.wait(0.05) end
             while token == state.playToken do
-                local elapsed = (os.clock() - started - state.pauseAccum) * speed
+                local elapsed = (os.clock() - playbackStarted - state.pauseAccum) * speed
                 local remaining = (tonumber(event.t) or 0) - elapsed
                 if remaining <= 0 then break end
                 task.wait(math.min(0.03, remaining / speed))
             end
             if token ~= state.playToken then break end
 
-            local elapsed = (os.clock() - started - state.pauseAccum) * speed
+            local elapsed = (os.clock() - playbackStarted - state.pauseAccum) * speed
             local late = elapsed - (tonumber(event.t) or 0)
             if late > tolerance and event.kind == "mouse_wheel" then
                 -- Wheel bursts are disposable; clicks and releases are never dropped.
             else
-                if event.kind == "mouse_down" and type(event.camera) == "table" then
-                    restoreCamera(event.camera)
-                    task.wait(0.03)
-                end
                 if late > tolerance then
                     local spacing = 0.025 - (os.clock() - lastSent)
                     if spacing > 0 then task.wait(spacing) end
@@ -864,13 +1002,13 @@ local function playMacro(macro, force, fromAuto, expectedFingerprint)
                 sendEvent(event, macro.viewport)
                 lastSent = os.clock()
             end
-            if state.config.settings.lockCamera and lockedCamera then restoreCamera(lockedCamera) end
         end
 
         if token == state.playToken then
             state.playing = false
             state.paused = false
             releaseAll()
+            releaseCameraControl()
             state.playbackFinishedAt = os.clock()
             log("Воспроизведение завершено")
             if fromAuto and state.config.settings.auto then transition("WAIT_END", "жду конец матча") else transition("IDLE") end
@@ -905,6 +1043,7 @@ local function startRecording()
     state.recordingFingerprint = fingerprint(currentRoot and currentRoot.Position or nil)
     state.recordingCamera = cameraSnapshot()
     state.recordingStarted = os.clock()
+    state.recordedCameraTrack = {}
     state.currentSlot = nil
     state.pendingPlacementSlot = nil
     state.nextUnitId = 0
@@ -912,12 +1051,14 @@ local function startRecording()
     state.touchGestures = {}
     state.nextTouchId = 0
     state.recording = true
+    recordCameraFrame(true)
     log("Запись начата · " .. state.recordingFingerprint.mapKey .. " · " .. state.recordingFingerprint.spawnKey)
     refreshAll()
 end
 
 local function stopAndSave(name)
     if not state.recording then log("Запись не запущена") return nil end
+    recordCameraFrame(true)
     state.recording = false
     local events = Core.normalizeEvents(state.recordedEvents, state.recordingViewport)
     if #events == 0 then log("Пустая запись не сохранена", true) refreshAll() return nil end
@@ -935,6 +1076,7 @@ local function stopAndSave(name)
         },
         viewport = state.recordingViewport,
         camera = state.recordingCamera,
+        cameraTrack = state.recordedCameraTrack,
         slots = copyTable(state.config.slotLabels),
         events = events,
         savedAt = os.time(),
@@ -1669,6 +1811,7 @@ function state:Destroy()
     self.playToken += 1
     self.playing = false
     releaseAll()
+    releaseCameraControl()
     for _, connection in ipairs(self.connections) do pcall(function() connection:Disconnect() end) end
     self.connections = {}
     if self.gui then pcall(function() self.gui:Destroy() end) end
