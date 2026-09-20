@@ -1,5 +1,5 @@
--- RockBugHub TEST bootstrap T72
-local VERSION="T72"
+-- RockBugHub TEST bootstrap T73
+local VERSION="T73"
 local CORE_URL="https://raw.githubusercontent.com/bastra-gg/PetAlignHunb/09719f8e7536f55acda625e8e18ae0ff44ce9cdb/RockBugHub_v1_5_core.lua"
 local BOSS_RUNTIME_URL="https://raw.githubusercontent.com/bastra-gg/PetAlignHunb/09719f8e7536f55acda625e8e18ae0ff44ce9cdb/RockBugHub_TEST_RuntimeA.lua"
 local ROCK_PATCH_URL="https://raw.githubusercontent.com/bastra-gg/PetAlignHunb/09719f8e7536f55acda625e8e18ae0ff44ce9cdb/RockBugHub_TEST_AdaptiveRocks.lua"
@@ -50,7 +50,7 @@ if type(runtime)=="table"then
     pcall(function()if runtime.uiRoot and runtime.uiRoot:IsA("ScreenGui")then runtime.uiRoot.Enabled=false end end)
 end
 
--- T72: background autoboss must not call the core's global STOP.
+-- T73: background autoboss must not call the core's global STOP.
 -- The pinned core's bossAdapter.prepare() points at jT(), which also shuts down
 -- unrelated automation. Pause only modes that physically conflict with boss combat.
 pcall(function()
@@ -144,7 +144,7 @@ if not okRock then warn("[RockBugHub TEST "..VERSION.."] adaptive rocks patch fa
 local okMachine,problemMachine=pcall(function()run(MACHINE_PATCH_URL,"adaptive machines patch")end)
 if not okMachine then warn("[RockBugHub TEST "..VERSION.."] adaptive machines patch failed: "..tostring(problemMachine))end
 
--- T72: do NOT load the old machine-rebirth guard.
+-- T73: do NOT load the old machine-rebirth guard.
 -- It deliberately detached from the machine before every rebirth. The core already
 -- exposes machineRebirthAllowed(), which waits for a stable confirmed seat without
 -- forcing the player off first.
@@ -155,7 +155,7 @@ pcall(function()
     if type(runtime)=="table"then runtime.machineRebirthGuard=nil end
 end)
 
--- T72 boss/machine coordinator:
+-- T73 boss/machine coordinator:
 -- BEFORE BOSS: pause rebirth, gain enough strength with Weight, then fight immediately.
 -- NO machine seat is required before boss.
 -- AFTER BOSS: restore exact machine, confirm stable seat, only then resume auto-rebirth.
@@ -679,6 +679,116 @@ local okBossUI,problemBossUI=pcall(function()run(BOSS_UI_PATCH_URL,"boss compact
 if not okBossUI then warn("[RockBugHub TEST "..VERSION.."] boss UI patch failed: "..tostring(problemBossUI))end
 local okBossRarity,problemBossRarity=pcall(function()run(BOSS_RARITY_PATCH_URL,"boss rarity filter")end)
 if not okBossRarity then warn("[RockBugHub TEST "..VERSION.."] boss rarity filter failed: "..tostring(problemBossRarity))end
+
+-- T73 profile persistence extension. The pinned core profile writer predates
+-- autoboss rarity filters and several newer TEST toggles.
+pcall(function()
+    if type(runtime)~="table"or type(runtime.layoutUI)~="table"
+        or type(runtime.layoutUI.captureLastSession)~="function"
+        or type(runtime.layoutUI.resumeLastSession)~="function"then return end
+    if runtime.layoutUI.testPersistenceVersion=="T73"then return end
+
+    local originalCapture=runtime.layoutUI.captureLastSession
+    local originalResume=runtime.layoutUI.resumeLastSession
+
+    local function copySet(src)
+        local out={}
+        if type(src)=="table"then
+            for k,v in pairs(src)do if v then out[k]=true end end
+        end
+        return out
+    end
+
+    runtime.layoutUI.captureLastSession=function()
+        local cfg=originalCapture()
+        if type(cfg)~="table"then cfg={}end
+
+        cfg.bossCycleEnabled=type(runtime.bossCycle)=="table"and runtime.bossCycle.enabled==true
+        local rarity=runtime.bossRarityFilter
+        if type(rarity)=="table"and type(rarity.GetSettings)=="function"then
+            local ok,value=pcall(rarity.GetSettings)
+            if ok and type(value)=="table"then cfg.bossRarities=value end
+        elseif type(env.RockBugBossRaritySettings)=="table"then
+            cfg.bossRarities={}
+            for k,v in pairs(env.RockBugBossRaritySettings)do
+                if type(v)=="boolean"then cfg.bossRarities[k]=v end
+            end
+        end
+
+        cfg.killMode=tostring(runtime.killMode or"off")
+        cfg.killWhitelist=copySet(runtime.killWhitelist)
+        cfg.killBlacklist=copySet(runtime.killBlacklist)
+        cfg.lockPosition=runtime.lockPosition==true
+        cfg.adaptiveMachineAuto=runtime.adaptiveMachineAuto==true
+            or(type(env.RockBugAdaptiveMachines)=="table"and env.RockBugAdaptiveMachines.auto==true)
+        return cfg
+    end
+
+    runtime.layoutUI.resumeLastSession=function(...)
+        local cfg=runtime.layoutUI.lastSavedSession
+        local ext=type(cfg)=="table"and{
+            bossCycleEnabled=cfg.bossCycleEnabled==true,
+            bossCycleKnown=cfg.bossCycleEnabled~=nil,
+            bossRarities=cfg.bossRarities,
+            killMode=cfg.killMode,
+            killWhitelist=cfg.killWhitelist,
+            killBlacklist=cfg.killBlacklist,
+            lockPosition=cfg.lockPosition==true,
+            adaptiveMachineAuto=cfg.adaptiveMachineAuto==true,
+            adaptiveKnown=cfg.adaptiveMachineAuto~=nil,
+        }or nil
+
+        local result=originalResume(...)
+        if result==false or not ext then return result end
+
+        task.spawn(function()
+            local deadline=os.clock()+20
+            while runtime.alive and runtime.sessionResumeInFlight and os.clock()<deadline do task.wait(0.05)end
+            if not runtime.alive then return end
+
+            if type(ext.killWhitelist)=="table"then runtime.killWhitelist=copySet(ext.killWhitelist)end
+            if type(ext.killBlacklist)=="table"then runtime.killBlacklist=copySet(ext.killBlacklist)end
+            if type(runtime.refreshExtraUI)=="function"then pcall(runtime.refreshExtraUI)end
+
+            if type(ext.killMode)=="string"and ext.killMode~=""and ext.killMode~="off"
+                and type(runtime.leverRefs)=="table"and type(runtime.leverRefs.kill)=="table"then
+                local ref=runtime.leverRefs.kill[ext.killMode]
+                if type(ref)=="table"and type(ref.Set)=="function"then pcall(ref.Set,true,false)end
+            end
+
+            if ext.lockPosition and not runtime.machineActive and not runtime.kingLock and not runtime.lockRock then
+                local ref=runtime.leverRefs and runtime.leverRefs.lockPosition
+                if type(ref)=="table"and type(ref.Set)=="function"then pcall(ref.Set,true,false)end
+            end
+
+            if ext.adaptiveKnown then
+                local adaptive=env.RockBugAdaptiveMachines
+                if type(adaptive)=="table"and adaptive.alive~=false then adaptive.auto=ext.adaptiveMachineAuto end
+                runtime.adaptiveMachineAuto=ext.adaptiveMachineAuto
+            end
+
+            local rarity=runtime.bossRarityFilter
+            if type(ext.bossRarities)=="table"and type(rarity)=="table"
+                and type(rarity.ApplySettings)=="function"then
+                pcall(rarity.ApplySettings,ext.bossRarities)
+            end
+
+            -- Restore autoboss last, after every other mode has finished restoring.
+            if ext.bossCycleKnown then
+                local ref=runtime.leverRefs and runtime.leverRefs.bossCycle
+                if type(ref)=="table"and type(ref.Set)=="function"then
+                    pcall(ref.Set,ext.bossCycleEnabled,false)
+                elseif type(runtime.bossCycle)=="table"and type(runtime.bossCycle.SetEnabled)=="function"then
+                    pcall(runtime.bossCycle.SetEnabled,runtime.bossCycle,ext.bossCycleEnabled)
+                end
+            end
+        end)
+        return result
+    end
+
+    runtime.layoutUI.testPersistenceVersion="T73"
+end)
+
 local okCards,problemCards=pcall(function()run(CARD_PATCH_URL,"stable farm cards patch")end)
 if not okCards then warn("[RockBugHub TEST "..VERSION.."] stable cards patch failed: "..tostring(problemCards))end
 
