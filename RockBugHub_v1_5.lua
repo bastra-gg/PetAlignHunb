@@ -1,5 +1,5 @@
--- RockBugHub TEST bootstrap T68
-local VERSION="T68"
+-- RockBugHub TEST bootstrap T69
+local VERSION="T69"
 local CORE_URL="https://raw.githubusercontent.com/bastra-gg/PetAlignHunb/09719f8e7536f55acda625e8e18ae0ff44ce9cdb/RockBugHub_v1_5_core.lua"
 local BOSS_RUNTIME_URL="https://raw.githubusercontent.com/bastra-gg/PetAlignHunb/09719f8e7536f55acda625e8e18ae0ff44ce9cdb/RockBugHub_TEST_RuntimeA.lua"
 local ROCK_PATCH_URL="https://raw.githubusercontent.com/bastra-gg/PetAlignHunb/09719f8e7536f55acda625e8e18ae0ff44ce9cdb/RockBugHub_TEST_AdaptiveRocks.lua"
@@ -50,7 +50,7 @@ if type(runtime)=="table"then
     pcall(function()if runtime.uiRoot and runtime.uiRoot:IsA("ScreenGui")then runtime.uiRoot.Enabled=false end end)
 end
 
--- T68: background autoboss must not call the core's global STOP.
+-- T69: background autoboss must not call the core's global STOP.
 -- The pinned core's bossAdapter.prepare() points at jT(), which also shuts down
 -- unrelated automation. Pause only modes that physically conflict with boss combat.
 pcall(function()
@@ -144,10 +144,18 @@ if not okRock then warn("[RockBugHub TEST "..VERSION.."] adaptive rocks patch fa
 local okMachine,problemMachine=pcall(function()run(MACHINE_PATCH_URL,"adaptive machines patch")end)
 if not okMachine then warn("[RockBugHub TEST "..VERSION.."] adaptive machines patch failed: "..tostring(problemMachine))end
 
-local okMachineGuard,problemMachineGuard=pcall(function()run(MACHINE_GUARD_URL,"machine rebirth guard")end)
-if not okMachineGuard then warn("[RockBugHub TEST "..VERSION.."] machine rebirth guard failed: "..tostring(problemMachineGuard))end
+-- T69: do NOT load the old machine-rebirth guard.
+-- It deliberately detached from the machine before every rebirth. The core already
+-- exposes machineRebirthAllowed(), which waits for a stable confirmed seat without
+-- forcing the player off first.
+pcall(function()
+    local stale=env.RockBugMachineRebirthGuard
+    if type(stale)=="table"and type(stale.Destroy)=="function"then stale.Destroy()end
+    env.RockBugMachineRebirthGuard=nil
+    if type(runtime)=="table"then runtime.machineRebirthGuard=nil end
+end)
 
--- T68 boss/machine coordinator:
+-- T69 boss/machine coordinator:
 -- BEFORE BOSS: pause rebirth, gain enough strength with Weight, then fight immediately.
 -- NO machine seat is required before boss.
 -- AFTER BOSS: restore exact machine, confirm stable seat, only then resume auto-rebirth.
@@ -157,9 +165,9 @@ pcall(function()
     local player=Players.LocalPlayer
     if not player then return end
 
-    -- Keep the dedicated rebirth guard alive. It owns the controlled
-    -- detach -> rebirth -> re-seat sequence. The boss coordinator layers on top.
-    local baseGuard=env.RockBugMachineRebirthGuard
+    -- Core machineRebirthAllowed() is the only rebirth gate now:
+    -- stable seat first, then rebirth. No deliberate pre-rebirth dismount.
+    local baseGuard=nil
     local oldCoordinator=env.RockBugBossMachineCoordinator
     if type(oldCoordinator)=="table"and type(oldCoordinator.Destroy)=="function"then pcall(oldCoordinator.Destroy)end
 
@@ -348,7 +356,6 @@ pcall(function()
         local automatic=(a and a.switching==true)
             or state.machineIntent
             or (cycle and cycle.internal==true)
-            or (baseGuard and baseGuard.rebirthBusy==true)
 
         -- Automatic boss/rebirth transitions use a soft detach. Manual user STOP
         -- still uses the core hard stop exactly as before.
@@ -526,13 +533,6 @@ pcall(function()
     state.wrapper=function()
         if not state.alive then return originalAllowed()end
         if state.preparingBoss or state.postBoss then return false end
-
-        -- Once the dedicated guard has begun its controlled detach, let it finish
-        -- that one rebirth and re-seat cycle. Blocking here would deadlock it.
-        if baseGuard and baseGuard.rebirthBusy then
-            local ok,value=pcall(originalAllowed)
-            return ok and value==true
-        end
 
         if autoMachineWanted()then
             local machine=runtime.selectedMachine
