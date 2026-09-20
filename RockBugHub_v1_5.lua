@@ -694,7 +694,16 @@ pcall(function()
     local function copySet(src)
         local out={}
         if type(src)=="table"then
-            for k,v in pairs(src)do if v then out[k]=true end end
+            for k,v in pairs(src)do if v then out[tostring(k)]=true end end
+        end
+        return out
+    end
+    local function restorePlayerSet(src)
+        local out={}
+        if type(src)=="table"then
+            for k,v in pairs(src)do
+                if v then out[tonumber(k)or k]=true end
+            end
         end
         return out
     end
@@ -746,8 +755,8 @@ pcall(function()
             while runtime.alive and runtime.sessionResumeInFlight and os.clock()<deadline do task.wait(0.05)end
             if not runtime.alive then return end
 
-            if type(ext.killWhitelist)=="table"then runtime.killWhitelist=copySet(ext.killWhitelist)end
-            if type(ext.killBlacklist)=="table"then runtime.killBlacklist=copySet(ext.killBlacklist)end
+            if type(ext.killWhitelist)=="table"then runtime.killWhitelist=restorePlayerSet(ext.killWhitelist)end
+            if type(ext.killBlacklist)=="table"then runtime.killBlacklist=restorePlayerSet(ext.killBlacklist)end
             if type(runtime.refreshExtraUI)=="function"then pcall(runtime.refreshExtraUI)end
 
             if type(ext.killMode)=="string"and ext.killMode~=""and ext.killMode~="off"
