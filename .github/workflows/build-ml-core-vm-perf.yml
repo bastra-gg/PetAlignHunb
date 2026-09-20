@@ -1,0 +1,174 @@
+name: Build ML Core VM Perf
+
+on:
+  push:
+    paths:
+      - ".github/workflows/build-ml-core-vm-perf.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install compiler
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq lua5.4
+          rm -rf /tmp/granite
+          git clone --filter=blob:none --no-checkout https://github.com/robloxscripter6245366542/roblox-lua-obscator.git /tmp/granite
+          cd /tmp/granite
+          git sparse-checkout init --cone
+          git sparse-checkout set luau-vm
+          git checkout c311d6563a9dc98583f7d1076cc3944b3043bd76
+
+      - name: Patch VM for cooperative boot
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          root = Path("/tmp/granite/luau-vm/src")
+
+          # Existing compatibility patch used by the protected builds.
+          p = root / "webbundle.lua"
+          s = p.read_text()
+          old = "'seal', 'sk',"
+          if old in s and "'seal', 'sk', 'env'," not in s:
+              s = s.replace(old, "'seal', 'sk', 'env',", 1)
+          p.write_text(s)
+
+          # Yield only while the top-level protected program is booting.
+          p = root / "vm.lua"
+          s = p.read_text()
+          s = s.replace(
+              "local PROF = nil\nfunction VM.setProfile(counters) PROF = counters end",
+              "local PROF = nil\nlocal BOOT = false\nlocal BOOT_OPS = 0\nfunction VM.setProfile(counters) PROF = counters end",
+              1,
+          )
+          s = s.replace(
+              "    pc = pc + 1\n    local op = ins.op",
+              "    pc = pc + 1\n    if BOOT then\n      BOOT_OPS = BOOT_OPS + 1\n      if BOOT_OPS >= 1600 then\n        BOOT_OPS = 0\n        if task and task.wait then task.wait() end\n      end\n    end\n    local op = ins.op",
+              1,
+          )
+          old_load = """function VM.load(proto, env)
+            env = env or _ENV or _G
+            return makeClosure(proto, {}, env)
+          end"""
+          new_load = """function VM.load(proto, env)
+            env = env or _ENV or _G
+            local root = makeClosure(proto, {}, env)
+            return function(...)
+              BOOT = true
+              BOOT_OPS = 0
+              local out = pack(root(...))
+              BOOT = false
+              BOOT_OPS = 0
+              return unpack(out, 1, out.n)
+            end
+          end"""
+          if old_load not in s:
+              raise SystemExit("VM.load pattern not found")
+          s = s.replace(old_load, new_load, 1)
+          p.write_text(s)
+
+          # Runtime sealing of a 380 KB core was another long single-frame pass.
+          p = root / "seal.lua"
+          s = p.read_text()
+          s = s.replace(
+              "  for i = 1, n do\n    local ins = code[i]",
+              "  for i = 1, n do\n    if i % 768 == 0 and task and task.wait then task.wait() end\n    local ins = code[i]",
+              1,
+          )
+          s = s.replace(
+              "  for i = 1, nk do\n    local v = K[i]",
+              "  for i = 1, nk do\n    if i % 256 == 0 and task and task.wait then task.wait() end\n    local v = K[i]",
+              1,
+          )
+          p.write_text(s)
+
+          # Deserialization also walks the entire protected bytecode tree.
+          p = root / "serializer.lua"
+          s = p.read_text()
+          s = s.replace(
+              "  for i = 1, readUVarint(r) do p.consts[i] = readValue(r) end",
+              "  for i = 1, readUVarint(r) do p.consts[i] = readValue(r) if i % 2048 == 0 and task and task.wait then task.wait() end end",
+              1,
+          )
+          s = s.replace(
+              "  for i = 1, ncode do\n",
+              "  for i = 1, ncode do\n    if i % 2048 == 0 and task and task.wait then task.wait() end\n",
+              1,
+          )
+          s = s.replace(
+              "  for i = 1, readUVarint(r) do p.protos[i] = readProto(r, invMap) end",
+              "  for i = 1, readUVarint(r) do p.protos[i] = readProto(r, invMap) if i % 64 == 0 and task and task.wait then task.wait() end end",
+              1,
+          )
+          p.write_text(s)
+          PY
+
+      - name: Fetch private ML core
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsS "https://szfjrpkdbccsveklkwyy.supabase.co/functions/v1/rb-vm-ci-bridge?id=ml_core&build=mlperf" -o /tmp/ml_core.lua
+          test "$(wc -c </tmp/ml_core.lua)" -gt 300000
+          grep -q 'local m="4.25.1"' /tmp/ml_core.lua
+          grep -q 'local oldRoot=l7' /tmp/ml_core.lua
+
+      - name: Build and upload six variants
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/ml-vm
+          cd /tmp/granite/luau-vm
+          base=$(( (GITHUB_RUN_ID % 1500000000) + 400000000 ))
+          for variant in 1 2 3 4 5 6; do
+            seed=$((base + variant*104729 + 99173))
+            lua5.4 tools/bundle.lua /tmp/ml_core.lua "$seed" >/tmp/ml-vm/bundle.lua
+
+            # The outer Granite decoder used to do several ~400k-600k element
+            # passes without yielding at all. Only patch the generated bootstrap
+            # suffix; the embedded VM modules remain untouched.
+            python3 - <<'PY'
+          from pathlib import Path
+          import re
+          p=Path("/tmp/ml-vm/bundle.lua")
+          s=p.read_text()
+          marker="s=s:gsub('[^'.."
+          at=s.find(marker)
+          if at < 0:
+              raise SystemExit("decoder marker not found")
+          start=s.rfind("\n",0,at)
+          head,tail=s[:start],s[start:]
+          tail=tail.replace(
+              "for i=1,#s do",
+              "for i=1,#s do if task and task.wait and i%16384==0 then task.wait() end",
+              1,
+          )
+          # All remaining numeric i-loops in this suffix are startup decoder,
+          # integrity, unseal, byte-copy or fingerprint passes.
+          tail=re.sub(
+              r"for i=(1|2),([A-Za-z_][A-Za-z0-9_]*) do",
+              lambda m: f"for i={m.group(1)},{m.group(2)} do if task and task.wait and i%16384==0 then task.wait() end",
+              tail,
+          )
+          p.write_text(head+tail)
+          PY
+
+            test "$(wc -c </tmp/ml-vm/bundle.lua)" -gt 500000
+            grep -q 'Custom bytecode VM' /tmp/ml-vm/bundle.lua
+            grep -q 'i%16384==0 then task.wait()' /tmp/ml-vm/bundle.lua
+            lua5.4 -e 'assert(loadfile("/tmp/ml-vm/bundle.lua"))'
+
+            curl -fsS -X POST --data-binary @/tmp/ml-vm/bundle.lua               "https://szfjrpkdbccsveklkwyy.supabase.co/functions/v1/rb-vm-ci-bridge?id=ml_core&build=mlperf&variant=$variant"               | grep -q '"ok":true'
+          done
+          shred -u /tmp/ml_core.lua /tmp/ml-vm/bundle.lua || true
