@@ -58,10 +58,16 @@ function Core.fingerprintKey(fingerprint)
     }, "::")
 end
 
-function Core.eventPoint(event, currentViewport)
+function Core.eventPoint(event, currentViewport, recordedViewport)
     currentViewport = currentViewport or {w = 1, h = 1}
     local width = math.max(1, tonumber(currentViewport.w) or 1)
     local height = math.max(1, tonumber(currentViewport.h) or 1)
+    local recordedWidth = tonumber(event.vw) or tonumber(recordedViewport and recordedViewport.w)
+    local recordedHeight = tonumber(event.vh) or tonumber(recordedViewport and recordedViewport.h)
+    if tonumber(event.x) and tonumber(event.y) and recordedWidth and recordedHeight
+        and math.abs(width - recordedWidth) <= 2 and math.abs(height - recordedHeight) <= 2 then
+        return math.floor(event.x + 0.5), math.floor(event.y + 0.5)
+    end
     if tonumber(event.nx) and tonumber(event.ny) then
         return math.floor(event.nx * width + 0.5), math.floor(event.ny * height + 0.5)
     end
@@ -73,9 +79,10 @@ function Core.normalizeEvents(events, recordedViewport)
     local width = math.max(1, tonumber(recordedViewport and recordedViewport.w) or 1)
     local height = math.max(1, tonumber(recordedViewport and recordedViewport.h) or 1)
     for index, source in ipairs(type(events) == "table" and events or {}) do
-        if type(source) == "table" and type(source.kind) == "string" then
+        if type(source) == "table" and type(source.kind) == "string" and not source._discard then
             local event = {}
             for key, value in pairs(source) do event[key] = value end
+            event._discard = nil
             event.t = math.max(0, tonumber(event.t) or 0)
             event._order = index
             if tonumber(event.x) and tonumber(event.y) then
@@ -89,8 +96,31 @@ function Core.normalizeEvents(events, recordedViewport)
         if a.t == b.t then return a._order < b._order end
         return a.t < b.t
     end)
-    for _, event in ipairs(output) do event._order = nil end
-    return output
+    local touchDown = {}
+    for _, event in ipairs(output) do
+        if event.touch and event.kind == "mouse_down" then
+            touchDown[tonumber(event.touchId) or 1] = event
+        elseif event.touch and event.kind == "mouse_up" then
+            local id = tonumber(event.touchId) or 1
+            local down = touchDown[id]
+            if down and tonumber(down.x) and tonumber(down.y) and tonumber(event.x) and tonumber(event.y) then
+                local distance = (Vector2.new(event.x, event.y) - Vector2.new(down.x, down.y)).Magnitude
+                local duration = event.t - down.t
+                if distance >= 18 or (distance >= 8 and duration >= 0.3) then
+                    down._drop = true
+                    event._drop = true
+                end
+            end
+            touchDown[id] = nil
+        end
+    end
+    local filtered = {}
+    for _, event in ipairs(output) do
+        event._order = nil
+        if not event._drop then filtered[#filtered + 1] = event end
+        event._drop = nil
+    end
+    return filtered
 end
 
 function Core.normalizeMacro(source, fallbackName)
@@ -211,6 +241,9 @@ local state = {
     currentSlot = nil,
     pendingPlacementSlot = nil,
     nextUnitId = 0,
+    touchInputIds = {},
+    touchGestures = {},
+    nextTouchId = 0,
     playing = false,
     paused = false,
     playToken = 0,
@@ -219,6 +252,7 @@ local state = {
     generatedInput = false,
     pressedKeys = {},
     pressedButtons = {},
+    pressedTouches = {},
     controllerState = "IDLE",
     controllerSince = os.clock(),
     controllerNotBefore = 0,
@@ -246,7 +280,17 @@ end
 local function viewport()
     local camera = workspace.CurrentCamera
     local size = camera and camera.ViewportSize or Vector2.new(1920, 1080)
-    return {w = math.max(1, math.floor(size.X)), h = math.max(1, math.floor(size.Y))}
+    local insetX, insetY = 0, 0
+    pcall(function()
+        local topLeft = GuiService:GetGuiInset()
+        insetX, insetY = topLeft.X, topLeft.Y
+    end)
+    return {
+        w = math.max(1, math.floor(size.X)),
+        h = math.max(1, math.floor(size.Y)),
+        insetX = insetX,
+        insetY = insetY,
+    }
 end
 
 local function copyTable(source)
@@ -539,6 +583,7 @@ local function addRecordedEvent(kind, data)
     data.t = math.max(0, os.clock() - state.recordingStarted)
     state.recordedEvents[#state.recordedEvents + 1] = data
     if state.labels.recordCount then state.labels.recordCount.Text = tostring(#state.recordedEvents) .. " событий" end
+    return data
 end
 
 local slotCodes = {
@@ -588,11 +633,20 @@ keep(UIS.InputBegan:Connect(function(input, processed)
     elseif inputType == Enum.UserInputType.MouseButton1 or inputType == Enum.UserInputType.MouseButton2 or inputType == Enum.UserInputType.Touch then
         local x, y = eventPosition(input)
         if isOwnPoint(x, y) then return end
-        local size = state.recordingViewport or viewport()
+        local size = viewport()
         local button = inputType == Enum.UserInputType.MouseButton2 and 1 or 0
+        local touchId = nil
+        if inputType == Enum.UserInputType.Touch then
+            state.nextTouchId += 1
+            touchId = state.nextTouchId
+            state.touchInputIds[input] = touchId
+        end
         local metadata = {
             x = x, y = y, nx = math.clamp(x / size.w, 0, 1), ny = math.clamp(y / size.h, 0, 1),
+            vw = size.w, vh = size.h,
             button = button, touch = inputType == Enum.UserInputType.Touch,
+            touchId = touchId,
+            camera = cameraSnapshot(),
         }
         if state.pendingPlacementSlot then
             state.nextUnitId += 1
@@ -601,7 +655,10 @@ keep(UIS.InputBegan:Connect(function(input, processed)
             metadata.semanticHint = "placement"
             state.pendingPlacementSlot = nil
         end
-        addRecordedEvent("mouse_down", metadata)
+        local recorded = addRecordedEvent("mouse_down", metadata)
+        if inputType == Enum.UserInputType.Touch and recorded then
+            state.touchGestures[input] = {event = recorded, startX = x, startY = y, moved = false}
+        end
     end
 end))
 
@@ -614,24 +671,44 @@ keep(UIS.InputEnded:Connect(function(input)
         addRecordedEvent("key_up", {key = input.KeyCode.Name, slot = slotCodes[input.KeyCode]})
     elseif inputType == Enum.UserInputType.MouseButton1 or inputType == Enum.UserInputType.MouseButton2 or inputType == Enum.UserInputType.Touch then
         local x, y = eventPosition(input)
+        local gesture = inputType == Enum.UserInputType.Touch and state.touchGestures[input] or nil
+        if inputType == Enum.UserInputType.Touch then state.touchGestures[input] = nil end
+        if gesture and (gesture.moved or (Vector2.new(x, y) - Vector2.new(gesture.startX, gesture.startY)).Magnitude >= 18) then
+            gesture.event._discard = true
+            state.touchInputIds[input] = nil
+            return
+        end
         if isOwnPoint(x, y) then return end
-        local size = state.recordingViewport or viewport()
+        local size = viewport()
+        local touchId = inputType == Enum.UserInputType.Touch and (state.touchInputIds[input] or 1) or nil
+        if inputType == Enum.UserInputType.Touch then state.touchInputIds[input] = nil end
         addRecordedEvent("mouse_up", {
             x = x, y = y, nx = math.clamp(x / size.w, 0, 1), ny = math.clamp(y / size.h, 0, 1),
+            vw = size.w, vh = size.h,
             button = inputType == Enum.UserInputType.MouseButton2 and 1 or 0,
             touch = inputType == Enum.UserInputType.Touch,
+            touchId = touchId,
         })
     end
 end))
 
 keep(UIS.InputChanged:Connect(function(input)
     if state.destroyed or state.generatedInput or not state.recording then return end
-    if input.UserInputType == Enum.UserInputType.MouseWheel then
+    if input.UserInputType == Enum.UserInputType.Touch then
+        local gesture = state.touchGestures[input]
+        if gesture then
+            local x, y = eventPosition(input)
+            if (Vector2.new(x, y) - Vector2.new(gesture.startX, gesture.startY)).Magnitude >= 18 then
+                gesture.moved = true
+            end
+        end
+    elseif input.UserInputType == Enum.UserInputType.MouseWheel then
         local x, y = eventPosition(input)
         if isOwnPoint(x, y) then return end
-        local size = state.recordingViewport or viewport()
+        local size = viewport()
         addRecordedEvent("mouse_wheel", {
             x = x, y = y, nx = math.clamp(x / size.w, 0, 1), ny = math.clamp(y / size.h, 0, 1),
+            vw = size.w, vh = size.h,
             delta = input.Position.Z,
         })
     end
@@ -655,8 +732,12 @@ local function releaseAll()
     for button in pairs(state.pressedButtons) do
         pcall(function() VIM:SendMouseButtonEvent(size.w / 2, size.h / 2, button, false, game, 0) end)
     end
+    for touchId, point in pairs(state.pressedTouches) do
+        pcall(function() VIM:SendTouchEvent(touchId, 2, point.x, point.y) end)
+    end
     state.pressedKeys = {}
     state.pressedButtons = {}
+    state.pressedTouches = {}
     state.generatedInput = false
 end
 
@@ -675,7 +756,7 @@ local function stopPlayback(reason, emergency)
     refreshAll()
 end
 
-local function sendEvent(event)
+local function sendEvent(event, recordedViewport)
     local size = viewport()
     state.generatedInput = true
     local ok, err = pcall(function()
@@ -687,13 +768,23 @@ local function sendEvent(event)
                 if down then state.pressedKeys[event.key] = true else state.pressedKeys[event.key] = nil end
             end
         elseif event.kind == "mouse_down" or event.kind == "mouse_up" then
-            local x, y = Core.eventPoint(event, size)
+            local x, y = Core.eventPoint(event, size, recordedViewport)
             local button = tonumber(event.button) or 0
             local down = event.kind == "mouse_down"
-            VIM:SendMouseButtonEvent(x, y, button, down, game, 0)
-            if down then state.pressedButtons[button] = true else state.pressedButtons[button] = nil end
+            local sentTouch = false
+            if event.touch then
+                local touchId = tonumber(event.touchId) or 1
+                sentTouch = pcall(function() VIM:SendTouchEvent(touchId, down and 0 or 2, x, y) end)
+                if sentTouch then
+                    if down then state.pressedTouches[touchId] = {x = x, y = y} else state.pressedTouches[touchId] = nil end
+                end
+            end
+            if not sentTouch then
+                VIM:SendMouseButtonEvent(x, y, button, down, game, 0)
+                if down then state.pressedButtons[button] = true else state.pressedButtons[button] = nil end
+            end
         elseif event.kind == "mouse_wheel" then
-            local x, y = Core.eventPoint(event, size)
+            local x, y = Core.eventPoint(event, size, recordedViewport)
             VIM:SendMouseWheelEvent(x, y, (tonumber(event.delta) or 0) > 0, game)
         end
     end)
@@ -761,11 +852,15 @@ local function playMacro(macro, force, fromAuto, expectedFingerprint)
             if late > tolerance and event.kind == "mouse_wheel" then
                 -- Wheel bursts are disposable; clicks and releases are never dropped.
             else
+                if event.kind == "mouse_down" and type(event.camera) == "table" then
+                    restoreCamera(event.camera)
+                    task.wait(0.03)
+                end
                 if late > tolerance then
                     local spacing = 0.025 - (os.clock() - lastSent)
                     if spacing > 0 then task.wait(spacing) end
                 end
-                sendEvent(event)
+                sendEvent(event, macro.viewport)
                 lastSent = os.clock()
             end
             if state.config.settings.lockCamera and lockedCamera then restoreCamera(lockedCamera) end
@@ -812,6 +907,9 @@ local function startRecording()
     state.currentSlot = nil
     state.pendingPlacementSlot = nil
     state.nextUnitId = 0
+    state.touchInputIds = {}
+    state.touchGestures = {}
+    state.nextTouchId = 0
     state.recording = true
     log("Запись начата · " .. state.recordingFingerprint.mapKey .. " · " .. state.recordingFingerprint.spawnKey)
     refreshAll()
