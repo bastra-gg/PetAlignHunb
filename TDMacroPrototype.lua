@@ -2,8 +2,8 @@
 -- Records tower actions and replays the same server remotes without moving the camera.
 
 local VERSION = 2
-local SCRIPT_VERSION = "1.2.1"
-local REMOTE_BUS_VERSION = 2
+local SCRIPT_VERSION = "1.2.2"
+local REMOTE_BUS_VERSION = 3
 local ROOT_FOLDER = "TDMacroLab"
 local CONFIG_FILE = ROOT_FOLDER .. "/config.json"
 local FALLBACK_FILE = "td_macro_v2.json"
@@ -623,6 +623,7 @@ end
 local refreshAll = function() end
 local refreshMacros = function() end
 local refreshBindings = function() end
+local activateRecordingTimeline = function() end
 
 local function isOwnPoint(x, y)
     if not state.gui then return false end
@@ -995,11 +996,23 @@ local function firstUsefulString(arguments)
     return fallback
 end
 
-local function captureRemote(remote, method, arguments)
-    if not state.recording or not state.recordingLive or state.destroyed or state.generatedInput then return end
+local function captureRemote(remote, method, arguments, calledAt)
+    if not state.recording or state.destroyed or state.generatedInput then return end
     if typeof(remote) ~= "Instance" or (not remote:IsA("RemoteEvent") and not remote:IsA("RemoteFunction")) then return end
     local action, position = classifyRemote(remote, arguments)
-    if not action then return end
+    local recentInput = (tonumber(calledAt) or os.clock()) - state.lastUserGameInput <= 1.5
+    if not action and not recentInput then return end
+    if not action then
+        local remoteName = Core.cleanText(remote.Name)
+        if remoteName:find("ping", 1, true) or remoteName:find("heartbeat", 1, true)
+            or remoteName:find("camera", 1, true) or remoteName:find("position", 1, true) then return end
+        action = "request"
+    end
+    if not state.recordingLive then
+        -- Timer detection is only a convenience. The first real tower request must never be lost.
+        activateRecordingTimeline(detectGameClock())
+    end
+    if not state.recordingLive then return end
     local unitId = nil
     if action == "place" then
         unitId = "u" .. tostring(#state.recordedPlacements + 1)
@@ -1052,10 +1065,11 @@ local function installRemoteHook()
             local fromExecutor = type(checkcaller) == "function" and checkcaller() or false
             if listener and not fromExecutor and (method == "FireServer" or method == "InvokeServer") then
                 local arguments = table.pack(...)
+                local calledAt = os.clock()
                 -- Let the game send first. Recording work must never delay or swallow its button action.
                 local results = table.pack(oldNamecall(self, ...))
                 task.defer(function()
-                    if bus.listener == listener then pcall(listener, self, method, arguments) end
+                    if bus.listener == listener then pcall(listener, self, method, arguments, calledAt) end
                 end)
                 return table.unpack(results, 1, results.n)
             end
@@ -1143,7 +1157,7 @@ keep(UIS.InputBegan:Connect(function(input, processed)
             state.lastUserGameInput = os.clock()
             state.lastUserActionHint = actionHintAtPoint(x, y)
         end
-    elseif input.UserInputType == Enum.UserInputType.Keyboard then
+    elseif input.UserInputType == Enum.UserInputType.Keyboard and not state.config.settings.remoteMode then
         state.lastUserGameInput = os.clock()
     end
     if not state.recording then return end
@@ -1442,7 +1456,9 @@ local function waitForRemoteMoment(event, clockConfig, token, fallbackStarted)
         local current = detectGameClock()
         local reached = remoteMomentReached(event, direction, current)
         if reached == true then return true end
-        if reached == nil and os.clock() - fallbackStarted >= (tonumber(event.t) or 0) then return true end
+        local elapsedReady = os.clock() - fallbackStarted >= (tonumber(event.t) or 0)
+        local waitingForWave = current and event.wave and current.wave and current.wave < event.wave
+        if elapsedReady and not waitingForWave then return true end
         task.wait(0.08)
     end
     return false
@@ -1639,7 +1655,7 @@ local function togglePause()
     refreshAll()
 end
 
-local function activateRecordingTimeline(clock)
+activateRecordingTimeline = function(clock)
     if not state.recording or state.recordingLive then return end
     state.recordingLive = true
     state.recordingStarted = os.clock()
@@ -2231,7 +2247,8 @@ state.labels.saveButton = button(recordPage, "ОСТАНОВИТЬ И СОХРА
 end, Color3.fromRGB(50, 81, 125))
 
 state.labels.playSelectedButton = button(recordPage, "ЗАПУСТИТЬ ВЫБРАННЫЙ МАКРОС", UDim2.fromOffset(0, 187), UDim2.new(1, 0, 0, 35), function()
-    playMacro(selectedMacro(), false, false)
+    -- Manual launch is intentionally allowed after the player has walked away from the recorded spawn.
+    playMacro(selectedMacro(), true, false)
 end, Color3.fromRGB(35, 119, 108))
 state.labels.recordHint = label(recordPage,
     "1. Начни запись до первой волны.  2. Ставь и улучшай юнитов.  3. Останови и сохрани. Камера и ходьба не записываются.",
@@ -2295,7 +2312,7 @@ button(macrosPage, "УДАЛИТЬ", UDim2.new(0.81, 4, 1, -84), UDim2.new(0.19,
 end, Color3.fromRGB(91, 39, 48))
 
 button(macrosPage, "ЗАПУСТИТЬ", UDim2.new(0, 0, 1, -41), UDim2.new(0.34, -4, 0, 35), function()
-    playMacro(selectedMacro(), false, false)
+    playMacro(selectedMacro(), true, false)
 end, Color3.fromRGB(35, 119, 108))
 button(macrosPage, "ПРИВЯЗАТЬ К КАРТЕ", UDim2.new(0.34, 4, 1, -41), UDim2.new(0.39, -4, 0, 35), function()
     local macro = selectedMacro()
