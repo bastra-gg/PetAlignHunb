@@ -281,6 +281,12 @@ pcall(function()
         return false
     end
 
+    local function belongsToCharacter(part,char)
+        if not part or not char then return false end
+        local ok,inside=pcall(function()return part:IsDescendantOf(char)end)
+        return ok and inside==true
+    end
+
     local function softPauseMachine(reason)
         local machine=runtime.selectedMachine
         local char=character()
@@ -316,8 +322,8 @@ pcall(function()
                                 seen[node]=true
                                 local p0,p1=nil,nil
                                 pcall(function()p0=node.Part0 p1=node.Part1 end)
-                                local c0=p0 and pcall(function()return p0:IsDescendantOf(char)end)and p0:IsDescendantOf(char)
-                                local c1=p1 and pcall(function()return p1:IsDescendantOf(char)end)and p1:IsDescendantOf(char)
+                                local c0=belongsToCharacter(p0,char)
+                                local c1=belongsToCharacter(p1,char)
                                 local m0=belongsToMachine(p0,machine)
                                 local m1=belongsToMachine(p1,machine)
                                 if (c0 and m1)or(c1 and m0) then pcall(function()node:Destroy()end)end
