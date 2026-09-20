@@ -1,5 +1,5 @@
--- RockBugHub TEST bootstrap T67
-local VERSION="T67"
+-- RockBugHub TEST bootstrap T68
+local VERSION="T68"
 local CORE_URL="https://raw.githubusercontent.com/bastra-gg/PetAlignHunb/09719f8e7536f55acda625e8e18ae0ff44ce9cdb/RockBugHub_v1_5_core.lua"
 local BOSS_RUNTIME_URL="https://raw.githubusercontent.com/bastra-gg/PetAlignHunb/09719f8e7536f55acda625e8e18ae0ff44ce9cdb/RockBugHub_TEST_RuntimeA.lua"
 local ROCK_PATCH_URL="https://raw.githubusercontent.com/bastra-gg/PetAlignHunb/09719f8e7536f55acda625e8e18ae0ff44ce9cdb/RockBugHub_TEST_AdaptiveRocks.lua"
@@ -50,7 +50,7 @@ if type(runtime)=="table"then
     pcall(function()if runtime.uiRoot and runtime.uiRoot:IsA("ScreenGui")then runtime.uiRoot.Enabled=false end end)
 end
 
--- T67: background autoboss must not call the core's global STOP.
+-- T68: background autoboss must not call the core's global STOP.
 -- The pinned core's bossAdapter.prepare() points at jT(), which also shuts down
 -- unrelated automation. Pause only modes that physically conflict with boss combat.
 pcall(function()
@@ -147,7 +147,7 @@ if not okMachine then warn("[RockBugHub TEST "..VERSION.."] adaptive machines pa
 local okMachineGuard,problemMachineGuard=pcall(function()run(MACHINE_GUARD_URL,"machine rebirth guard")end)
 if not okMachineGuard then warn("[RockBugHub TEST "..VERSION.."] machine rebirth guard failed: "..tostring(problemMachineGuard))end
 
--- T64 boss/machine coordinator:
+-- T68 boss/machine coordinator:
 -- BEFORE BOSS: pause rebirth, gain enough strength with Weight, then fight immediately.
 -- NO machine seat is required before boss.
 -- AFTER BOSS: restore exact machine, confirm stable seat, only then resume auto-rebirth.
@@ -157,8 +157,11 @@ pcall(function()
     local player=Players.LocalPlayer
     if not player then return end
 
-    local oldGuard=env.RockBugMachineRebirthGuard
-    if type(oldGuard)=="table"and type(oldGuard.Destroy)=="function"then pcall(oldGuard.Destroy)end
+    -- Keep the dedicated rebirth guard alive. It owns the controlled
+    -- detach -> rebirth -> re-seat sequence. The boss coordinator layers on top.
+    local baseGuard=env.RockBugMachineRebirthGuard
+    local oldCoordinator=env.RockBugBossMachineCoordinator
+    if type(oldCoordinator)=="table"and type(oldCoordinator.Destroy)=="function"then pcall(oldCoordinator.Destroy)end
 
     local rawStop=runtime.stopMachineFarm
     local originalAllowed=runtime.machineRebirthAllowed
@@ -187,8 +190,9 @@ pcall(function()
         originalTick=cycle.Tick,
         wrapper=nil,
     }
-    env.RockBugMachineRebirthGuard=state
-    runtime.machineRebirthGuard=state
+    state.baseGuard=baseGuard
+    env.RockBugBossMachineCoordinator=state
+    runtime.bossMachineCoordinator=state
 
     local function adaptive()
         local a=env.RockBugAdaptiveMachines
@@ -265,35 +269,95 @@ pcall(function()
         return (a and a.auto==true)or runtime.adaptiveMachineAuto==true
     end
 
-    local function safeStopMachine(reason)
+    local function belongsToMachine(part,machine)
+        if not part or not machine then return false end
+        if part==machine.seat then return true end
+        for _,root in ipairs({machine.model,machine.identity,machine.seat})do
+            if root and root.Parent then
+                local ok,inside=pcall(function()return part==root or part:IsDescendantOf(root)end)
+                if ok and inside then return true end
+            end
+        end
+        return false
+    end
+
+    local function softPauseMachine(reason)
         local machine=runtime.selectedMachine
+        local char=character()
+        local h=human()
+
+        if type(runtime.cancelMachineAttach)=="function"then pcall(runtime.cancelMachineAttach)end
+        if runtime.machineRecovery and type(runtime.machineRecovery.Reset)=="function"then
+            pcall(function()runtime.machineRecovery:Reset()end)
+        end
+
+        -- Invalidate every old attach job, but DO NOT run the core hard-stop cleanup.
+        -- That cleanup deletes game-created machine pieces and can make the interaction
+        -- buttons disappear until the machine is rebuilt by the game.
+        runtime.machineToken=(runtime.machineToken or 0)+1
+        runtime.machineActive=false
+        runtime.machineAttached=false
+        runtime.machineAttachInFlight=false
+        runtime.machineRecovering=false
+        runtime.machineNextAttach=0
+        runtime.machineNextRep=0
+
+        -- Break only welds that physically connect this character to this machine.
+        -- Do not delete tools, buttons, cloned machine parts or game UI.
+        if char and machine then
+            local seen={}
+            local roots={char,machine.model,machine.identity,machine.seat}
+            for _,root in ipairs(roots)do
+                if root and root.Parent then
+                    local ok,nodes=pcall(function()return root:GetDescendants()end)
+                    if ok and type(nodes)=="table"then
+                        for _,node in ipairs(nodes)do
+                            if not seen[node] and (node:IsA("Weld")or node:IsA("WeldConstraint")or node:IsA("Motor6D"))then
+                                seen[node]=true
+                                local p0,p1=nil,nil
+                                pcall(function()p0=node.Part0 p1=node.Part1 end)
+                                local c0=p0 and pcall(function()return p0:IsDescendantOf(char)end)and p0:IsDescendantOf(char)
+                                local c1=p1 and pcall(function()return p1:IsDescendantOf(char)end)and p1:IsDescendantOf(char)
+                                local m0=belongsToMachine(p0,machine)
+                                local m1=belongsToMachine(p1,machine)
+                                if (c0 and m1)or(c1 and m0) then pcall(function()node:Destroy()end)end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+
+        if h then
+            pcall(function()h.Sit=false end)
+            pcall(function()h.Jump=true end)
+            pcall(function()h:ChangeState(Enum.HumanoidStateType.GettingUp)end)
+        end
+        if reason then runtime.machineRecoveryStatus=tostring(reason)end
+        return true
+    end
+
+    local function safeStopMachine(reason)
         local a=adaptive()
+        local automatic=(a and a.switching==true)
+            or state.machineIntent
+            or (cycle and cycle.internal==true)
+            or (baseGuard and baseGuard.rebirthBusy==true)
+
+        -- Automatic boss/rebirth transitions use a soft detach. Manual user STOP
+        -- still uses the core hard stop exactly as before.
+        if not automatic then return rawStop(reason)end
+
         local autoBefore=(a and a.auto==true)or runtime.adaptiveMachineAuto==true
-        local oldSwitch=a and a.switching or false
-        if a then a.switching=true end
-
-        local homePivot,homeSeatCF
-        if machine then
-            homePivot=machine.homePivot
-            homeSeatCF=machine.homeSeatCF
-            machine.homePivot=nil
-            machine.homeSeatCF=nil
-        end
-
-        local ok,err=pcall(rawStop,reason)
-
-        if machine then
-            machine.homePivot=homePivot
-            machine.homeSeatCF=homeSeatCF
-        end
+        local ok,err=pcall(softPauseMachine,reason)
         if a and a.alive~=false then
-            a.switching=oldSwitch
             if autoBefore or state.machineIntent then
                 a.auto=true
                 runtime.adaptiveMachineAuto=true
             end
         end
         if not ok then error(err,0)end
+        return true
     end
     runtime.stopMachineFarm=safeStopMachine
 
@@ -450,10 +514,38 @@ pcall(function()
         if resume then setAutoRebirth(true)end
     end
 
-    -- During boss prep and post-boss restore rebirth is absolutely blocked.
+    -- During boss prep/post-boss restore rebirth is absolutely blocked.
+    -- Outside the boss flow, AUTO MACHINE + AUTO REBIRTH means:
+    -- 1) sit on the selected machine, 2) confirm a stable seat, 3) only then rebirth.
     state.wrapper=function()
         if not state.alive then return originalAllowed()end
         if state.preparingBoss or state.postBoss then return false end
+
+        -- Once the dedicated guard has begun its controlled detach, let it finish
+        -- that one rebirth and re-seat cycle. Blocking here would deadlock it.
+        if baseGuard and baseGuard.rebirthBusy then
+            local ok,value=pcall(originalAllowed)
+            return ok and value==true
+        end
+
+        if autoMachineWanted()then
+            local machine=runtime.selectedMachine
+            if not machine or not machine.seat or not machine.seat.Parent then
+                runtime.machineRecoveryStatus="АВТОРЕБИРТ: жду доступный тренажёр"
+                return false
+            end
+
+            if not machineReady(machine)then
+                runtime.machineRecoveryStatus="АВТОРЕБИРТ: жду посадку на тренажёр"
+                if not runtime.machineActive then
+                    restartExact(machine)
+                elseif type(runtime.runMachineRecovery)=="function"then
+                    pcall(runtime.runMachineRecovery)
+                end
+                return false
+            end
+        end
+
         local ok,value=pcall(originalAllowed)
         return ok and value==true
     end
@@ -573,8 +665,8 @@ pcall(function()
         if runtime.machineRebirthAllowed==state.wrapper then runtime.machineRebirthAllowed=originalAllowed end
         if runtime.stopMachineFarm==safeStopMachine then runtime.stopMachineFarm=rawStop end
         if cycle.Tick~=state.originalTick then cycle.Tick=state.originalTick end
-        if env.RockBugMachineRebirthGuard==state then env.RockBugMachineRebirthGuard=nil end
-        if runtime.machineRebirthGuard==state then runtime.machineRebirthGuard=nil end
+        if env.RockBugBossMachineCoordinator==state then env.RockBugBossMachineCoordinator=nil end
+        if runtime.bossMachineCoordinator==state then runtime.bossMachineCoordinator=nil end
     end
 end)
 local okBossUI,problemBossUI=pcall(function()run(BOSS_UI_PATCH_URL,"boss compact UI patch")end)
