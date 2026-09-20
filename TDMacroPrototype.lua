@@ -2,7 +2,8 @@
 -- Records tower actions and replays the same server remotes without moving the camera.
 
 local VERSION = 2
-local SCRIPT_VERSION = "1.2.0"
+local SCRIPT_VERSION = "1.2.1"
+local REMOTE_BUS_VERSION = 2
 local ROOT_FOLDER = "TDMacroLab"
 local CONFIG_FILE = ROOT_FOLDER .. "/config.json"
 local FALLBACK_FILE = "td_macro_v2.json"
@@ -1039,8 +1040,11 @@ local function installRemoteHook()
         return false
     end
     local bus = env.__TDMacroRemoteBus
-    if type(bus) ~= "table" or type(bus.setListener) ~= "function" then
-        bus = {listener = nil}
+    if type(bus) ~= "table" or type(bus.setListener) ~= "function" or bus.version ~= REMOTE_BUS_VERSION then
+        if type(bus) == "table" and type(bus.setListener) == "function" then
+            pcall(function() bus:setListener(nil) end)
+        end
+        bus = {listener = nil, version = REMOTE_BUS_VERSION}
         local oldNamecall
         local callback = function(self, ...)
             local method = getnamecallmethod()
@@ -1048,7 +1052,12 @@ local function installRemoteHook()
             local fromExecutor = type(checkcaller) == "function" and checkcaller() or false
             if listener and not fromExecutor and (method == "FireServer" or method == "InvokeServer") then
                 local arguments = table.pack(...)
-                pcall(listener, self, method, arguments)
+                -- Let the game send first. Recording work must never delay or swallow its button action.
+                local results = table.pack(oldNamecall(self, ...))
+                task.defer(function()
+                    if bus.listener == listener then pcall(listener, self, method, arguments) end
+                end)
+                return table.unpack(results, 1, results.n)
             end
             return oldNamecall(self, ...)
         end
@@ -1717,6 +1726,13 @@ local function startRecording()
         log("Input-запись начата · " .. state.recordingFingerprint.mapKey .. " · " .. state.recordingFingerprint.spawnKey)
     end
     refreshAll()
+    -- Free the whole game screen while recording; the small TD button restores this window.
+    if state.recording and state.window and state.showButton then
+        state.window.Visible = false
+        local shadow = state.window.Parent and state.window.Parent:FindFirstChild("Shadow")
+        if shadow then shadow.Visible = false end
+        state.showButton.Visible = true
+    end
 end
 
 local function stopAndSave(name)
@@ -2015,8 +2031,13 @@ local function button(parent, text, position, size, callback, color)
     object.Font = Enum.Font.GothamSemibold
     object.Text = text
     object.TextSize = 12
+    object.TextScaled = true
     object.TextColor3 = palette.text
     object.Parent = parent
+    local textConstraint = Instance.new("UITextSizeConstraint")
+    textConstraint.MinTextSize = 8
+    textConstraint.MaxTextSize = 12
+    textConstraint.Parent = object
     round(object, 7)
     local outline = stroke(object, palette.line, 0.18)
     keep(object.MouseEnter:Connect(function()
@@ -2129,6 +2150,7 @@ local hideButton = button(header, "—", UDim2.new(1, -38, 0, 7), UDim2.fromOffs
     state.showButton.Visible = true
 end)
 hideButton.TextSize = 18
+hideButton.TextScaled = false
 
 local nav = Instance.new("Frame")
 nav.BackgroundColor3 = palette.bg
@@ -2189,7 +2211,7 @@ local logPage = createPage("LOG")
 
 local statusCard = Instance.new("Frame")
 statusCard.BackgroundColor3 = palette.panel
-statusCard.Size = UDim2.new(1, 0, 0, 63)
+statusCard.Size = UDim2.new(1, 0, 0, 57)
 statusCard.Parent = recordPage
 round(statusCard, 10)
 stroke(statusCard)
@@ -2200,20 +2222,20 @@ state.labels.controller.Font = Enum.Font.GothamBold
 state.labels.fingerprint = label(statusCard, "", UDim2.fromOffset(145, 6), UDim2.new(1, -157, 0, 24), 11, palette.text, Enum.TextXAlignment.Right)
 state.labels.storage = label(statusCard, "", UDim2.fromOffset(145, 30), UDim2.new(1, -157, 0, 22), 10, palette.muted, Enum.TextXAlignment.Right)
 
-state.labels.nameBox = textBox(recordPage, "Macro " .. (#state.config.macros + 1), "Название макроса", UDim2.fromOffset(0, 73), UDim2.new(1, -145, 0, 36))
-state.labels.recordCount = label(recordPage, "0 событий", UDim2.new(1, -137, 0, 73), UDim2.fromOffset(137, 36), 11, palette.muted, Enum.TextXAlignment.Right)
+state.labels.nameBox = textBox(recordPage, "Macro " .. (#state.config.macros + 1), "Название макроса", UDim2.fromOffset(0, 65), UDim2.new(1, -145, 0, 34))
+state.labels.recordCount = label(recordPage, "0 событий", UDim2.new(1, -137, 0, 65), UDim2.fromOffset(137, 34), 11, palette.muted, Enum.TextXAlignment.Right)
 
-state.labels.recordButton = button(recordPage, "НАЧАТЬ ЗАПИСЬ", UDim2.fromOffset(0, 119), UDim2.new(0.5, -5, 0, 40), startRecording, Color3.fromRGB(35, 119, 108))
-state.labels.saveButton = button(recordPage, "ОСТАНОВИТЬ И СОХРАНИТЬ", UDim2.new(0.5, 5, 0, 119), UDim2.new(0.5, -5, 0, 40), function()
+state.labels.recordButton = button(recordPage, "НАЧАТЬ ЗАПИСЬ", UDim2.fromOffset(0, 107), UDim2.new(1, 0, 0, 35), startRecording, Color3.fromRGB(35, 119, 108))
+state.labels.saveButton = button(recordPage, "ОСТАНОВИТЬ И СОХРАНИТЬ", UDim2.fromOffset(0, 147), UDim2.new(1, 0, 0, 35), function()
     stopAndSave(state.labels.nameBox.Text)
 end, Color3.fromRGB(50, 81, 125))
 
-state.labels.playSelectedButton = button(recordPage, "ЗАПУСТИТЬ ВЫБРАННЫЙ МАКРОС", UDim2.fromOffset(0, 169), UDim2.new(1, 0, 0, 40), function()
+state.labels.playSelectedButton = button(recordPage, "ЗАПУСТИТЬ ВЫБРАННЫЙ МАКРОС", UDim2.fromOffset(0, 187), UDim2.new(1, 0, 0, 35), function()
     playMacro(selectedMacro(), false, false)
 end, Color3.fromRGB(35, 119, 108))
 state.labels.recordHint = label(recordPage,
     "1. Начни запись до первой волны.  2. Ставь и улучшай юнитов.  3. Останови и сохрани. Камера и ходьба не записываются.",
-    UDim2.fromOffset(2, 218), UDim2.new(1, -4, 0, 48), 11, palette.muted)
+    UDim2.fromOffset(2, 231), UDim2.new(1, -4, 0, 48), 11, palette.muted)
 state.labels.recordHint.TextWrapped = true
 state.labels.recordHint.TextYAlignment = Enum.TextYAlignment.Top
 
@@ -2301,17 +2323,6 @@ makeToggle(autoPage, "АВТОПРОПУСК ВОЛН", UDim2.new(0.5, 8, 0, 73)
 makeToggle(autoPage, "ИГРАТЬ СНОВА", UDim2.fromOffset(0, 119), function() return state.config.settings.autoPlayAgain end, function(value) state.config.settings.autoPlayAgain = value end)
 makeToggle(autoPage, "СЕРВЕРНЫЙ РЕЖИМ", UDim2.new(0.5, 8, 0, 119), function() return state.config.settings.remoteMode end, function(value) state.config.settings.remoteMode = value end)
 
-state.labels.speed = label(autoPage, "", UDim2.fromOffset(2, 169), UDim2.new(1, -4, 0, 28), 12, palette.text, Enum.TextXAlignment.Center)
-button(autoPage, "−", UDim2.new(0.5, -91, 0, 169), UDim2.fromOffset(36, 28), function()
-    state.config.settings.playbackSpeed = math.max(0.25, (tonumber(state.config.settings.playbackSpeed) or 1) - 0.25)
-    saveDisk()
-    refreshAll()
-end)
-button(autoPage, "+", UDim2.new(0.5, 55, 0, 169), UDim2.fromOffset(36, 28), function()
-    state.config.settings.playbackSpeed = math.min(3, (tonumber(state.config.settings.playbackSpeed) or 1) + 0.25)
-    saveDisk()
-    refreshAll()
-end)
 state.labels.pauseButton = button(autoPage, "ПАУЗА / ПРОДОЛЖИТЬ", UDim2.new(0, 0, 1, -43), UDim2.new(0.5, -5, 0, 42), togglePause)
 button(autoPage, "ОСТАНОВИТЬ ВСЁ", UDim2.new(0.5, 5, 1, -43), UDim2.new(0.5, -5, 0, 42), function()
     stopPlayback("EMERGENCY STOP", true)
