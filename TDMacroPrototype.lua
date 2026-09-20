@@ -2,7 +2,7 @@
 -- Records tower actions and replays the same server remotes without moving the camera.
 
 local VERSION = 2
-local SCRIPT_VERSION = "1.2.2"
+local SCRIPT_VERSION = "1.2.3"
 local REMOTE_BUS_VERSION = 3
 local ROOT_FOLDER = "TDMacroLab"
 local CONFIG_FILE = ROOT_FOLDER .. "/config.json"
@@ -293,6 +293,8 @@ local state = {
     recordingClockInitial = nil,
     recordingClockDirection = "up",
     recordingClockChanges = 0,
+    recordingClockFirstChangeAt = nil,
+    recordingClockFirstValue = nil,
     recordedPlacements = {},
     recordedUnitInstances = {},
     pendingPlacements = {},
@@ -1433,33 +1435,52 @@ local function replayRemoteEvent(event)
     return true
 end
 
-local function remoteMomentReached(event, direction, current)
-    if not current then return nil end
-    if event.wave and current.wave then
-        if current.wave > event.wave then return true end
-        if current.wave < event.wave then return false end
-    elseif event.wave and not current.wave then
-        return nil
+local function clockOffsetFromFirstWave(clockConfig, current)
+    if not clockConfig or not current or current.time == nil or clockConfig.startTime == nil then return 0 end
+    local offset
+    if clockConfig.direction == "down" then
+        offset = tonumber(clockConfig.startTime) - tonumber(current.time)
+    else
+        offset = tonumber(current.time) - tonumber(clockConfig.startTime)
     end
-    if event.gameClock ~= nil and current.time ~= nil then
-        if direction == "down" then return current.time <= event.gameClock end
-        return current.time >= event.gameClock
-    end
-    -- With only a wave number, keep the recorded elapsed spacing inside that wave.
-    return nil
+    return math.clamp(tonumber(offset) or 0, 0, 600)
 end
 
-local function waitForRemoteMoment(event, clockConfig, token, fallbackStarted)
-    local direction = clockConfig and clockConfig.direction or "up"
+local function waitForFirstWaveAnchor(macro, token)
+    local previous = detectGameClock()
+    if previous and previous.wave and previous.wave > 1 then
+        log("Макрос нужно запускать до первой волны", true)
+        return nil
+    end
+    if previous and previous.wave and previous.wave >= 1 then
+        return os.clock() - clockOffsetFromFirstWave(macro.clock, previous)
+    end
+    local firstTimerChangeAt = nil
+    local timerChanges = 0
+    log("Макрос вооружён · жду начало первой волны")
     while token == state.playToken and state.playing and not state.destroyed do
         while state.paused and token == state.playToken do task.wait(0.05) end
         local current = detectGameClock()
-        local reached = remoteMomentReached(event, direction, current)
-        if reached == true then return true end
-        local elapsedReady = os.clock() - fallbackStarted >= (tonumber(event.t) or 0)
-        local waitingForWave = current and event.wave and current.wave and current.wave < event.wave
-        if elapsedReady and not waitingForWave then return true end
+        if current and current.wave and current.wave >= 1 then return os.clock() end
+        if current and previous and current.wave == nil and previous.wave == nil
+            and current.time ~= nil and previous.time ~= nil and current.time ~= previous.time then
+            firstTimerChangeAt = firstTimerChangeAt or os.clock()
+            timerChanges += 1
+            if timerChanges >= 2 then return firstTimerChangeAt end
+        end
+        if current then previous = current end
         task.wait(0.08)
+    end
+    return nil
+end
+
+local function waitForRecordedMoment(event, token, playbackStarted)
+    while token == state.playToken and state.playing and not state.destroyed do
+        while state.paused and token == state.playToken do task.wait(0.05) end
+        local elapsed = os.clock() - playbackStarted - state.pauseAccum
+        local remaining = (tonumber(event.t) or 0) - elapsed
+        if remaining <= 0 then return true end
+        task.wait(math.min(0.04, remaining))
     end
     return false
 end
@@ -1595,10 +1616,25 @@ local function playMacro(macro, force, fromAuto, expectedFingerprint)
         local tolerance = math.max(0.05, tonumber(state.config.settings.lateTolerance) or 0.35)
         local lastSent = 0
 
+        if hasRemoteEvents then
+            local firstWaveStarted = waitForFirstWaveAnchor(macro, token)
+            if not firstWaveStarted then
+                if token == state.playToken and state.playing then
+                    state.playing = false
+                    transition("ERROR", "Не найден старт первой волны")
+                    refreshAll()
+                end
+                return
+            end
+            playbackStarted = firstWaveStarted
+            state.pauseAccum = 0
+            log("Первая волна началась · таймер макроса 0.0")
+        end
+
         for _, event in ipairs(macro.events) do
             if token ~= state.playToken or state.destroyed then break end
             if event.kind == "remote" then
-                if not waitForRemoteMoment(event, macro.clock, token, playbackStarted) then break end
+                if not waitForRecordedMoment(event, token, playbackStarted) then break end
             else
                 while state.paused and token == state.playToken do task.wait(0.05) end
                 while token == state.playToken do
@@ -1655,13 +1691,15 @@ local function togglePause()
     refreshAll()
 end
 
-activateRecordingTimeline = function(clock)
+activateRecordingTimeline = function(clock, anchorAt, initialClock)
     if not state.recording or state.recordingLive then return end
     state.recordingLive = true
-    state.recordingStarted = os.clock()
+    state.recordingStarted = tonumber(anchorAt) or os.clock()
     state.recordingClock = clock
-    state.recordingClockInitial = clock
+    state.recordingClockInitial = initialClock or clock
     state.recordingClockChanges = 0
+    state.recordingClockFirstChangeAt = nil
+    state.recordingClockFirstValue = nil
     transition("RECORDING", "игровой таймер запущен")
     log("Запись серверных действий началась")
     refreshAll()
@@ -1688,7 +1726,13 @@ keep(RunService.Heartbeat:Connect(function(delta)
         if previous and previous.wave == nil and current.time and previous.time and current.time ~= previous.time then
             state.recordingClockDirection = current.time > previous.time and "up" or "down"
             state.recordingClockChanges += 1
-            if state.recordingClockChanges >= 2 then activateRecordingTimeline(current) end
+            if not state.recordingClockFirstChangeAt then
+                state.recordingClockFirstChangeAt = os.clock()
+                state.recordingClockFirstValue = current
+            end
+            if state.recordingClockChanges >= 2 then
+                activateRecordingTimeline(current, state.recordingClockFirstChangeAt, state.recordingClockFirstValue)
+            end
         end
         return
     end
@@ -1717,6 +1761,8 @@ local function startRecording()
     state.recordingClock = detectGameClock()
     state.recordingClockInitial = state.recordingClock
     state.recordingClockChanges = 0
+    state.recordingClockFirstChangeAt = nil
+    state.recordingClockFirstValue = nil
     state.recordingClockDirection = "up"
     state.currentSlot = nil
     state.pendingPlacementSlot = nil
