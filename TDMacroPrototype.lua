@@ -1,8 +1,8 @@
--- TD Macro Lab V1
--- Input-driven tower-defense macro recorder. No game remotes are required.
+-- TD Macro Lab
+-- Records tower actions and replays the same server remotes without moving the camera.
 
 local VERSION = 2
-local SCRIPT_VERSION = "1.1.1"
+local SCRIPT_VERSION = "1.2.0"
 local ROOT_FOLDER = "TDMacroLab"
 local CONFIG_FILE = ROOT_FOLDER .. "/config.json"
 local FALLBACK_FILE = "td_macro_v2.json"
@@ -157,6 +157,10 @@ function Core.normalizeMacro(source, fallbackName)
     macroFingerprint.spawnKey = tostring(macroFingerprint.spawnKey or "legacy")
     local events = source.events or source.actions or {}
     local normalizedEvents = Core.normalizeEvents(events, recordedViewport)
+    local detectedRemote = false
+    for _, event in ipairs(normalizedEvents) do
+        if event.kind == "remote" then detectedRemote = true break end
+    end
     local cameraTrack = Core.normalizeCameraTrack(source.cameraTrack)
     if #cameraTrack == 0 then
         local initialCamera = type(source.camera) == "table" and source.camera or macroFingerprint.camera
@@ -176,6 +180,7 @@ function Core.normalizeMacro(source, fallbackName)
     end
     return {
         version = VERSION,
+        recordMode = source.recordMode or (detectedRemote and "remote" or "input"),
         id = tostring(source.id or HttpService:GenerateGUID(false)),
         name = tostring(source.name or fallbackName or "Macro"),
         placeId = tonumber(source.placeId) or macroFingerprint.placeId,
@@ -187,6 +192,7 @@ function Core.normalizeMacro(source, fallbackName)
         viewport = {w = tonumber(recordedViewport.w) or 1920, h = tonumber(recordedViewport.h) or 1080},
         camera = type(source.camera) == "table" and source.camera or macroFingerprint.camera,
         cameraTrack = cameraTrack,
+        clock = type(source.clock) == "table" and source.clock or nil,
         slots = type(source.slots) == "table" and source.slots or {"1", "2", "3", "4", "5"},
         events = normalizedEvents,
         savedAt = tonumber(source.savedAt) or os.time(),
@@ -245,6 +251,7 @@ local defaultConfig = {
         x2 = {mode = "auto"},
         autoSkip = {mode = "auto"},
         playAgain = {mode = "auto"},
+        matchTimer = {mode = "auto"},
     },
     slotLabels = {"1", "2", "3", "4", "5"},
     settings = {
@@ -258,6 +265,7 @@ local defaultConfig = {
         initialDelay = 1.2,
         endTimeout = 600,
         lockCamera = false,
+        remoteMode = true,
     },
 }
 
@@ -279,6 +287,21 @@ local state = {
     recordingViewport = nil,
     recordingCamera = nil,
     recordedCameraTrack = {},
+    recordingLive = false,
+    recordingClock = nil,
+    recordingClockInitial = nil,
+    recordingClockDirection = "up",
+    recordingClockChanges = 0,
+    recordedPlacements = {},
+    recordedUnitInstances = {},
+    pendingPlacements = {},
+    lastUserGameInput = 0,
+    lastUserActionHint = "",
+    replayUnits = {},
+    remoteHookReady = false,
+    remoteHookError = nil,
+    clockCacheAt = 0,
+    clockCache = nil,
     currentSlot = nil,
     pendingPlacementSlot = nil,
     nextUnitId = 0,
@@ -470,7 +493,7 @@ local function snapshotToCFrame(snapshot)
 end
 
 local function recordCameraFrame(force)
-    if not state.recording then return end
+    if not state.recording or (state.config and state.config.settings.remoteMode) then return end
     local snapshot = cameraSnapshot()
     local current = snapshotToCFrame(snapshot)
     if not current then return end
@@ -656,20 +679,421 @@ local function guiAtPoint(x, y)
     return nil
 end
 
+local function actionHintAtPoint(x, y)
+    local object = guiAtPoint(x, y)
+    if not object then return "" end
+    local parts = {}
+    local current = object
+    for _ = 1, 4 do
+        if not current then break end
+        parts[#parts + 1] = current.Name
+        if current:IsA("TextLabel") or current:IsA("TextButton") then parts[#parts + 1] = current.Text end
+        current = current.Parent
+    end
+    return Core.cleanText(table.concat(parts, " "))
+end
+
 local function eventPosition(input)
     local position = input.Position
     return math.floor(position.X), math.floor(position.Y)
 end
 
+local function parseClockText(text)
+    text = tostring(text or "")
+    local minutes, seconds = text:match("(%d+)%s*:%s*(%d%d?)")
+    if minutes and seconds and tonumber(seconds) < 60 then return tonumber(minutes) * 60 + tonumber(seconds) end
+    return nil
+end
+
+local function detectGameClock()
+    if os.clock() - state.clockCacheAt < 0.12 then
+        return state.clockCache == false and nil or state.clockCache
+    end
+    local playerGui = player:FindFirstChildOfClass("PlayerGui")
+    if not playerGui then return nil end
+    local bestTimer, bestTimerScore = nil, 0
+    local bestWave, bestWaveScore = nil, 0
+    local timerBinding = state.config and state.config.bindings and state.config.bindings.matchTimer
+    if timerBinding and timerBinding.mode == "manual" then
+        local bound = resolveGuiPath(timerBinding.path)
+        if bound and instanceVisible(bound) then
+            local candidates = {bound}
+            for _, child in ipairs(bound:GetDescendants()) do candidates[#candidates + 1] = child end
+            for _, object in ipairs(candidates) do
+                if object:IsA("TextLabel") or object:IsA("TextButton") then
+                    local clock = parseClockText(object.Text)
+                    if clock then
+                        bestTimer = {time = clock, text = object.Text, path = guiPath(object)}
+                        bestTimerScore = 1000
+                        break
+                    end
+                end
+            end
+        end
+    end
+    for _, object in ipairs(playerGui:GetDescendants()) do
+        if (object:IsA("TextLabel") or object:IsA("TextButton")) and instanceVisible(object)
+            and not (state.gui and object:IsDescendantOf(state.gui)) then
+            local text = tostring(object.Text or "")
+            local clean = Core.cleanText(text .. " " .. object.Name .. " " .. (object.Parent and object.Parent.Name or ""))
+            local clock = parseClockText(text)
+            if clock then
+                local score = 20
+                if clean:find("timer", 1, true) or clean:find("time", 1, true)
+                    or clean:find("clock", 1, true) or clean:find("время", 1, true) then score += 60 end
+                if clean:find("wave", 1, true) or clean:find("волна", 1, true) then score += 20 end
+                if object.AbsoluteSize.X >= 35 and object.AbsoluteSize.X <= 300 then score += 5 end
+                if score > bestTimerScore then
+                    bestTimerScore = score
+                    bestTimer = {time = clock, text = text, path = guiPath(object)}
+                end
+            end
+            if clean:find("wave", 1, true) or clean:find("волна", 1, true) then
+                local number = tonumber(text:match("(%d+)"))
+                if number then
+                    local score = 50
+                    if Core.cleanText(object.Name):find("wave", 1, true) then score += 30 end
+                    if score > bestWaveScore then
+                        bestWaveScore = score
+                        bestWave = number
+                    end
+                end
+            end
+        end
+    end
+    if not bestTimer and not bestWave then
+        state.clockCacheAt = os.clock()
+        state.clockCache = false
+        return nil
+    end
+    local result = {
+        wave = bestWave,
+        time = bestTimer and bestTimer.time or nil,
+        text = bestTimer and bestTimer.text or nil,
+        timerPath = bestTimer and bestTimer.path or nil,
+    }
+    state.clockCacheAt = os.clock()
+    state.clockCache = result
+    return result
+end
+
 local function addRecordedEvent(kind, data)
     if not state.recording or state.generatedInput then return end
+    if state.config and state.config.settings.remoteMode and not state.recordingLive then return end
     data = data or {}
     data.kind = kind
     data.t = math.max(0, os.clock() - state.recordingStarted)
+    local clock = state.recordingClock
+    if not clock and kind ~= "remote" then clock = detectGameClock() end
+    if clock then
+        data.wave = clock.wave
+        data.gameClock = clock.time
+    end
     state.recordedEvents[#state.recordedEvents + 1] = data
     if state.labels.recordCount then state.labels.recordCount.Text = tostring(#state.recordedEvents) .. " событий" end
     return data
 end
+
+local function instancePath(instance)
+    if typeof(instance) ~= "Instance" then return nil end
+    local parts = {}
+    local current = instance
+    while current and current ~= game do
+        local ordinal = 1
+        local parent = current.Parent
+        if parent then
+            ordinal = 0
+            for _, sibling in ipairs(parent:GetChildren()) do
+                if sibling.Name == current.Name and sibling.ClassName == current.ClassName then
+                    ordinal += 1
+                    if sibling == current then break end
+                end
+            end
+        end
+        table.insert(parts, 1, {name = current.Name, class = current.ClassName, ordinal = math.max(1, ordinal)})
+        current = current.Parent
+    end
+    return current == game and parts or nil
+end
+
+local function resolveInstancePath(path)
+    if type(path) ~= "table" then return nil end
+    local current = game
+    for _, part in ipairs(path) do
+        local found = nil
+        local ordinal = 0
+        for _, child in ipairs(current:GetChildren()) do
+            if child.Name == part.name and (not part.class or child.ClassName == part.class) then
+                ordinal += 1
+                if ordinal == (tonumber(part.ordinal) or 1) then
+                    found = child
+                    break
+                end
+            end
+        end
+        if not found then return nil end
+        current = found
+    end
+    return current
+end
+
+local function instancePosition(instance)
+    if typeof(instance) ~= "Instance" then return nil end
+    if instance:IsA("BasePart") then return instance.Position end
+    if instance:IsA("Model") then
+        local ok, pivot = pcall(function() return instance:GetPivot() end)
+        if ok then return pivot.Position end
+    end
+    local part = instance:FindFirstChildWhichIsA("BasePart", true)
+    return part and part.Position or nil
+end
+
+local function findPlacementRef(instance)
+    local current = instance
+    while current and current ~= workspace do
+        if state.recordedUnitInstances[current] then return state.recordedUnitInstances[current] end
+        current = current.Parent
+    end
+    local position = instancePosition(instance)
+    if not position then return nil end
+    local bestId, bestDistance = nil, math.huge
+    for _, placement in ipairs(state.recordedPlacements) do
+        local target = placement.position
+        if target then
+            local distance = (position - target).Magnitude
+            if distance < bestDistance and distance <= 12 then
+                bestId, bestDistance = placement.unitId, distance
+            end
+        end
+    end
+    return bestId
+end
+
+local function serializeValue(value, depth, seen)
+    depth = depth or 0
+    seen = seen or {}
+    if depth > 7 then return {__td = "truncated"} end
+    local valueType = typeof(value)
+    if value == nil then return {__td = "nil"} end
+    if valueType == "string" or valueType == "number" or valueType == "boolean" then return value end
+    if valueType == "Vector3" then return {__td = "Vector3", x = value.X, y = value.Y, z = value.Z} end
+    if valueType == "Vector2" then return {__td = "Vector2", x = value.X, y = value.Y} end
+    if valueType == "CFrame" then return {__td = "CFrame", components = {value:GetComponents()}} end
+    if valueType == "Color3" then return {__td = "Color3", r = value.R, g = value.G, b = value.B} end
+    if valueType == "EnumItem" then
+        return {__td = "Enum", enum = tostring(value.EnumType):gsub("^Enum%.", ""), item = value.Name}
+    end
+    if valueType == "Instance" then
+        local unitId = findPlacementRef(value)
+        if unitId then return {__td = "unitRef", unitId = unitId, name = value.Name} end
+        return {__td = "Instance", path = instancePath(value), name = value.Name, class = value.ClassName}
+    end
+    if valueType == "table" then
+        if seen[value] then return {__td = "cycle"} end
+        seen[value] = true
+        local entries = {}
+        for key, item in pairs(value) do
+            entries[#entries + 1] = {
+                key = serializeValue(key, depth + 1, seen),
+                value = serializeValue(item, depth + 1, seen),
+            }
+        end
+        seen[value] = nil
+        return {__td = "table", entries = entries}
+    end
+    return {__td = "unsupported", valueType = valueType, text = tostring(value)}
+end
+
+local function serializeArguments(arguments)
+    local output = {}
+    local count = arguments.n or #arguments
+    for index = 1, count do output[index] = serializeValue(arguments[index], 0, {}) end
+    return output, count
+end
+
+local function collectActionText(value, parts, depth)
+    depth = depth or 0
+    if depth > 4 then return end
+    local valueType = typeof(value)
+    if valueType == "string" then
+        parts[#parts + 1] = Core.cleanText(value)
+    elseif valueType == "table" then
+        for key, item in pairs(value) do
+            collectActionText(key, parts, depth + 1)
+            collectActionText(item, parts, depth + 1)
+        end
+    end
+end
+
+local function findWorldPosition(value, depth)
+    depth = depth or 0
+    if depth > 5 then return nil end
+    local valueType = typeof(value)
+    if valueType == "Vector3" then return value end
+    if valueType == "CFrame" then return value.Position end
+    if valueType == "table" then
+        for _, item in pairs(value) do
+            local position = findWorldPosition(item, depth + 1)
+            if position then return position end
+        end
+    end
+    return nil
+end
+
+local function classifyRemote(remote, arguments)
+    local parts = {Core.cleanText(remote.Name)}
+    for index = 1, arguments.n or #arguments do collectActionText(arguments[index], parts, 0) end
+    if os.clock() - state.lastUserGameInput <= 1.25 and state.lastUserActionHint ~= "" then
+        parts[#parts + 1] = state.lastUserActionHint
+    end
+    local text = " " .. table.concat(parts, " ") .. " "
+    local position = nil
+    for index = 1, arguments.n or #arguments do
+        position = findWorldPosition(arguments[index], 0)
+        if position then break end
+    end
+    local function contains(words)
+        for _, word in ipairs(words) do
+            if text:find(word, 1, true) then return true end
+        end
+        return false
+    end
+    local action = nil
+    if contains({"upgrade", "levelup", "improve", "апгрейд", "улучш"}) then
+        action = "upgrade"
+    elseif contains({"sell", "remove tower", "delete tower", "продать", "продажа"}) then
+        action = "sell"
+    elseif contains({"place", "deploy", "spawn tower", "summon", "постав", "размест"}) then
+        action = "place"
+    elseif position and os.clock() - state.lastUserGameInput <= 1.25 then
+        action = "place"
+    elseif os.clock() - state.lastUserGameInput <= 1.25 then
+        for index = 1, arguments.n or #arguments do
+            local value = arguments[index]
+            if typeof(value) == "Instance" and findPlacementRef(value) then
+                action = "unit_action"
+                break
+            end
+        end
+    end
+    return action, position, text
+end
+
+local function firstUsefulString(arguments)
+    local fallback = nil
+    for index = 1, arguments.n or #arguments do
+        local value = arguments[index]
+        if typeof(value) == "string" and #value > 0 and #value <= 80 then
+            fallback = fallback or value
+            local clean = Core.cleanText(value)
+            if not clean:find("place", 1, true) and not clean:find("deploy", 1, true)
+                and not clean:find("upgrade", 1, true) and not clean:find("sell", 1, true) then return value end
+        end
+        if typeof(value) == "Instance" and not value:IsA("RemoteEvent") and not value:IsA("RemoteFunction") then return value.Name end
+    end
+    return fallback
+end
+
+local function captureRemote(remote, method, arguments)
+    if not state.recording or not state.recordingLive or state.destroyed or state.generatedInput then return end
+    if typeof(remote) ~= "Instance" or (not remote:IsA("RemoteEvent") and not remote:IsA("RemoteFunction")) then return end
+    local action, position = classifyRemote(remote, arguments)
+    if not action then return end
+    local unitId = nil
+    if action == "place" then
+        unitId = "u" .. tostring(#state.recordedPlacements + 1)
+        state.recordedPlacements[#state.recordedPlacements + 1] = {
+            unitId = unitId,
+            position = position,
+            unitName = firstUsefulString(arguments),
+        }
+    end
+    local encoded, count = serializeArguments(arguments)
+    local recorded = addRecordedEvent("remote", {
+        action = action,
+        method = method,
+        remotePath = instancePath(remote),
+        remoteName = remote.Name,
+        args = encoded,
+        argCount = count,
+        unitId = unitId,
+        unitName = firstUsefulString(arguments),
+        position = position and {x = position.X, y = position.Y, z = position.Z} or nil,
+    })
+    if recorded then
+        if action == "place" then
+            state.pendingPlacements[#state.pendingPlacements + 1] = {
+                unitId = unitId,
+                unitName = recorded.unitName,
+                position = position,
+                createdAt = os.clock(),
+            }
+        end
+        log("REC " .. action .. " · " .. tostring(recorded.unitName or remote.Name))
+    end
+end
+
+local function installRemoteHook()
+    if type(hookmetamethod) ~= "function" or type(getnamecallmethod) ~= "function" then
+        state.remoteHookError = "executor не поддерживает hookmetamethod"
+        return false
+    end
+    local bus = env.__TDMacroRemoteBus
+    if type(bus) ~= "table" or type(bus.setListener) ~= "function" then
+        bus = {listener = nil}
+        local oldNamecall
+        local callback = function(self, ...)
+            local method = getnamecallmethod()
+            local listener = bus.listener
+            local fromExecutor = type(checkcaller) == "function" and checkcaller() or false
+            if listener and not fromExecutor and (method == "FireServer" or method == "InvokeServer") then
+                local arguments = table.pack(...)
+                pcall(listener, self, method, arguments)
+            end
+            return oldNamecall(self, ...)
+        end
+        local wrapped = type(newcclosure) == "function" and newcclosure(callback) or callback
+        local ok, result = pcall(function()
+            oldNamecall = hookmetamethod(game, "__namecall", wrapped)
+        end)
+        if not ok or type(oldNamecall) ~= "function" then
+            state.remoteHookError = "не удалось поставить Remote hook"
+            return false
+        end
+        function bus:setListener(listener) self.listener = listener end
+        env.__TDMacroRemoteBus = bus
+    end
+    bus:setListener(captureRemote)
+    state.remoteBus = bus
+    state.remoteHookReady = true
+    return true
+end
+
+keep(workspace.DescendantAdded:Connect(function(object)
+    if not state.recording or not state.recordingLive or not state.config or not state.config.settings.remoteMode then return end
+    if not object:IsA("Model") and not object:IsA("BasePart") then return end
+    local candidate = object:IsA("BasePart") and (object:FindFirstAncestorOfClass("Model") or object) or object
+    if player.Character and candidate:IsDescendantOf(player.Character) then return end
+    local candidatePosition = instancePosition(candidate)
+    local candidateName = Core.cleanText(candidate.Name)
+    for index = #state.pendingPlacements, 1, -1 do
+        local pending = state.pendingPlacements[index]
+        if os.clock() - pending.createdAt > 3 then
+            table.remove(state.pendingPlacements, index)
+        else
+            local positionMatches = pending.position and candidatePosition
+                and (candidatePosition - pending.position).Magnitude <= 14
+            local wantedName = Core.cleanText(pending.unitName or "")
+            local nameMatches = wantedName ~= "" and (candidateName:find(wantedName, 1, true)
+                or wantedName:find(candidateName, 1, true))
+            if positionMatches or (not pending.position and nameMatches) then
+                state.recordedUnitInstances[candidate] = pending.unitId
+                table.remove(state.pendingPlacements, index)
+                break
+            end
+        end
+    end
+end))
 
 local slotCodes = {
     [Enum.KeyCode.One] = 1,
@@ -703,7 +1127,18 @@ end
 keep(UIS.InputBegan:Connect(function(input, processed)
     if state.destroyed or state.generatedInput then return end
     if state.bindingCapture and captureBinding(state.bindingCapture, input) then return end
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.MouseButton2
+        or input.UserInputType == Enum.UserInputType.Touch then
+        local x, y = eventPosition(input)
+        if not isOwnPoint(x, y) then
+            state.lastUserGameInput = os.clock()
+            state.lastUserActionHint = actionHintAtPoint(x, y)
+        end
+    elseif input.UserInputType == Enum.UserInputType.Keyboard then
+        state.lastUserGameInput = os.clock()
+    end
     if not state.recording then return end
+    if state.config.settings.remoteMode then return end
 
     local inputType = input.UserInputType
     if inputType == Enum.UserInputType.Keyboard and input.KeyCode ~= Enum.KeyCode.Unknown then
@@ -748,6 +1183,7 @@ end))
 
 keep(UIS.InputEnded:Connect(function(input)
     if state.destroyed or state.generatedInput or not state.recording then return end
+    if state.config.settings.remoteMode then return end
     local inputType = input.UserInputType
     if inputType == Enum.UserInputType.Keyboard and input.KeyCode ~= Enum.KeyCode.Unknown then
         local focused = UIS:GetFocusedTextBox()
@@ -778,6 +1214,7 @@ end))
 
 keep(UIS.InputChanged:Connect(function(input)
     if state.destroyed or state.generatedInput or not state.recording then return end
+    if state.config.settings.remoteMode then return end
     if input.UserInputType == Enum.UserInputType.Touch then
         local gesture = state.touchGestures[input]
         if gesture then
@@ -853,6 +1290,155 @@ local function stopPlayback(reason, emergency)
     refreshAll()
 end
 
+local function deserializeValue(value, depth)
+    depth = depth or 0
+    if depth > 8 or type(value) ~= "table" or value.__td == nil then return value end
+    if value.__td == "nil" then return nil end
+    if value.__td == "Vector3" then return Vector3.new(value.x or 0, value.y or 0, value.z or 0) end
+    if value.__td == "Vector2" then return Vector2.new(value.x or 0, value.y or 0) end
+    if value.__td == "CFrame" and type(value.components) == "table" then
+        return CFrame.new(table.unpack(value.components, 1, 12))
+    end
+    if value.__td == "Color3" then return Color3.new(value.r or 0, value.g or 0, value.b or 0) end
+    if value.__td == "Enum" and Enum[value.enum] then return Enum[value.enum][value.item] end
+    if value.__td == "Instance" then return resolveInstancePath(value.path) end
+    if value.__td == "unitRef" then
+        local deadline = os.clock() + 2.5
+        while state.playing and os.clock() < deadline and not state.replayUnits[value.unitId] do task.wait(0.05) end
+        return state.replayUnits[value.unitId]
+    end
+    if value.__td == "table" then
+        local output = {}
+        for _, entry in ipairs(type(value.entries) == "table" and value.entries or {}) do
+            local key = deserializeValue(entry.key, depth + 1)
+            if key ~= nil then output[key] = deserializeValue(entry.value, depth + 1) end
+        end
+        return output
+    end
+    return nil
+end
+
+local function nearbyUnitCandidates(position)
+    local output = {}
+    if not position then return output end
+    local parts = {}
+    local ok = pcall(function()
+        local parameters = OverlapParams.new()
+        parameters.FilterType = Enum.RaycastFilterType.Exclude
+        parameters.FilterDescendantsInstances = player.Character and {player.Character} or {}
+        parts = workspace:GetPartBoundsInRadius(position, 14, parameters)
+    end)
+    if not ok then return output end
+    for _, object in ipairs(parts) do
+        local candidate = object:FindFirstAncestorOfClass("Model") or object
+        if not output[candidate] then
+            local candidatePosition = instancePosition(candidate)
+            if candidatePosition and (candidatePosition - position).Magnitude <= 14 then output[candidate] = true end
+        end
+    end
+    return output
+end
+
+local function resolvePlacedUnit(event, before)
+    if not event.unitId or type(event.position) ~= "table" then return end
+    local position = Vector3.new(event.position.x or 0, event.position.y or 0, event.position.z or 0)
+    local deadline = os.clock() + 2.5
+    local best, bestDistance = nil, math.huge
+    repeat
+        for candidate in pairs(nearbyUnitCandidates(position)) do
+            if not before[candidate] and candidate:IsDescendantOf(workspace) then
+                local candidatePosition = instancePosition(candidate)
+                local distance = candidatePosition and (candidatePosition - position).Magnitude or math.huge
+                if distance < bestDistance then best, bestDistance = candidate, distance end
+            end
+        end
+        if best then
+            state.replayUnits[event.unitId] = best
+            return
+        end
+        task.wait(0.1)
+    until not state.playing or os.clock() >= deadline
+end
+
+local function returnedInstance(value, depth)
+    depth = depth or 0
+    if depth > 4 then return nil end
+    if typeof(value) == "Instance" then return value end
+    if typeof(value) == "table" then
+        for _, item in pairs(value) do
+            local found = returnedInstance(item, depth + 1)
+            if found then return found end
+        end
+    end
+    return nil
+end
+
+local function replayRemoteEvent(event)
+    local remote = resolveInstancePath(event.remotePath)
+    if not remote or (not remote:IsA("RemoteEvent") and not remote:IsA("RemoteFunction")) then
+        log("Remote не найден: " .. tostring(event.remoteName), true)
+        return false
+    end
+    local arguments = {}
+    for index = 1, tonumber(event.argCount) or #(event.args or {}) do
+        arguments[index] = deserializeValue(event.args and event.args[index], 0)
+    end
+    local position = type(event.position) == "table"
+        and Vector3.new(event.position.x or 0, event.position.y or 0, event.position.z or 0) or nil
+    local before = event.action == "place" and nearbyUnitCandidates(position) or {}
+    local ok, result = pcall(function()
+        if event.method == "InvokeServer" and remote:IsA("RemoteFunction") then
+            return remote:InvokeServer(table.unpack(arguments, 1, tonumber(event.argCount) or #arguments))
+        end
+        remote:FireServer(table.unpack(arguments, 1, tonumber(event.argCount) or #arguments))
+        return nil
+    end)
+    if not ok then
+        log("Remote ошибка " .. tostring(event.action) .. ": " .. tostring(result), true)
+        return false
+    end
+    if event.action == "place" and event.unitId then
+        local created = returnedInstance(result, 0)
+        if created then
+            state.replayUnits[event.unitId] = created
+        else
+            task.spawn(resolvePlacedUnit, event, before)
+        end
+    end
+    log(string.format("%s · %s%s", tostring(event.action), tostring(event.unitName or event.remoteName),
+        event.wave and (" · wave " .. tostring(event.wave)) or ""))
+    return true
+end
+
+local function remoteMomentReached(event, direction, current)
+    if not current then return nil end
+    if event.wave and current.wave then
+        if current.wave > event.wave then return true end
+        if current.wave < event.wave then return false end
+    elseif event.wave and not current.wave then
+        return nil
+    end
+    if event.gameClock ~= nil and current.time ~= nil then
+        if direction == "down" then return current.time <= event.gameClock end
+        return current.time >= event.gameClock
+    end
+    -- With only a wave number, keep the recorded elapsed spacing inside that wave.
+    return nil
+end
+
+local function waitForRemoteMoment(event, clockConfig, token, fallbackStarted)
+    local direction = clockConfig and clockConfig.direction or "up"
+    while token == state.playToken and state.playing and not state.destroyed do
+        while state.paused and token == state.playToken do task.wait(0.05) end
+        local current = detectGameClock()
+        local reached = remoteMomentReached(event, direction, current)
+        if reached == true then return true end
+        if reached == nil and os.clock() - fallbackStarted >= (tonumber(event.t) or 0) then return true end
+        task.wait(0.08)
+    end
+    return false
+end
+
 local function sendEvent(event, recordedViewport)
     local size = viewport()
     state.generatedInput = true
@@ -903,7 +1489,11 @@ local function playMacro(macro, force, fromAuto, expectedFingerprint)
         log("У выбранного макроса нет событий", true)
         return false
     end
-    if not workspace.CurrentCamera or not rootPart() then
+    local hasRemoteEvents = false
+    for _, event in ipairs(macro.events) do
+        if event.kind == "remote" then hasRemoteEvents = true break end
+    end
+    if not hasRemoteEvents and (not workspace.CurrentCamera or not rootPart()) then
         log("Камера или персонаж ещё не готовы", true)
         return false
     end
@@ -918,11 +1508,12 @@ local function playMacro(macro, force, fromAuto, expectedFingerprint)
     state.playing = true
     state.paused = false
     state.pauseAccum = 0
+    state.replayUnits = {}
     state.selectedId = macro.id
     macro.lastUsed = os.time()
     saveDisk()
     if fromAuto then transition("PLAYING", macro.name) end
-    restoreCamera(macro.camera or (macro.fingerprint and macro.fingerprint.camera))
+    if not hasRemoteEvents then restoreCamera(macro.camera or (macro.fingerprint and macro.fingerprint.camera)) end
     local lockedCamera = cameraSnapshot()
     local speed = math.clamp(tonumber(state.config.settings.playbackSpeed) or 1, 0.25, 3)
     local playbackStarted = os.clock()
@@ -931,7 +1522,7 @@ local function playMacro(macro, force, fromAuto, expectedFingerprint)
         local cframe = snapshotToCFrame(frame)
         if cframe then cameraFrames[#cameraFrames + 1] = {t = tonumber(frame.t) or 0, cframe = cframe, fov = tonumber(frame.fov)} end
     end
-    if state.config.settings.lockCamera or #cameraFrames >= 2 then
+    if not hasRemoteEvents and (state.config.settings.lockCamera or #cameraFrames >= 2) then
         local camera = workspace.CurrentCamera
         if camera then
             state.playbackCameraType = camera.CameraType
@@ -942,14 +1533,14 @@ local function playMacro(macro, force, fromAuto, expectedFingerprint)
     log((force and "Force Play: " or "Запуск: ") .. macro.name .. " · " .. #macro.events .. " событий")
     refreshAll()
 
-    if state.config.settings.lockCamera and lockedCamera then
+    if not hasRemoteEvents and state.config.settings.lockCamera and lockedCamera then
         task.spawn(function()
             while token == state.playToken and state.playing and not state.destroyed do
                 if not state.paused then restoreCamera(lockedCamera) end
                 RunService.RenderStepped:Wait()
             end
         end)
-    elseif #cameraFrames >= 2 then
+    elseif not hasRemoteEvents and #cameraFrames >= 2 then
         task.spawn(function()
             local index = 1
             while token == state.playToken and state.playing and not state.destroyed do
@@ -981,18 +1572,25 @@ local function playMacro(macro, force, fromAuto, expectedFingerprint)
 
         for _, event in ipairs(macro.events) do
             if token ~= state.playToken or state.destroyed then break end
-            while state.paused and token == state.playToken do task.wait(0.05) end
-            while token == state.playToken do
-                local elapsed = (os.clock() - playbackStarted - state.pauseAccum) * speed
-                local remaining = (tonumber(event.t) or 0) - elapsed
-                if remaining <= 0 then break end
-                task.wait(math.min(0.03, remaining / speed))
+            if event.kind == "remote" then
+                if not waitForRemoteMoment(event, macro.clock, token, playbackStarted) then break end
+            else
+                while state.paused and token == state.playToken do task.wait(0.05) end
+                while token == state.playToken do
+                    local elapsed = (os.clock() - playbackStarted - state.pauseAccum) * speed
+                    local remaining = (tonumber(event.t) or 0) - elapsed
+                    if remaining <= 0 then break end
+                    task.wait(math.min(0.03, remaining / speed))
+                end
             end
             if token ~= state.playToken then break end
 
             local elapsed = (os.clock() - playbackStarted - state.pauseAccum) * speed
             local late = elapsed - (tonumber(event.t) or 0)
-            if late > tolerance and event.kind == "mouse_wheel" then
+            if event.kind == "remote" then
+                replayRemoteEvent(event)
+                lastSent = os.clock()
+            elseif late > tolerance and event.kind == "mouse_wheel" then
                 -- Wheel bursts are disposable; clicks and releases are never dropped.
             else
                 if late > tolerance then
@@ -1032,11 +1630,54 @@ local function togglePause()
     refreshAll()
 end
 
+local function activateRecordingTimeline(clock)
+    if not state.recording or state.recordingLive then return end
+    state.recordingLive = true
+    state.recordingStarted = os.clock()
+    state.recordingClock = clock
+    state.recordingClockInitial = clock
+    state.recordingClockChanges = 0
+    transition("RECORDING", "игровой таймер запущен")
+    log("Запись серверных действий началась")
+    refreshAll()
+end
+
+local clockAccumulator = 0
+keep(RunService.Heartbeat:Connect(function(delta)
+    if state.destroyed or not state.recording or not state.config or not state.config.settings.remoteMode then
+        clockAccumulator = 0
+        return
+    end
+    clockAccumulator += delta
+    if clockAccumulator < 0.2 then return end
+    clockAccumulator = 0
+    local current = detectGameClock()
+    if not current then return end
+    local previous = state.recordingClock
+    state.recordingClock = current
+    if not state.recordingLive then
+        if current.wave ~= nil then
+            if current.wave >= 1 then activateRecordingTimeline(current) end
+            return
+        end
+        if previous and previous.wave == nil and current.time and previous.time and current.time ~= previous.time then
+            state.recordingClockDirection = current.time > previous.time and "up" or "down"
+            state.recordingClockChanges += 1
+            if state.recordingClockChanges >= 2 then activateRecordingTimeline(current) end
+        end
+        return
+    end
+    if previous and current.time and previous.time and current.time ~= previous.time
+        and (not current.wave or not previous.wave or current.wave == previous.wave) then
+        state.recordingClockDirection = current.time > previous.time and "up" or "down"
+    end
+end))
+
 local function startRecording()
     if state.playing then stopPlayback("Воспроизведение остановлено перед записью") end
     if state.recording then return end
     state.config.settings.auto = false
-    transition("IDLE")
+    transition(state.config.settings.remoteMode and "WAIT_WAVE" or "IDLE")
     state.recordedEvents = {}
     state.recordingViewport = viewport()
     local currentRoot = rootPart()
@@ -1044,6 +1685,14 @@ local function startRecording()
     state.recordingCamera = cameraSnapshot()
     state.recordingStarted = os.clock()
     state.recordedCameraTrack = {}
+    state.recordedPlacements = {}
+    state.recordedUnitInstances = {}
+    state.pendingPlacements = {}
+    state.recordingLive = not state.config.settings.remoteMode
+    state.recordingClock = detectGameClock()
+    state.recordingClockInitial = state.recordingClock
+    state.recordingClockChanges = 0
+    state.recordingClockDirection = "up"
     state.currentSlot = nil
     state.pendingPlacementSlot = nil
     state.nextUnitId = 0
@@ -1051,19 +1700,35 @@ local function startRecording()
     state.touchGestures = {}
     state.nextTouchId = 0
     state.recording = true
-    recordCameraFrame(true)
-    log("Запись начата · " .. state.recordingFingerprint.mapKey .. " · " .. state.recordingFingerprint.spawnKey)
+    if state.config.settings.remoteMode then
+        if not state.remoteHookReady then
+            state.recording = false
+            transition("ERROR", state.remoteHookError or "Remote hook недоступен")
+            refreshAll()
+            return
+        end
+        if state.recordingClock and state.recordingClock.wave and state.recordingClock.wave >= 1 then
+            activateRecordingTimeline(state.recordingClock)
+        else
+            log("Запись вооружена · жду начало волн по игровому таймеру")
+        end
+    else
+        recordCameraFrame(true)
+        log("Input-запись начата · " .. state.recordingFingerprint.mapKey .. " · " .. state.recordingFingerprint.spawnKey)
+    end
     refreshAll()
 end
 
 local function stopAndSave(name)
     if not state.recording then log("Запись не запущена") return nil end
-    recordCameraFrame(true)
+    if not state.config.settings.remoteMode then recordCameraFrame(true) end
     state.recording = false
+    state.recordingLive = false
     local events = Core.normalizeEvents(state.recordedEvents, state.recordingViewport)
     if #events == 0 then log("Пустая запись не сохранена", true) refreshAll() return nil end
     local macro = Core.normalizeMacro({
         version = VERSION,
+        recordMode = state.config.settings.remoteMode and "remote" or "input",
         id = HttpService:GenerateGUID(false),
         name = name ~= "" and name or ("Macro " .. (#state.config.macros + 1)),
         placeId = game.PlaceId,
@@ -1077,6 +1742,12 @@ local function stopAndSave(name)
         viewport = state.recordingViewport,
         camera = state.recordingCamera,
         cameraTrack = state.recordedCameraTrack,
+        clock = {
+            direction = state.recordingClockDirection,
+            startWave = state.recordingClockInitial and state.recordingClockInitial.wave or nil,
+            startTime = state.recordingClockInitial and state.recordingClockInitial.time or nil,
+            timerPath = state.recordingClockInitial and state.recordingClockInitial.timerPath or nil,
+        },
         slots = copyTable(state.config.slotLabels),
         events = events,
         savedAt = os.time(),
@@ -1215,7 +1886,13 @@ local function prepareAutoRun()
     end
     state.selectedId = macro.id
     if #choices > 1 then log("Совпадений: " .. #choices .. ", выбран " .. macro.name) else log("Выбран: " .. macro.name) end
-    restoreCamera(macro.camera or (macro.fingerprint and macro.fingerprint.camera))
+    local remoteMacro = macro.recordMode == "remote"
+    if not remoteMacro then
+        for _, event in ipairs(macro.events) do
+            if event.kind == "remote" then remoteMacro = true break end
+        end
+    end
+    if not remoteMacro then restoreCamera(macro.camera or (macro.fingerprint and macro.fingerprint.camera)) end
     task.wait(0.35)
     if not state.config.settings.auto then return end
     if state.config.settings.x2 and macro.settings.x2 ~= false then clickBinding("x2") end
@@ -1282,6 +1959,7 @@ keep(RunService.Heartbeat:Connect(function(delta)
 end))
 
 loadConfig()
+installRemoteHook()
 if #state.config.macros > 0 then state.selectedId = state.config.macros[1].id end
 
 local palette = {
@@ -1389,7 +2067,7 @@ local function makeToggle(parent, title, position, getter, setter)
     object.Text = ""
     local function update()
         local enabled = getter()
-        valueLabel.Text = enabled and "ON" or "OFF"
+        valueLabel.Text = enabled and "ВКЛ" or "ВЫКЛ"
         valueLabel.TextColor3 = enabled and palette.accent or palette.muted
         object.BackgroundColor3 = enabled and Color3.fromRGB(26, 53, 57) or palette.panel2
         titleLabel.TextColor3 = enabled and palette.text or palette.muted
@@ -1489,9 +2167,17 @@ local function showPage(name)
     if name == "BINDINGS" then refreshBindings() end
 end
 
-for index, name in ipairs({"RECORD", "MACROS", "AUTO", "BINDINGS", "LOG"}) do
-    local item = button(nav, name, UDim2.new((index - 1) / 5, 2, 0, 0), UDim2.new(0.2, -4, 1, 0), function() showPage(name) end, palette.panel)
-    item.TextSize = index == 4 and 10 or 11
+local navItems = {
+    {page = "RECORD", text = "ЗАПИСЬ"},
+    {page = "MACROS", text = "МАКРОСЫ"},
+    {page = "AUTO", text = "АВТО"},
+    {page = "BINDINGS", text = "НАСТРОЙКА"},
+    {page = "LOG", text = "ЛОГ"},
+}
+for index, navItem in ipairs(navItems) do
+    local name = navItem.page
+    local item = button(nav, navItem.text, UDim2.new((index - 1) / 5, 2, 0, 0), UDim2.new(0.2, -4, 1, 0), function() showPage(name) end, palette.panel)
+    item.TextSize = index == 4 and 9 or 10
     navButtons[name] = item
 end
 
@@ -1517,24 +2203,17 @@ state.labels.storage = label(statusCard, "", UDim2.fromOffset(145, 30), UDim2.ne
 state.labels.nameBox = textBox(recordPage, "Macro " .. (#state.config.macros + 1), "Название макроса", UDim2.fromOffset(0, 73), UDim2.new(1, -145, 0, 36))
 state.labels.recordCount = label(recordPage, "0 событий", UDim2.new(1, -137, 0, 73), UDim2.fromOffset(137, 36), 11, palette.muted, Enum.TextXAlignment.Right)
 
-state.labels.recordButton = button(recordPage, "●  RECORD", UDim2.fromOffset(0, 119), UDim2.new(0.5, -5, 0, 40), startRecording, Color3.fromRGB(35, 119, 108))
-state.labels.saveButton = button(recordPage, "STOP + SAVE", UDim2.new(0.5, 5, 0, 119), UDim2.new(0.5, -5, 0, 40), function()
+state.labels.recordButton = button(recordPage, "НАЧАТЬ ЗАПИСЬ", UDim2.fromOffset(0, 119), UDim2.new(0.5, -5, 0, 40), startRecording, Color3.fromRGB(35, 119, 108))
+state.labels.saveButton = button(recordPage, "ОСТАНОВИТЬ И СОХРАНИТЬ", UDim2.new(0.5, 5, 0, 119), UDim2.new(0.5, -5, 0, 40), function()
     stopAndSave(state.labels.nameBox.Text)
 end, Color3.fromRGB(50, 81, 125))
 
-label(recordPage, "UNIT SLOTS", UDim2.fromOffset(2, 169), UDim2.fromOffset(100, 18), 10, palette.muted)
-for index = 1, 5 do
-    local box = textBox(recordPage, tostring(state.config.slotLabels[index] or index), "Slot " .. index,
-        UDim2.new((index - 1) / 5, 2, 0, 191), UDim2.new(0.2, -5, 0, 35))
-    box.TextXAlignment = Enum.TextXAlignment.Center
-    keep(box.FocusLost:Connect(function()
-        state.config.slotLabels[index] = box.Text ~= "" and box.Text or tostring(index)
-        saveDisk()
-    end))
-end
+state.labels.playSelectedButton = button(recordPage, "ЗАПУСТИТЬ ВЫБРАННЫЙ МАКРОС", UDim2.fromOffset(0, 169), UDim2.new(1, 0, 0, 40), function()
+    playMacro(selectedMacro(), false, false)
+end, Color3.fromRGB(35, 119, 108))
 state.labels.recordHint = label(recordPage,
-    "Пиши матч целиком: выбор 1–5, постановка, апгрейд и продажа записываются как точный ввод.",
-    UDim2.fromOffset(2, 235), UDim2.new(1, -4, 0, 42), 11, palette.muted)
+    "1. Начни запись до первой волны.  2. Ставь и улучшай юнитов.  3. Останови и сохрани. Камера и ходьба не записываются.",
+    UDim2.fromOffset(2, 218), UDim2.new(1, -4, 0, 48), 11, palette.muted)
 state.labels.recordHint.TextWrapped = true
 state.labels.recordHint.TextYAlignment = Enum.TextYAlignment.Top
 
@@ -1563,7 +2242,7 @@ macroLayout.Parent = macroList
 state.labels.macroList = macroList
 
 state.labels.renameBox = textBox(macrosPage, "", "Новое имя", UDim2.new(0, 0, 1, -84), UDim2.new(0.42, -4, 0, 35))
-button(macrosPage, "RENAME", UDim2.new(0.42, 4, 1, -84), UDim2.new(0.19, -4, 0, 35), function()
+local renameButton = button(macrosPage, "ПЕРЕИМЕНОВАТЬ", UDim2.new(0.42, 4, 1, -84), UDim2.new(0.19, -4, 0, 35), function()
     local macro = selectedMacro()
     if macro and state.labels.renameBox.Text ~= "" then
         macro.name = state.labels.renameBox.Text
@@ -1571,7 +2250,8 @@ button(macrosPage, "RENAME", UDim2.new(0.42, 4, 1, -84), UDim2.new(0.19, -4, 0, 
         refreshMacros()
     end
 end)
-button(macrosPage, "DEFAULT", UDim2.new(0.61, 4, 1, -84), UDim2.new(0.2, -4, 0, 35), function()
+renameButton.TextSize = 10
+button(macrosPage, "ОСНОВНЫМ", UDim2.new(0.61, 4, 1, -84), UDim2.new(0.2, -4, 0, 35), function()
     local macro = selectedMacro()
     if not macro then return end
     for _, other in ipairs(state.config.macros) do
@@ -1581,7 +2261,7 @@ button(macrosPage, "DEFAULT", UDim2.new(0.61, 4, 1, -84), UDim2.new(0.2, -4, 0, 
     saveDisk()
     refreshMacros()
 end)
-button(macrosPage, "DELETE", UDim2.new(0.81, 4, 1, -84), UDim2.new(0.19, -4, 0, 35), function()
+button(macrosPage, "УДАЛИТЬ", UDim2.new(0.81, 4, 1, -84), UDim2.new(0.19, -4, 0, 35), function()
     local macro = selectedMacro()
     if not macro then return end
     for index, other in ipairs(state.config.macros) do
@@ -1592,13 +2272,10 @@ button(macrosPage, "DELETE", UDim2.new(0.81, 4, 1, -84), UDim2.new(0.19, -4, 0, 
     refreshMacros()
 end, Color3.fromRGB(91, 39, 48))
 
-button(macrosPage, "PLAY SELECTED", UDim2.new(0, 0, 1, -41), UDim2.new(0.26, -4, 0, 35), function()
+button(macrosPage, "ЗАПУСТИТЬ", UDim2.new(0, 0, 1, -41), UDim2.new(0.34, -4, 0, 35), function()
     playMacro(selectedMacro(), false, false)
 end, Color3.fromRGB(35, 119, 108))
-button(macrosPage, "FORCE PLAY", UDim2.new(0.26, 4, 1, -41), UDim2.new(0.22, -4, 0, 35), function()
-    playMacro(selectedMacro(), true, false)
-end, Color3.fromRGB(101, 73, 39))
-button(macrosPage, "BIND CURRENT", UDim2.new(0.48, 4, 1, -41), UDim2.new(0.27, -4, 0, 35), function()
+button(macrosPage, "ПРИВЯЗАТЬ К КАРТЕ", UDim2.new(0.34, 4, 1, -41), UDim2.new(0.39, -4, 0, 35), function()
     local macro = selectedMacro()
     if not macro then log("Выбери макрос") return end
     local current = fingerprint()
@@ -1606,23 +2283,23 @@ button(macrosPage, "BIND CURRENT", UDim2.new(0.48, 4, 1, -41), UDim2.new(0.27, -
     saveDisk()
     log("Текущая карта/спавн привязаны к " .. macro.name)
 end)
-button(macrosPage, "STOP", UDim2.new(0.75, 4, 1, -41), UDim2.new(0.25, -4, 0, 35), function()
+button(macrosPage, "СТОП", UDim2.new(0.73, 4, 1, -41), UDim2.new(0.27, -4, 0, 35), function()
     stopPlayback("Остановлено пользователем", true)
 end, palette.danger)
 
-label(autoPage, "MATCH CONTROLLER", UDim2.fromOffset(2, 0), UDim2.new(1, -4, 0, 22), 10, palette.muted)
-makeToggle(autoPage, "AUTO", UDim2.fromOffset(0, 27), function() return state.config.settings.auto end, function(value)
+label(autoPage, "АВТОМАТИКА МАТЧА", UDim2.fromOffset(2, 0), UDim2.new(1, -4, 0, 22), 10, palette.muted)
+makeToggle(autoPage, "АВТОЗАПУСК", UDim2.fromOffset(0, 27), function() return state.config.settings.auto end, function(value)
     state.config.settings.auto = value
     state.controllerNotBefore = 0
     state.stableKey = nil
     state.matchSpawnPosition = nil
     transition(value and "WAIT_MATCH" or "IDLE", value and "автоматизация включена" or "автоматизация выключена")
 end)
-makeToggle(autoPage, "LOOP", UDim2.new(0.5, 8, 0, 27), function() return state.config.settings.autoLoop end, function(value) state.config.settings.autoLoop = value end)
-makeToggle(autoPage, "x2 SPEED", UDim2.fromOffset(0, 73), function() return state.config.settings.x2 end, function(value) state.config.settings.x2 = value end)
-makeToggle(autoPage, "AUTO SKIP", UDim2.new(0.5, 8, 0, 73), function() return state.config.settings.autoSkip end, function(value) state.config.settings.autoSkip = value end)
-makeToggle(autoPage, "PLAY AGAIN", UDim2.fromOffset(0, 119), function() return state.config.settings.autoPlayAgain end, function(value) state.config.settings.autoPlayAgain = value end)
-makeToggle(autoPage, "LOCK CAMERA", UDim2.new(0.5, 8, 0, 119), function() return state.config.settings.lockCamera end, function(value) state.config.settings.lockCamera = value end)
+makeToggle(autoPage, "ПОВТОР МАТЧЕЙ", UDim2.new(0.5, 8, 0, 27), function() return state.config.settings.autoLoop end, function(value) state.config.settings.autoLoop = value end)
+makeToggle(autoPage, "ВКЛЮЧАТЬ x2", UDim2.fromOffset(0, 73), function() return state.config.settings.x2 end, function(value) state.config.settings.x2 = value end)
+makeToggle(autoPage, "АВТОПРОПУСК ВОЛН", UDim2.new(0.5, 8, 0, 73), function() return state.config.settings.autoSkip end, function(value) state.config.settings.autoSkip = value end)
+makeToggle(autoPage, "ИГРАТЬ СНОВА", UDim2.fromOffset(0, 119), function() return state.config.settings.autoPlayAgain end, function(value) state.config.settings.autoPlayAgain = value end)
+makeToggle(autoPage, "СЕРВЕРНЫЙ РЕЖИМ", UDim2.new(0.5, 8, 0, 119), function() return state.config.settings.remoteMode end, function(value) state.config.settings.remoteMode = value end)
 
 state.labels.speed = label(autoPage, "", UDim2.fromOffset(2, 169), UDim2.new(1, -4, 0, 28), 12, palette.text, Enum.TextXAlignment.Center)
 button(autoPage, "−", UDim2.new(0.5, -91, 0, 169), UDim2.fromOffset(36, 28), function()
@@ -1635,41 +2312,39 @@ button(autoPage, "+", UDim2.new(0.5, 55, 0, 169), UDim2.fromOffset(36, 28), func
     saveDisk()
     refreshAll()
 end)
-state.labels.pauseButton = button(autoPage, "PAUSE / RESUME", UDim2.new(0, 0, 1, -43), UDim2.new(0.5, -5, 0, 42), togglePause)
-button(autoPage, "EMERGENCY STOP", UDim2.new(0.5, 5, 1, -43), UDim2.new(0.5, -5, 0, 42), function()
+state.labels.pauseButton = button(autoPage, "ПАУЗА / ПРОДОЛЖИТЬ", UDim2.new(0, 0, 1, -43), UDim2.new(0.5, -5, 0, 42), togglePause)
+button(autoPage, "ОСТАНОВИТЬ ВСЁ", UDim2.new(0.5, 5, 1, -43), UDim2.new(0.5, -5, 0, 42), function()
     stopPlayback("EMERGENCY STOP", true)
 end, palette.danger)
 
-label(bindingsPage, "AUTO ищет кнопку по тексту. BIND сохраняет следующий клик в игре.", UDim2.fromOffset(2, 0), UDim2.new(1, -4, 0, 34), 11, palette.muted)
+label(bindingsPage, "«Найти» определяет элемент сам. «Указать» — затем нажми нужный элемент в игре.", UDim2.fromOffset(2, 0), UDim2.new(1, -4, 0, 34), 11, palette.muted)
 for index, item in ipairs({
-    {key = "x2", title = "x2 SPEED"},
-    {key = "autoSkip", title = "AUTO SKIP"},
-    {key = "playAgain", title = "PLAY AGAIN / END"},
+    {key = "x2", title = "СКОРОСТЬ x2"},
+    {key = "autoSkip", title = "ПРОПУСК ВОЛН"},
+    {key = "playAgain", title = "ИГРАТЬ СНОВА"},
+    {key = "matchTimer", title = "ИГРОВОЙ ТАЙМЕР"},
 }) do
     local row = Instance.new("Frame")
     row.BackgroundColor3 = palette.panel
-    row.Position = UDim2.fromOffset(0, 40 + (index - 1) * 57)
-    row.Size = UDim2.new(1, 0, 0, 49)
+    row.Position = UDim2.fromOffset(0, 40 + (index - 1) * 47)
+    row.Size = UDim2.new(1, 0, 0, 41)
     row.Parent = bindingsPage
     round(row, 8)
     stroke(row)
     label(row, item.title, UDim2.fromOffset(11, 0), UDim2.new(0.42, -11, 1, 0), 12)
     local status = label(row, "", UDim2.new(0.42, 0, 0, 0), UDim2.new(0.25, 0, 1, 0), 10, palette.muted, Enum.TextXAlignment.Center)
     state.labels["binding_" .. item.key] = status
-    button(row, "AUTO", UDim2.new(0.68, 0, 0, 7), UDim2.new(0.14, -5, 0, 35), function()
+    button(row, "НАЙТИ", UDim2.new(0.68, 0, 0, 4), UDim2.new(0.14, -5, 0, 33), function()
         state.config.bindings[item.key] = {mode = "auto"}
         saveDisk()
         refreshBindings()
     end)
-    button(row, "BIND", UDim2.new(0.82, 0, 0, 7), UDim2.new(0.18, -7, 0, 35), function()
+    button(row, "УКАЗАТЬ", UDim2.new(0.82, 0, 0, 4), UDim2.new(0.18, -7, 0, 33), function()
         state.bindingCapture = item.key
         log("BIND " .. item.key .. ": кликни нужную кнопку в игре")
         refreshBindings()
     end, Color3.fromRGB(50, 81, 125))
 end
-button(bindingsPage, "TEST x2", UDim2.new(0, 0, 1, -37), UDim2.new(0.32, -4, 0, 36), function() clickBinding("x2") end)
-button(bindingsPage, "TEST SKIP", UDim2.new(0.32, 4, 1, -37), UDim2.new(0.34, -4, 0, 36), function() clickBinding("autoSkip") end)
-button(bindingsPage, "TEST REPLAY", UDim2.new(0.66, 4, 1, -37), UDim2.new(0.34, -4, 0, 36), function() clickBinding("playAgain") end)
 
 local logScroll = Instance.new("ScrollingFrame")
 logScroll.BackgroundColor3 = palette.panel
@@ -1740,19 +2415,21 @@ refreshMacros = function()
         if child:IsA("GuiButton") then child:Destroy() end
     end
     if #state.config.macros == 0 then
-        local empty = button(list, "Нет макросов · открой RECORD", UDim2.new(), UDim2.new(1, 0, 0, 48), function() showPage("RECORD") end)
+        local empty = button(list, "Нет макросов · открой «Запись»", UDim2.new(), UDim2.new(1, 0, 0, 48), function() showPage("RECORD") end)
         empty.LayoutOrder = 1
         return
     end
     for index, macro in ipairs(state.config.macros) do
         local duration = #macro.events > 0 and (tonumber(macro.events[#macro.events].t) or 0) or 0
         local marker = macro.isDefault and "★ " or ""
-        local text = string.format("%s%s\n%s · %s · %.1fs · %d ev", marker, macro.name,
+        local text = string.format("%s%s  [%s]\n%s · %s · %.1f сек · %d событий", marker, macro.name,
+            macro.recordMode == "remote" and "СЕРВЕР" or "СТАРЫЙ",
             tostring(macro.fingerprint.mapKey), tostring(macro.fingerprint.spawnKey), duration, #macro.events)
         local row = button(list, text, UDim2.new(), UDim2.new(1, 0, 0, 51), function()
             state.selectedId = macro.id
             state.labels.renameBox.Text = macro.name
             refreshMacros()
+            refreshAll()
         end, macro.id == state.selectedId and Color3.fromRGB(31, 70, 72) or palette.panel2)
         row.LayoutOrder = index
         row.TextWrapped = false
@@ -1766,7 +2443,7 @@ end
 
 refreshBindings = function()
     if not state.config then return end
-    for _, kind in ipairs({"x2", "autoSkip", "playAgain"}) do
+    for _, kind in ipairs({"x2", "autoSkip", "playAgain", "matchTimer"}) do
         local target = state.labels["binding_" .. kind]
         if target then
             local binding = state.config.bindings[kind] or {mode = "auto"}
@@ -1774,32 +2451,57 @@ refreshBindings = function()
                 target.Text = "ЖДУ КЛИК"
                 target.TextColor3 = Color3.fromRGB(255, 202, 91)
             elseif binding.mode == "manual" then
-                target.Text = "MANUAL"
+                target.Text = "УКАЗАНО"
                 target.TextColor3 = palette.accent2
+            elseif kind == "matchTimer" then
+                local clock = detectGameClock()
+                target.Text = clock and "НАЙДЕН ✓" or "НЕ НАЙДЕН"
+                target.TextColor3 = clock and palette.accent or palette.muted
             else
                 local candidate, score = findBindingCandidate(kind)
-                target.Text = candidate and score >= 70 and "AUTO ✓" or "AUTO ?"
+                target.Text = candidate and score >= 70 and "НАЙДЕН ✓" or "НЕ НАЙДЕН"
                 target.TextColor3 = candidate and score >= 70 and palette.accent or palette.muted
             end
         end
     end
 end
 
+local controllerNames = {
+    IDLE = "ГОТОВ",
+    WAIT_WAVE = "ЖДУ ВОЛНУ",
+    RECORDING = "ЗАПИСЬ",
+    WAIT_MATCH = "ЖДУ МАТЧ",
+    PREPARE = "ПОДГОТОВКА",
+    PLAYING = "ЗАПУСК",
+    WAIT_END = "ЖДУ КОНЕЦ",
+    REPLAY = "ПОВТОР",
+    ERROR = "ОШИБКА",
+}
+
 refreshAll = function()
     if not state.config or state.destroyed then return end
     for _, update in ipairs(state.rows) do pcall(update) end
-    if state.labels.controller then state.labels.controller.Text = state.controllerState end
-    if state.labels.speed then state.labels.speed.Text = string.format("PLAYBACK SPEED  ×%.2f", tonumber(state.config.settings.playbackSpeed) or 1) end
+    if state.labels.controller then state.labels.controller.Text = controllerNames[state.controllerState] or state.controllerState end
+    if state.labels.speed then state.labels.speed.Text = string.format("СКОРОСТЬ ВОСПРОИЗВЕДЕНИЯ  ×%.2f", tonumber(state.config.settings.playbackSpeed) or 1) end
     if state.labels.recordCount then
-        state.labels.recordCount.Text = state.recording and (#state.recordedEvents .. " событий") or (state.playing and (state.paused and "PAUSED" or "PLAYING") or "готов")
+        state.labels.recordCount.Text = state.recording
+            and (state.recordingLive and (#state.recordedEvents .. " событий") or "ЖДУ НАЧАЛО ВОЛН")
+            or (state.playing and (state.paused and "ПАУЗА" or "ВОСПРОИЗВЕДЕНИЕ") or "ГОТОВ")
         state.labels.recordCount.TextColor3 = state.recording and palette.danger or (state.playing and palette.accent or palette.muted)
     end
-    if state.labels.recordButton then state.labels.recordButton.Text = state.recording and "●  RECORDING" or "●  RECORD" end
+    if state.labels.recordButton then state.labels.recordButton.Text = state.recording and "ИДЁТ ЗАПИСЬ…" or "НАЧАТЬ ЗАПИСЬ" end
+    if state.labels.playSelectedButton then
+        local macro = selectedMacro()
+        state.labels.playSelectedButton.Text = macro and ("ЗАПУСТИТЬ: " .. macro.name) or "СНАЧАЛА СОЗДАЙ МАКРОС"
+    end
     local current = fingerprint()
     if state.labels.fingerprint then state.labels.fingerprint.Text = current.mapKey .. " · " .. current.spawnKey end
     if state.labels.storage then
-        state.labels.storage.Text = state.memoryOnly and "MEMORY ONLY · записи пропадут после перезапуска" or ("TDMacroLab/config.json · " .. #state.config.macros .. " macros")
-        state.labels.storage.TextColor3 = state.memoryOnly and Color3.fromRGB(255, 202, 91) or palette.muted
+        local hook = state.remoteHookReady and "СЕРВЕРНЫЙ РЕЖИМ ГОТОВ" or "ОШИБКА СЕРВЕРНОГО РЕЖИМА"
+        state.labels.storage.Text = state.memoryOnly and "MEMORY ONLY · записи пропадут после перезапуска"
+            or ("TDMacroLab/config.json · " .. #state.config.macros .. " macros · " .. hook)
+        state.labels.storage.TextColor3 = state.memoryOnly and Color3.fromRGB(255, 202, 91)
+            or (state.remoteHookReady and palette.muted or palette.danger)
     end
     refreshBindings()
 end
@@ -1812,6 +2514,9 @@ function state:Destroy()
     self.playing = false
     releaseAll()
     releaseCameraControl()
+    if self.remoteBus and type(self.remoteBus.setListener) == "function" then
+        pcall(function() self.remoteBus:setListener(nil) end)
+    end
     for _, connection in ipairs(self.connections) do pcall(function() connection:Disconnect() end) end
     self.connections = {}
     if self.gui then pcall(function() self.gui:Destroy() end) end
