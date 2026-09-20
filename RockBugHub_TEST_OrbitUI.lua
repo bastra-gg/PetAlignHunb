@@ -1,8 +1,13 @@
 -- ORBIT_UI_BEGIN
 local HUD=(function()
--- RockBugHub T65. UI only; mounted by the current TEST bootstrap.
+-- RockBugHub UI; version label comes from the current TEST bootstrap.
 -- All geometry is local, non-colliding and excluded from game raycasts.
 local HUD = {}
+
+function HUD.versionTag(runtime,env)
+    local raw=tostring((env and env.RockBugTestVersion) or (runtime and runtime.testVersion) or "T67")
+    return raw:match("T%d+") or raw
+end
 
 HUD.groups={
  farm={ru="ФАРМ",en="FARM",tabs={"bug","farm","train","boss","reb"},cards={
@@ -61,6 +66,7 @@ end
 
 function HUD.mount(runtime, options)
     local player = options.player
+    local versionTag=HUD.versionTag(runtime,options.env)
     local playerGui = player:WaitForChild("PlayerGui")
     local run = game:GetService("RunService")
     local input = game:GetService("UserInputService")
@@ -74,7 +80,7 @@ function HUD.mount(runtime, options)
     assert(options.content,"Missing hologram content bridge")
     local self = {visible=false, suspended=false, destroyed=false, group=HUD.groups[savedGroup] and savedGroup~="settings" and savedGroup or "farm", cardPage=1, cards={}, modalTabs={}, modalOpen=false, panels={}, connections={}, pressed={}, beams={}, samples={}, fps=0, inputGeneration=0, noticeToken=0, motion={}, modalToken=0, visualElapsed=0, lowDetail=false}
     runtime.hologram = self -- Allows cleanup even if construction fails.
-    local binding = "RockBugHologramT65_" .. tostring(player.UserId)
+    local binding = "RockBugHologram" .. versionTag .. "_" .. tostring(player.UserId)
     local panelOrder=1000009
     local function connect(signal, callback)
         local connection = signal:Connect(callback)
@@ -139,7 +145,7 @@ function HUD.mount(runtime, options)
     local function part(name, parent)
         return create("Part", {Name=name, Anchored=true, CanCollide=false, CanTouch=false, CanQuery=false, CastShadow=false, Transparency=1, Size=Vector3.new(1,1,0.025)}, parent)
     end
-    self.world = create("Model", {Name="RockBugHubHologramT65"})
+    self.world = create("Model", {Name="RockBugHubHologram"..versionTag})
     self.surfaces = create("Folder", {Name="RockBugHubHologramSurfaces"}, playerGui)
     self.overlay = create("ScreenGui", {Name="RockBugHubHologramControl", ResetOnSpawn=false, DisplayOrder=1000010, ZIndexBehavior=Enum.ZIndexBehavior.Sibling}, playerGui)
     self.handle = create("TextButton", {Name="ToggleHologram", AnchorPoint=Vector2.new(0,0), Position=UDim2.fromOffset(16,12), Size=UDim2.fromOffset(108,36), BackgroundColor3=background, BackgroundTransparency=0.08, TextColor3=cyan, TextSize=12, Font=Enum.Font.GothamBold, Text="", AutoButtonColor=true}, self.overlay)
@@ -385,7 +391,7 @@ function HUD.mount(runtime, options)
         self.sectionTabs.CanvasSize=UDim2.fromOffset(#self.modalTabs*110,0)
         self.sectionTabs.CanvasPosition=Vector2.new(math.max(0,(selectedIndex-2)*110),0)
         self.windowTitle.Text=tr(HUD.sections[tab][1],HUD.sections[tab][2])
-        self.windowContext.Text=tr(HUD.groups[group].ru,HUD.groups[group].en).." / RB • T65"
+        self.windowContext.Text=tr(HUD.groups[group].ru,HUD.groups[group].en).." / RB • "..versionTag
         self:ApplyVisibility()
         self:LayoutDrawer(not wasOpen)
         if wasOpen then
@@ -417,7 +423,7 @@ function HUD.mount(runtime, options)
         self.stop.Text=tr("СТОП","STOP")
         for id,node in pairs(self.groupButtons)do node.Text=tr(HUD.groups[id].ru,HUD.groups[id].en)end
         for _,entry in ipairs(self.modalTabs)do local title=HUD.sections[entry.id];entry.node.Text=tr(title[1],title[2])end
-        if self.modalTab then local title=HUD.sections[self.modalTab];self.windowTitle.Text=tr(title[1],title[2]);self.windowContext.Text=tr(HUD.groups[self.modalGroup].ru,HUD.groups[self.modalGroup].en).." / RB • T65" end
+        if self.modalTab then local title=HUD.sections[self.modalTab];self.windowTitle.Text=tr(title[1],title[2]);self.windowContext.Text=tr(HUD.groups[self.modalGroup].ru,HUD.groups[self.modalGroup].en).." / RB • "..versionTag end
         self.nextRefresh=nil
     end
     function self:SelectGroup(id)
@@ -467,7 +473,7 @@ function HUD.mount(runtime, options)
     title.shield:Destroy();title.depth:Destroy()
     for _,child in ipairs(title.frame:GetChildren())do if child:IsA("UIStroke")or child:IsA("Frame")then child:Destroy()end end
     local brand=label(title.frame,"RockBugHub",0,0,400,53,43,white,true);brand.TextXAlignment=Enum.TextXAlignment.Center
-    local tagline=label(title.frame,"TRAIN / EXPLORE / T65",0,58,400,26,14,cyan);tagline.TextXAlignment=Enum.TextXAlignment.Center
+    local tagline=label(title.frame,"TRAIN / EXPLORE / "..versionTag,0,58,400,26,14,cyan);tagline.TextXAlignment=Enum.TextXAlignment.Center
 
     -- Shared vertices: 43 beams / 39 attachments, instead of 129 / 258.
     self.ringRoot=part("Orbit",self.world)
@@ -784,6 +790,6 @@ new.cardPage=previous.cardPage or 1
 new:SetSuspended(wasSuspended)
 new:SetChestInput(wasChest)
 if oldPage and not wasSuspended and not wasChest then new:OpenFull(oldPage,nil,oldModalGroup)end
-runtime.orbitUIVersion="T65"
+runtime.orbitUIVersion=HUD.versionTag(runtime,env)
 return new
 -- ORBIT_INSTALL_END
