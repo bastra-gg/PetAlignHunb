@@ -1,5 +1,5 @@
--- RockBugHub TEST bootstrap T75
-local VERSION="T75"
+-- RockBugHub TEST bootstrap T76
+local VERSION="T76"
 local CORE_URL="https://raw.githubusercontent.com/bastra-gg/PetAlignHunb/09719f8e7536f55acda625e8e18ae0ff44ce9cdb/RockBugHub_v1_5_core.lua"
 local BOSS_RUNTIME_URL="https://raw.githubusercontent.com/bastra-gg/PetAlignHunb/09719f8e7536f55acda625e8e18ae0ff44ce9cdb/RockBugHub_TEST_RuntimeA.lua"
 local ROCK_PATCH_URL="https://raw.githubusercontent.com/bastra-gg/PetAlignHunb/09719f8e7536f55acda625e8e18ae0ff44ce9cdb/RockBugHub_TEST_AdaptiveRocks.lua"
@@ -50,7 +50,7 @@ if type(runtime)=="table"then
     pcall(function()if runtime.uiRoot and runtime.uiRoot:IsA("ScreenGui")then runtime.uiRoot.Enabled=false end end)
 end
 
--- T75: background autoboss must not call the core's global STOP.
+-- T76: background autoboss must not call the core's global STOP.
 -- The pinned core's bossAdapter.prepare() points at jT(), which also shuts down
 -- unrelated automation. Pause only modes that physically conflict with boss combat.
 pcall(function()
@@ -144,7 +144,7 @@ if not okRock then warn("[RockBugHub TEST "..VERSION.."] adaptive rocks patch fa
 local okMachine,problemMachine=pcall(function()run(MACHINE_PATCH_URL,"adaptive machines patch")end)
 if not okMachine then warn("[RockBugHub TEST "..VERSION.."] adaptive machines patch failed: "..tostring(problemMachine))end
 
--- T75: do NOT load the old machine-rebirth guard.
+-- T76: do NOT load the old machine-rebirth guard.
 -- It deliberately detached from the machine before every rebirth. The core already
 -- exposes machineRebirthAllowed(), which waits for a stable confirmed seat without
 -- forcing the player off first.
@@ -486,21 +486,24 @@ pcall(function()
         return false
     end
 
-    local function bossExists()
-        if type(runtime.bossAdapter)~="table"or type(runtime.bossAdapter.scan)~="function"then return false end
+    local function allowedBoss()
+        -- IMPORTANT: this uses the CURRENT adapter scan, i.e. the rarity-filtered
+        -- scan installed by BossRarityFilter, not the raw scan captured by the
+        -- old core boss cycle at boot.
+        if type(runtime.bossAdapter)~="table"or type(runtime.bossAdapter.scan)~="function"then return nil end
         local ok,list=pcall(runtime.bossAdapter.scan)
-        if not ok or type(list)~="table"then return false end
+        if not ok or type(list)~="table"then return nil end
         for _,candidate in ipairs(list)do
             if candidate and candidate.model then
                 if type(runtime.bossAdapter.info)=="function"then
                     local infoOk,info=pcall(runtime.bossAdapter.info,candidate.model)
-                    if infoOk and info and info.alive then return true end
+                    if infoOk and info and info.alive then return candidate.model end
                 else
-                    return true
+                    return candidate.model
                 end
             end
         end
-        return false
+        return nil
     end
 
     local function beginBossPreparation()
@@ -524,6 +527,7 @@ pcall(function()
         state.machineIntent=false
         state.resumeAutoRebirth=false
         state.weightWasActive=false
+        state.allowedBoss=nil
         if resume then setAutoRebirth(true)end
     end
 
@@ -582,6 +586,7 @@ pcall(function()
                 state.machineIntent=false
                 state.resumeAutoRebirth=false
                 state.weightWasActive=false
+                state.allowedBoss=nil
                 if resume then setAutoRebirth(true)end
             else
                 state.postBoss=false
@@ -617,12 +622,45 @@ pcall(function()
         end
 
         if self.enabled and self.phase=="waiting"and not state.postBoss then
-            if not state.preparingBoss and now>=(state.nextBossProbe or 0)then
-                state.nextBossProbe=now+0.55
-                if bossExists()then beginBossPreparation()end
+            local permitted=nil
+            if now>=(state.nextBossProbe or 0)then
+                state.nextBossProbe=now+0.35
+                permitted=allowedBoss()
+                state.allowedBoss=permitted
+            else
+                permitted=state.allowedBoss
+                if permitted and type(runtime.bossAdapter.info)=="function"then
+                    local ok,info=pcall(runtime.bossAdapter.info,permitted)
+                    if not ok or not info or not info.alive then
+                        permitted=nil
+                        state.allowedBoss=nil
+                    end
+                end
+            end
+
+            if not state.preparingBoss then
+                if not permitted then
+                    -- Do NOT fall through to the legacy cycle here. Its scan was
+                    -- captured before the rarity filter existed, so an excluded boss
+                    -- would otherwise make it capture/stop the machine and then find
+                    -- no valid combat target.
+                    runtime.bossCycleStatus="Жду босса из фильтра • текущий фарм не трогаю"
+                    return
+                end
+                beginBossPreparation()
             end
 
             if state.preparingBoss then
+                -- Filter changed / allowed boss despawned while we were preparing:
+                -- abort BEFORE the legacy cycle is allowed to capture the machine.
+                permitted=allowedBoss()
+                state.allowedBoss=permitted
+                if not permitted then
+                    cancelBossPreparation()
+                    runtime.bossCycleStatus="Босс не подходит фильтру • продолжаю прежний фарм"
+                    return
+                end
+
                 pauseAutoRebirth()
 
                 local ready,strength,need=bossStrengthReady()
@@ -686,7 +724,7 @@ pcall(function()
     if type(runtime)~="table"or type(runtime.layoutUI)~="table"
         or type(runtime.layoutUI.captureLastSession)~="function"
         or type(runtime.layoutUI.resumeLastSession)~="function"then return end
-    if runtime.layoutUI.testPersistenceVersion=="T75"then return end
+    if runtime.layoutUI.testPersistenceVersion=="T76"then return end
 
     local originalCapture=runtime.layoutUI.captureLastSession
     local originalResume=runtime.layoutUI.resumeLastSession
@@ -795,7 +833,7 @@ pcall(function()
         return result
     end
 
-    runtime.layoutUI.testPersistenceVersion="T75"
+    runtime.layoutUI.testPersistenceVersion="T76"
 end)
 
 local okCards,problemCards=pcall(function()run(CARD_PATCH_URL,"stable farm cards patch")end)
