@@ -155,7 +155,7 @@ pcall(function()
     if type(runtime)=="table"then runtime.machineRebirthGuard=nil end
 end)
 
--- T73 boss/machine coordinator:
+-- T76 boss/machine coordinator:
 -- BEFORE BOSS: pause rebirth, gain enough strength with Weight, then fight immediately.
 -- NO machine seat is required before boss.
 -- AFTER BOSS: restore exact machine, confirm stable seat, only then resume auto-rebirth.
@@ -487,6 +487,12 @@ pcall(function()
     end
 
     local function allowedBoss()
+        -- Never touch farm modes until the rarity filter itself is installed.
+        -- This also closes the short startup window where the core's raw boss scan
+        -- is already ticking but the TEST filter is still downloading.
+        local rarity=runtime.bossRarityFilter
+        if type(rarity)~="table"or rarity.alive==false then return nil end
+
         -- IMPORTANT: this uses the CURRENT adapter scan, i.e. the rarity-filtered
         -- scan installed by BossRarityFilter, not the raw scan captured by the
         -- old core boss cycle at boot.
@@ -718,7 +724,7 @@ if not okBossUI then warn("[RockBugHub TEST "..VERSION.."] boss UI patch failed:
 local okBossRarity,problemBossRarity=pcall(function()run(BOSS_RARITY_PATCH_URL,"boss rarity filter")end)
 if not okBossRarity then warn("[RockBugHub TEST "..VERSION.."] boss rarity filter failed: "..tostring(problemBossRarity))end
 
--- T73 profile persistence extension. The pinned core profile writer predates
+-- T76 profile persistence extension. The pinned core profile writer predates
 -- autoboss rarity filters and several newer TEST toggles.
 pcall(function()
     if type(runtime)~="table"or type(runtime.layoutUI)~="table"
