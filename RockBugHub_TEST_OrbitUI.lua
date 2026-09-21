@@ -1,11 +1,11 @@
 -- ORBIT_UI_BEGIN
 local HUD=(function()
--- RockBugHub UI; version label comes from the current TEST bootstrap.
+-- RockBugHub UI T78; polished motion pass, version label comes from TEST bootstrap.
 -- All geometry is local, non-colliding and excluded from game raycasts.
 local HUD = {}
 
 function HUD.versionTag(runtime,env)
-    local raw=tostring((env and env.RockBugTestVersion) or (runtime and runtime.testVersion) or "T67")
+    local raw=tostring((env and env.RockBugTestVersion) or (runtime and runtime.testVersion) or "T78")
     return raw:match("T%d+") or raw
 end
 
@@ -93,15 +93,35 @@ function HUD.mount(runtime, options)
         object.Parent = parent
         return object
     end
-    local function animate(object,duration,properties)
+    local function animateEase(object,duration,properties,style,direction)
         if self.motion[object] then self.motion[object]:Cancel() end
         if self.lowDetail or options.env.RockBugHologramMotion==false then
             for key,value in pairs(properties)do object[key]=value end
             return nil
         end
-        local tween=tweenService:Create(object,TweenInfo.new(duration,Enum.EasingStyle.Quad,Enum.EasingDirection.Out),properties)
-        self.motion[object]=tween; tween:Play()
+        local tween=tweenService:Create(object,TweenInfo.new(
+            duration,
+            style or Enum.EasingStyle.Quad,
+            direction or Enum.EasingDirection.Out
+        ),properties)
+        self.motion[object]=tween
+        tween.Completed:Connect(function()
+            if self.motion[object]==tween then self.motion[object]=nil end
+        end)
+        tween:Play()
         return tween
+    end
+    local function animate(object,duration,properties)
+        return animateEase(object,duration,properties,Enum.EasingStyle.Quad,Enum.EasingDirection.Out)
+    end
+    local function tapPulse(scaleObject)
+        if not scaleObject or not scaleObject.Parent then return end
+        if self.lowDetail or options.env.RockBugHologramMotion==false then scaleObject.Scale=1 return end
+        animateEase(scaleObject,0.07,{Scale=0.94},Enum.EasingStyle.Quad,Enum.EasingDirection.Out)
+        task.delay(0.07,function()
+            if self.destroyed or not scaleObject.Parent then return end
+            animateEase(scaleObject,0.16,{Scale=1},Enum.EasingStyle.Back,Enum.EasingDirection.Out)
+        end)
     end
     local function assign(object,key,value)
         if object[key]~=value then object[key]=value end
@@ -155,6 +175,7 @@ function HUD.mount(runtime, options)
     self.handle = create("TextButton", {Name="ToggleHologram", AnchorPoint=Vector2.new(1,1), Position=UDim2.new(1,-20,1,-66), Size=UDim2.fromOffset(82,34), BackgroundColor3=background, BackgroundTransparency=0.08, TextColor3=cyan, TextSize=10, Font=Enum.Font.GothamBold, Text="", AutoButtonColor=true, ZIndex=12}, self.overlay)
     round(self.handle,13); edge(self.handle,0.12)
     self.noticePanel=create("Frame",{Name="DetailsPopup",AnchorPoint=Vector2.new(0.5,0.5),Size=UDim2.fromOffset(336,180),BackgroundColor3=Color3.fromRGB(45,91,112),BorderSizePixel=0,Visible=false,ZIndex=40,Active=true},self.overlay)
+    self.noticeScale=create("UIScale",{Scale=1},self.noticePanel)
     round(self.noticePanel,24);edge(self.noticePanel,0.2,1.5)
     local noticeTitle=label(self.noticePanel,tr("ПОДРОБНОСТИ","DETAILS"),16,8,270,30,12,cyan,true)
     local noticeScroll=create("ScrollingFrame",{Position=UDim2.fromOffset(16,44),Size=UDim2.new(1,-32,1,-58),CanvasSize=UDim2.fromOffset(0,0),AutomaticCanvasSize=Enum.AutomaticSize.Y,BackgroundTransparency=1,BorderSizePixel=0,ScrollBarThickness=3,Active=true},self.noticePanel)
@@ -176,11 +197,18 @@ function HUD.mount(runtime, options)
         local origin=self:OriginBounds(self.actionPanel,size)
         local layout=HUD.popupLayout(size.X,size.Y,origin,336,180)
         self.noticePanel.Size=UDim2.fromOffset(layout.w,layout.h)
-        self.noticePanel.Position=UDim2.fromOffset(layout.x,layout.y+8)
+        self.noticePanel.Position=UDim2.fromOffset(layout.x,layout.y+12)
+        self.noticeScale.Scale=0.9
         self.noticePanel.Visible=true;noticeScroll.CanvasPosition=Vector2.new(0,0)
-        animate(self.noticePanel,0.18,{Position=UDim2.fromOffset(layout.x,layout.y)})
+        animateEase(self.noticePanel,0.22,{Position=UDim2.fromOffset(layout.x,layout.y)},Enum.EasingStyle.Quart,Enum.EasingDirection.Out)
+        animateEase(self.noticeScale,0.26,{Scale=1},Enum.EasingStyle.Back,Enum.EasingDirection.Out)
         task.delay(8,function()
-            if not self.destroyed and token==self.noticeToken then self.notice.Visible=false;self.noticePanel.Visible=false end
+            if self.destroyed or token~=self.noticeToken then return end
+            animateEase(self.noticeScale,0.16,{Scale=0.94},Enum.EasingStyle.Quad,Enum.EasingDirection.In)
+            animateEase(self.noticePanel,0.16,{Position=UDim2.fromOffset(layout.x,layout.y+8)},Enum.EasingStyle.Quad,Enum.EasingDirection.In)
+            task.delay(0.16,function()
+                if not self.destroyed and token==self.noticeToken then self.notice.Visible=false;self.noticePanel.Visible=false end
+            end)
         end)
     end
 
@@ -236,8 +264,10 @@ function HUD.mount(runtime, options)
     local function button(p, text, x, y, w, h, callback)
         local row=create("TextButton",{Text="",Active=true,ZIndex=3,AutoButtonColor=false,Position=UDim2.fromOffset(x,y),Size=UDim2.fromOffset(w,h),BackgroundColor3=cyan,BackgroundTransparency=rowRest,BorderSizePixel=0,ClipsDescendants=true},p.frame)
         round(row,18)
+        local rowScale=create("UIScale",{Scale=1},row)
+        local rowStroke=edge(row,0.78,1)
         local textNode=label(row,text,14,0,w-28,h,19,white,false)
-        local b={x=x,y=y,w=w,h=h,node=row,text=textNode,callback=callback,owner=p}
+        local b={x=x,y=y,w=w,h=h,node=row,text=textNode,callback=callback,owner=p,scale=rowScale,stroke=rowStroke}
         -- Roblox resolves the visible button. Pointer tracking only cancels drags;
         -- it is not a second dispatcher or a prerequisite for Activated.
         connect(row.InputBegan,function(event)
@@ -245,11 +275,17 @@ function HUD.mount(runtime, options)
             local key=event.UserInputType==Enum.UserInputType.Touch and event or "mouse"
             b.press={button=b,x=event.Position.X,y=event.Position.Y,generation=self.inputGeneration,key=key,cancelled=not self:CanActivateButton(b)}
             self.pressed[key]=b.press
-            if not b.press.cancelled then row.BackgroundTransparency=rowPressed end
+            if not b.press.cancelled then
+                row.BackgroundTransparency=rowPressed
+                animateEase(rowStroke,0.08,{Transparency=0.12,Thickness=1.8},Enum.EasingStyle.Quad,Enum.EasingDirection.Out)
+                tapPulse(rowScale)
+            end
         end)
         connect(row.Activated,function(event)
             local pressed=b.press;b.press=nil
             row.BackgroundTransparency=rowRest
+            animateEase(rowStroke,0.18,{Transparency=0.78,Thickness=1},Enum.EasingStyle.Quad,Enum.EasingDirection.Out)
+            if rowScale.Scale<0.99 then animateEase(rowScale,0.16,{Scale=1},Enum.EasingStyle.Back,Enum.EasingDirection.Out)end
             if pressed and self.pressed[pressed.key]==pressed then self.pressed[pressed.key]=nil end
             local pointer=not event or event.UserInputType==Enum.UserInputType.MouseButton1 or event.UserInputType==Enum.UserInputType.Touch
             if pointer and pressed and (pressed.cancelled or pressed.generation~=self.inputGeneration)then return end
@@ -270,11 +306,28 @@ function HUD.mount(runtime, options)
     end
     local function open(tab,origin)self:OpenFull(tab,origin or self.actionPanel)end
     local function nativeButton(parent,text,position,size,callback)
-        local b=create("TextButton",{Position=position,Size=size,Text=text,Font=Enum.Font.GothamBold,TextSize=13,TextColor3=white,BackgroundColor3=background,BackgroundTransparency=0.1,BorderSizePixel=0,AutoButtonColor=true,ClipsDescendants=true,TextTruncate=Enum.TextTruncate.AtEnd},parent)
-        round(b,16);edge(b,0.6)
-        connect(b.Activated,callback)
-        connect(b.MouseEnter,function()animate(b,0.12,{BackgroundTransparency=0})end)
-        connect(b.MouseLeave,function()animate(b,0.16,{BackgroundTransparency=0.1})end)
+        local b=create("TextButton",{Position=position,Size=size,Text=text,Font=Enum.Font.GothamBold,TextSize=13,TextColor3=white,BackgroundColor3=background,BackgroundTransparency=0.1,BorderSizePixel=0,AutoButtonColor=false,ClipsDescendants=true,TextTruncate=Enum.TextTruncate.AtEnd},parent)
+        round(b,16)
+        local stroke=edge(b,0.6)
+        local scale=create("UIScale",{Scale=1},b)
+        connect(b.InputBegan,function(event)
+            if event.UserInputType==Enum.UserInputType.Touch or event.UserInputType==Enum.UserInputType.MouseButton1 then
+                tapPulse(scale)
+                animateEase(stroke,0.08,{Transparency=0.14,Thickness=1.8},Enum.EasingStyle.Quad,Enum.EasingDirection.Out)
+            end
+        end)
+        connect(b.Activated,function(...)
+            animateEase(stroke,0.18,{Transparency=0.6,Thickness=1},Enum.EasingStyle.Quad,Enum.EasingDirection.Out)
+            callback(...)
+        end)
+        connect(b.MouseEnter,function()
+            animate(b,0.12,{BackgroundTransparency=0})
+            animateEase(stroke,0.12,{Transparency=0.28},Enum.EasingStyle.Quad,Enum.EasingDirection.Out)
+        end)
+        connect(b.MouseLeave,function()
+            animate(b,0.16,{BackgroundTransparency=0.1})
+            animateEase(stroke,0.16,{Transparency=0.6},Enum.EasingStyle.Quad,Enum.EasingDirection.Out)
+        end)
         return b
     end
 
@@ -302,7 +355,7 @@ function HUD.mount(runtime, options)
     local depth=create("Frame",{Position=UDim2.fromOffset(5,7),Size=UDim2.fromScale(1,1),BackgroundColor3=Color3.fromRGB(17,48,67),BorderSizePixel=0,ZIndex=1},self.windowShell)
     round(depth,32);edge(depth,0.7,1)
     self.window=create("Frame",{Size=UDim2.fromScale(1,1),BackgroundColor3=Color3.fromRGB(255,255,255),BorderSizePixel=0,Active=true,ClipsDescendants=true,ZIndex=2},self.windowShell)
-    round(self.window,28);edge(self.window,0.25,1.5)
+    round(self.window,28);self.windowStroke=edge(self.window,0.25,1.5)
     create("UIGradient",{Rotation=105,Color=ColorSequence.new(Color3.fromRGB(49,99,119),Color3.fromRGB(29,64,85))},self.window)
     self.windowContext=label(self.window,"",18,9,220,16,10,cyan,true)
     self.windowContext.Name="OrbitContext"
@@ -336,9 +389,12 @@ function HUD.mount(runtime, options)
         local target=UDim2.fromOffset(layout.x,layout.y)
         self.popupStart=UDim2.fromOffset(layout.x+(layout.sourceX-layout.x)*0.24,layout.y+(layout.sourceY-layout.y)*0.24)
         if animateOpen then
-            self.windowShell.Position=self.popupStart;self.windowScale.Scale=0.88
-            self.modalTween=animate(self.windowShell,0.24,{Position=target})
-            animate(self.windowScale,0.24,{Scale=1})
+            self.windowShell.Position=self.popupStart
+            self.windowScale.Scale=0.84
+            self.windowStroke.Transparency=0.92
+            self.modalTween=animateEase(self.windowShell,0.28,{Position=target},Enum.EasingStyle.Quart,Enum.EasingDirection.Out)
+            animateEase(self.windowScale,0.34,{Scale=1},Enum.EasingStyle.Back,Enum.EasingDirection.Out)
+            animateEase(self.windowStroke,0.28,{Transparency=0.25,Thickness=1.5},Enum.EasingStyle.Quad,Enum.EasingDirection.Out)
         else
             if self.motion[self.windowShell]then self.motion[self.windowShell]:Cancel()end
             if self.motion[self.windowScale]then self.motion[self.windowScale]:Cancel()end
@@ -397,8 +453,11 @@ function HUD.mount(runtime, options)
         self:ApplyVisibility()
         self:LayoutDrawer(not wasOpen)
         if wasOpen then
-            self.body.Position=UDim2.fromOffset(16,self.body.Position.Y.Offset+6)
-            animate(self.body,0.14,{Position=UDim2.fromOffset(16,(self.modalTab=="bug" or self.modalTab=="farm")and 150 or 112)})
+            local targetY=(self.modalTab=="bug" or self.modalTab=="farm")and 150 or 112
+            self.body.Position=UDim2.fromOffset(28,targetY+8)
+            animateEase(self.body,0.20,{Position=UDim2.fromOffset(16,targetY)},Enum.EasingStyle.Quart,Enum.EasingDirection.Out)
+            self.sectionTabs.Position=UDim2.fromOffset(14,66)
+            animateEase(self.sectionTabs,0.18,{Position=UDim2.fromOffset(14,62)},Enum.EasingStyle.Quad,Enum.EasingDirection.Out)
         end
         return true
     end
@@ -416,9 +475,10 @@ function HUD.mount(runtime, options)
         end
         if immediate or self.lowDetail or options.env.RockBugHologramMotion==false then finish();return end
         self.closingModal=true;self.transitionBlocker.Visible=true
-        animate(self.windowShell,0.14,{Position=self.popupStart or self.windowShell.Position})
-        animate(self.windowScale,0.14,{Scale=0.9})
-        task.delay(0.15,finish)
+        animateEase(self.windowStroke,0.14,{Transparency=0.92},Enum.EasingStyle.Quad,Enum.EasingDirection.In)
+        animateEase(self.windowShell,0.18,{Position=self.popupStart or self.windowShell.Position},Enum.EasingStyle.Quad,Enum.EasingDirection.In)
+        animateEase(self.windowScale,0.18,{Scale=0.86},Enum.EasingStyle.Quad,Enum.EasingDirection.In)
+        task.delay(0.19,finish)
     end
     function self:RefreshLanguage()
         self.menu.Text=tr("НАСТРОЙКИ","SETTINGS")
@@ -434,6 +494,15 @@ function HUD.mount(runtime, options)
         self:ClearPresses();self.group=id;self.cardPage=1;self.nextRefresh=nil
         options.env.RockBugHologramGroup=id
         self.visible=true;self:ApplyVisibility()
+        if not self.lowDetail and options.env.RockBugHologramMotion~=false then
+            for i,node in pairs(self.groupButtons)do
+                local scale=node:FindFirstChildOfClass("UIScale")
+                if scale and i==id then
+                    scale.Scale=0.9
+                    animateEase(scale,0.22,{Scale=1},Enum.EasingStyle.Back,Enum.EasingDirection.Out)
+                end
+            end
+        end
         return true
     end
 
@@ -517,8 +586,22 @@ function HUD.mount(runtime, options)
             setText(self.cardButtons[i],tr(def.ru,def.en))
             self.cardButtons[i].BackgroundColor3=i==self.cardPage and Color3.fromRGB(19,67,82) or background
             local ref=def.key and lever(def.key)
-            setText(p.state,ref and (ref.Get() and tr("ВКЛ","ON") or tr("ВЫКЛ","OFF")) or "→")
-            p.state.TextColor3=ref and ref.Get() and mint or muted
+            local refValue=ref and ref.Get() or nil
+            setText(p.state,ref and (refValue and tr("ВКЛ","ON") or tr("ВЫКЛ","OFF")) or "→")
+            p.state.TextColor3=ref and refValue and mint or muted
+            if ref then
+                if p.lastRefValue~=nil and p.lastRefValue~=refValue and p.primary and p.primary.scale then
+                    p.primary.scale.Scale=refValue and 0.92 or 1.04
+                    animateEase(p.primary.scale,0.22,{Scale=1},Enum.EasingStyle.Back,Enum.EasingDirection.Out)
+                    if p.primary.stroke then
+                        p.primary.stroke.Transparency=refValue and 0.06 or 0.5
+                        animateEase(p.primary.stroke,0.28,{Transparency=0.78,Thickness=1},Enum.EasingStyle.Quad,Enum.EasingDirection.Out)
+                    end
+                end
+                p.lastRefValue=refValue
+            else
+                p.lastRefValue=nil
+            end
             local hint=tr("Настройки выбранного режима","Settings for this mode")
             if def.tab=="farm" then hint=tostring(runtime.machineActive and runtime.machineRecoveryStatus or runtime.selectedMachine and (runtime.selectedMachine.label or runtime.selectedMachine.name or runtime.selectedMachine.kind) or tr("Выберите тренажёр","Choose a machine"))
             elseif def.tab=="bug" then hint=tr("Авто ребирт: ","Auto rebirth: ")..(runtime.autoRebirth and "ON" or "OFF")
@@ -694,6 +777,25 @@ function HUD.mount(runtime, options)
         if show then
             if options.classicGui then options.classicGui.Enabled=false end
             self.openedAt=os.clock(); self.nextRefresh=nil; self.lastSample=nil;self.visualElapsed=1
+            if not self.lowDetail and options.env.RockBugHologramMotion~=false then
+                for index,p in ipairs(self.panels)do
+                    p.canvas.Position=UDim2.fromOffset(0,14)
+                    p.frame.BackgroundTransparency=0.22
+                    p.stroke.Transparency=0.92
+                    task.delay(math.min(0.16,(index-1)*0.018),function()
+                        if self.destroyed or not self.visible or self.modalOpen or not p.canvas.Parent then return end
+                        animateEase(p.canvas,0.26,{Position=UDim2.fromOffset(0,0)},Enum.EasingStyle.Quart,Enum.EasingDirection.Out)
+                        animateEase(p.frame,0.22,{BackgroundTransparency=0},Enum.EasingStyle.Quad,Enum.EasingDirection.Out)
+                        animateEase(p.stroke,0.30,{Transparency=0.1,Thickness=2},Enum.EasingStyle.Quad,Enum.EasingDirection.Out)
+                    end)
+                end
+            else
+                for _,p in ipairs(self.panels)do
+                    p.canvas.Position=UDim2.fromOffset(0,0)
+                    p.frame.BackgroundTransparency=0
+                    p.stroke.Transparency=0.1
+                end
+            end
             run:BindToRenderStep(binding,Enum.RenderPriority.Camera.Value+1,function(dt)
                 local ok,reason=pcall(render,dt)
                 if not ok then
