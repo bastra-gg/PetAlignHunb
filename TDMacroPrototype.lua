@@ -2,7 +2,7 @@
 -- Records tower actions and replays the same server remotes without moving the camera.
 
 local VERSION = 2
-local SCRIPT_VERSION = "1.4.10"
+local SCRIPT_VERSION = "1.4.11"
 local REMOTE_BUS_VERSION = 4
 local ROOT_FOLDER = "TDMacroLab"
 local CONFIG_FILE = ROOT_FOLDER .. "/config.json"
@@ -1147,23 +1147,13 @@ end
 
 local function requestCashDiscovery(force)
     if readCashSourceFast(state.cashSource) ~= nil then return end
+    -- Recording must never launch a full PlayerGui discovery in parallel with
+    -- the player's taps. We resolve the source once before recording starts.
+    if state.recording then return end
     if state.cashDiscoveryQueued then return end
     if not force and os.clock() - state.cashDiscoveryAt < 1.25 then return end
     state.cashDiscoveryQueued = true
     task.spawn(function()
-        -- Never race a full GUI scan against real gameplay input. Opening
-        -- actions do not need cash sync, so discovery can safely wait.
-        if state.recording then task.wait(0.40) end
-        local deadline = os.clock() + 2.0
-        while state.recording and not state.destroyed
-            and os.clock() - state.lastUserGameInput < 0.35
-            and os.clock() < deadline do
-            task.wait(0.08)
-        end
-        if state.recording and os.clock() - state.lastUserGameInput < 0.35 then
-            state.cashDiscoveryQueued = false
-            return
-        end
         if not state.destroyed then pcall(detectMatchCash, true) end
         state.cashDiscoveryQueued = false
     end)
@@ -1404,9 +1394,12 @@ local function classifyRemote(remote, arguments)
         action = "sell"
     elseif contains({"place", "deploy", "spawn tower", "summon", "постав", "размест"}) then
         action = "place"
-    elseif position and os.clock() - state.lastUserGameInput <= 1.25 then
+    elseif position and os.clock() - state.lastUserGameInput <= 0.65 then
+        -- Generic placement remotes often expose only a world position. Keep
+        -- the association window short so one tap cannot tag background traffic
+        -- for the next second and a half.
         action = "place"
-    elseif os.clock() - state.lastUserGameInput <= 1.25 then
+    else
         for index = 1, arguments.n or #arguments do
             local value = arguments[index]
             if typeof(value) == "Instance" and findPlacementRef(value) then
@@ -1437,14 +1430,11 @@ local function captureRemote(remote, method, arguments, calledAt, cashBefore)
     if not state.recording or state.destroyed or state.generatedInput then return end
     if typeof(remote) ~= "Instance" or (not remote:IsA("RemoteEvent") and not remote:IsA("RemoteFunction")) then return end
     local action, position = classifyRemote(remote, arguments)
-    local recentInput = (tonumber(calledAt) or os.clock()) - state.lastUserGameInput <= 1.5
-    if not action and not recentInput then return end
-    if not action then
-        local remoteName = Core.cleanText(remote.Name)
-        if remoteName:find("ping", 1, true) or remoteName:find("heartbeat", 1, true)
-            or remoteName:find("camera", 1, true) or remoteName:find("position", 1, true) then return end
-        action = "request"
-    end
+    -- Selection/UI remotes are not replayable tower actions. Never record a
+    -- generic request just because it happened shortly after a tap: Alliance TD
+    -- can emit many service remotes from one unit-slot press, and serializing all
+    -- of them can starve the UI while recording.
+    if not action then return end
     if not state.recordingLive then
         -- Timer detection is only a convenience. The first real tower request must never be lost.
         activateRecordingTimeline(detectGameClock(), nil, nil, false)
@@ -2535,9 +2525,13 @@ local function startRecording()
     state.touchInputIds = {}
     state.touchGestures = {}
     state.nextTouchId = 0
+    if state.config.settings.remoteMode and readCashSourceFast(state.cashSource) == nil then
+        -- One synchronous discovery before recording becomes active. This may
+        -- cost a frame, but it cannot race the game buttons afterwards.
+        pcall(detectMatchCash, true)
+    end
     state.recording = true
     if state.config.settings.remoteMode then
-        requestCashDiscovery(true)
         if not state.remoteHookReady then
             state.recording = false
             transition("ERROR", state.remoteHookError or "Remote hook недоступен")
