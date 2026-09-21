@@ -2,7 +2,7 @@
 -- Records tower actions and replays the same server remotes without moving the camera.
 
 local VERSION = 2
-local SCRIPT_VERSION = "1.2.7"
+local SCRIPT_VERSION = "1.2.8"
 local REMOTE_BUS_VERSION = 3
 local ROOT_FOLDER = "TDMacroLab"
 local CONFIG_FILE = ROOT_FOLDER .. "/config.json"
@@ -223,9 +223,17 @@ function Core.chooseMacro(macros, currentFingerprint, manualMatches)
 end
 
 local aliases = {
-    x2 = {"x2", "2x", "game speed", "speed", "скорость"},
-    autoSkip = {"auto skip", "autoskip", "skip waves", "skip wave", "авто пропуск", "автопропуск"},
-    playAgain = {"play again", "replay", "retry", "again", "играть снова", "сыграть снова", "повторить"},
+    -- The live Alliance TD HUD shows the *current* speed, so the same control
+    -- can be captioned 1x/1.5x before it ever reaches 2x.
+    x2 = {"x2", "2x", "1x", "1.5x", "game speed", "speed button", "speed", "скорость"},
+    autoSkip = {
+        "auto skip", "autoskip", "auto wave", "auto skip wave", "auto skip waves",
+        "wave skip", "skip waves", "skip wave", "авто пропуск", "автопропуск",
+    },
+    playAgain = {
+        "play again", "playagain", "replay", "retry", "again", "return match",
+        "играть снова", "сыграть снова", "повторить", "заново",
+    },
 }
 
 function Core.bindingScore(kind, text, name)
@@ -347,6 +355,8 @@ local state = {
     mapCacheKey = nil,
     mapCacheAt = 0,
     bindingCapture = nil,
+    bindingScanAt = 0,
+    bindingScan = {},
     controlRunId = 0,
     logs = {},
     destroyed = false,
@@ -744,6 +754,91 @@ local function guiObjectText(object, includeParents)
         end
     end
     return table.concat(parts, " ")
+end
+
+-- Build a cheap semantic signature for a single visible GUI node. Roblox
+-- games often keep the caption, hitbox and state in three different siblings;
+-- limiting discovery to GuiButton therefore misses controls which still click
+-- perfectly through VirtualInputManager.
+local function guiSemanticText(object)
+    if not object then return "" end
+    local parts = {object.Name, object.ClassName}
+    if object:IsA("TextLabel") or object:IsA("TextButton") or object:IsA("TextBox") then
+        parts[#parts + 1] = tostring(object.Text or "")
+    end
+    local ok, attributes = pcall(function() return object:GetAttributes() end)
+    if ok then
+        for key, value in pairs(attributes) do
+            if type(value) == "string" or type(value) == "number" or type(value) == "boolean" then
+                parts[#parts + 1] = tostring(key)
+                parts[#parts + 1] = tostring(value)
+            end
+        end
+    end
+    if object:IsA("GuiButton") then
+        local count = 0
+        for _, child in ipairs(object:GetDescendants()) do
+            if child:IsA("TextLabel") or child:IsA("TextButton") then
+                parts[#parts + 1] = tostring(child.Text or "")
+                parts[#parts + 1] = child.Name
+                count += 1
+                if count >= 12 then break end
+            end
+        end
+    end
+    local parent = object.Parent
+    for _ = 1, 6 do
+        if not parent or parent:IsA("LayerCollector") then break end
+        parts[#parts + 1] = parent.Name
+        if parent:IsA("TextButton") then parts[#parts + 1] = tostring(parent.Text or "") end
+        parent = parent.Parent
+    end
+    return table.concat(parts, " ")
+end
+
+local function clickableGuiFor(anchor, kind)
+    if not anchor or not anchor:IsA("GuiObject") then return nil end
+    local button = guiButtonFor(anchor)
+    if button and instanceVisible(button) then return button end
+    local position, size = anchor.AbsolutePosition, anchor.AbsoluteSize
+    local x, y = position.X + size.X / 2, position.Y + size.Y / 2
+    local ok, objects = pcall(function() return GuiService:GetGuiObjectsAtPosition(x, y) end)
+    if ok then
+        for _, object in ipairs(objects) do
+            if object:IsA("GuiButton") and instanceVisible(object)
+                and not (state.gui and object:IsDescendantOf(state.gui)) then
+                return object
+            end
+        end
+    end
+    -- Some HUDs place "AUTO SKIP" next to (not inside) a transparent button.
+    -- Associate a matching/unique nearby button before falling back to clicking
+    -- the text anchor itself.
+    local parent = anchor.Parent
+    for _ = 1, 3 do
+        if not parent or parent:IsA("LayerCollector") then break end
+        local visibleButtons = {}
+        local bestRelated, bestRelatedScore = nil, 0
+        for _, candidate in ipairs(parent:GetDescendants()) do
+            if candidate:IsA("GuiButton") and instanceVisible(candidate)
+                and not (state.gui and candidate:IsDescendantOf(state.gui)) then
+                visibleButtons[#visibleButtons + 1] = candidate
+                if kind then
+                    local relatedScore = Core.bindingScore(kind, guiObjectText(candidate, true), candidate.Name)
+                    if relatedScore > bestRelatedScore then
+                        bestRelated, bestRelatedScore = candidate, relatedScore
+                    end
+                end
+                if #visibleButtons >= 24 then break end
+            end
+        end
+        if bestRelated and bestRelatedScore >= 55 then return bestRelated end
+        if #visibleButtons == 1 then return visibleButtons[1] end
+        parent = parent.Parent
+    end
+    -- A label/frame is still a useful anchor: sending a real pointer event to
+    -- its centre reaches the game's invisible hitbox even without a GuiButton.
+    return anchor
 end
 
 local function actionHintAtPoint(x, y)
@@ -1219,6 +1314,7 @@ local function captureBinding(kind, input)
         objectName = object and object.Name or nil,
         objectText = object and guiObjectText(object, true) or nil,
     }
+    state.bindingScanAt = 0
     state.bindingCapture = nil
     saveDisk()
     log("Привязка " .. kind .. " сохранена")
@@ -1994,25 +2090,83 @@ local function buttonText(button)
     return guiObjectText(button, true)
 end
 
-local function findBindingCandidate(kind)
+local function bindingGeometryScore(kind, object)
+    if not object or not object:IsA("GuiObject") then return -100 end
+    local size = object.AbsoluteSize
+    if size.X < 4 or size.Y < 4 then return -100 end
+    local screen = viewport()
+    local centreY = object.AbsolutePosition.Y + size.Y / 2
+    local score = 0
+    if size.X >= 20 and size.Y >= 16 then score += 5 end
+    if size.X > screen.w * 0.72 or size.Y > screen.h * 0.45 then score -= 28 end
+    if kind == "x2" or kind == "autoSkip" then
+        -- Both match controls live in the HUD, not in the unit bar at the
+        -- bottom. This is only a tie-breaker; semantic text remains primary.
+        if centreY <= screen.h * 0.45 then score += 5 end
+        if centreY >= screen.h * 0.78 then score -= 8 end
+    elseif kind == "playAgain" then
+        if size.X >= 90 then score += 5 end
+        if centreY >= screen.h * 0.2 and centreY <= screen.h * 0.85 then score += 3 end
+    end
+    return score
+end
+
+local function scanBindingCandidates(force)
     local playerGui = player:FindFirstChildOfClass("PlayerGui")
-    if not playerGui then return nil, 0 end
-    local best, bestScore = nil, 0
+    if not playerGui then return {} end
+    if not force and os.clock() - state.bindingScanAt < 0.65 then
+        local valid = true
+        for _, result in pairs(state.bindingScan) do
+            if result.object and (not result.object:IsDescendantOf(game) or not instanceVisible(result.object)) then
+                valid = false
+                break
+            end
+        end
+        if valid then return state.bindingScan end
+    end
+    local results = {
+        x2 = {object = nil, score = 0, source = nil},
+        autoSkip = {object = nil, score = 0, source = nil},
+        playAgain = {object = nil, score = 0, source = nil},
+    }
     for _, object in ipairs(playerGui:GetDescendants()) do
-        if object:IsA("GuiButton") and instanceVisible(object) and not (state.gui and object:IsDescendantOf(state.gui)) then
-            local score = Core.bindingScore(kind, buttonText(object), object.Name)
-            if score > 0 then
-                if object.Active then score += 8 end
-                if object.AbsoluteSize.X >= 24 and object.AbsoluteSize.Y >= 18 then score += 5 end
-                local parentName = Core.cleanText(object.Parent and object.Parent.Name or "")
-                if parentName:find("game", 1, true) or parentName:find("match", 1, true) or parentName:find("wave", 1, true) then
-                    score += 4
+        if object:IsA("GuiObject") and instanceVisible(object)
+            and not (state.gui and object:IsDescendantOf(state.gui)) then
+            local isText = object:IsA("TextLabel") or object:IsA("TextButton") or object:IsA("TextBox")
+            local isUseful = isText or object:IsA("GuiButton")
+                or Core.bindingScore("x2", "", object.Name) > 0
+                or Core.bindingScore("autoSkip", "", object.Name) > 0
+                or Core.bindingScore("playAgain", "", object.Name) > 0
+            if isUseful then
+                local semantic = guiSemanticText(object)
+                for kind, result in pairs(results) do
+                    local score = Core.bindingScore(kind, semantic, object.Name)
+                    if score > 0 then
+                        local target = clickableGuiFor(object, kind)
+                        score += bindingGeometryScore(kind, target or object)
+                        if target and target:IsA("GuiButton") then score += 8 end
+                        if target and target.Active then score += 3 end
+                        local parentText = Core.cleanText(object.Parent and object.Parent.Name or "")
+                        if parentText:find("game", 1, true) or parentText:find("match", 1, true)
+                            or parentText:find("wave", 1, true) or parentText:find("hud", 1, true) then
+                            score += 4
+                        end
+                        if score > result.score then
+                            result.object, result.score, result.source = target or object, score, object
+                        end
+                    end
                 end
-                if score > bestScore then best, bestScore = object, score end
             end
         end
     end
-    return best, bestScore
+    state.bindingScanAt = os.clock()
+    state.bindingScan = results
+    return results
+end
+
+local function findBindingCandidate(kind, force)
+    local result = scanBindingCandidates(force)[kind]
+    return result and result.object or nil, result and result.score or 0, result and result.source or nil
 end
 
 local function findManualBindingCandidate(kind, binding)
@@ -2022,14 +2176,15 @@ local function findManualBindingCandidate(kind, binding)
     local wantedText = Core.cleanText(binding and binding.objectText or "")
     local best, bestScore = nil, 0
     for _, object in ipairs(playerGui:GetDescendants()) do
-        if object:IsA("GuiButton") and instanceVisible(object) and not (state.gui and object:IsDescendantOf(state.gui)) then
-            local text = buttonText(object)
-            local score = Core.bindingScore(kind, text, object.Name)
-            local objectName = Core.cleanText(object.Name)
-            local objectText = Core.cleanText(text)
+        if object:IsA("GuiObject") and instanceVisible(object) and not (state.gui and object:IsDescendantOf(state.gui)) then
+            local text = guiSemanticText(object)
+            local target = clickableGuiFor(object, kind)
+            local score = Core.bindingScore(kind, text, object.Name) + bindingGeometryScore(kind, target or object)
+            local objectName = Core.cleanText((target and target.Name) or object.Name)
+            local objectText = Core.cleanText(guiObjectText(target or object, true))
             if wantedName ~= "" and objectName == wantedName then score += 55 end
             if wantedText ~= "" and objectText == wantedText then score += 45 end
-            if score > bestScore then best, bestScore = object, score end
+            if score > bestScore then best, bestScore = target or object, score end
         end
     end
     return best, bestScore
@@ -2037,17 +2192,25 @@ end
 
 local function bindingPoint(kind, forDetection)
     local binding = state.config.bindings[kind] or {mode = "auto"}
+    -- Always prefer the live HUD. A saved manual point is only a fallback, so
+    -- changing resolution or rebuilding the match GUI cannot pin us to stale
+    -- coordinates from the previous server.
+    local automatic, automaticScore = findBindingCandidate(kind)
+    if automatic and automaticScore >= 64 then
+        local position, size = automatic.AbsolutePosition, automatic.AbsoluteSize
+        return position.X + size.X / 2, position.Y + size.Y / 2, automatic
+    end
     if binding.mode == "manual" then
         local object = resolveGuiPath(binding.path)
-        object = guiButtonFor(object) or object
-        if object and object:IsA("GuiButton") and instanceVisible(object) then
+        object = clickableGuiFor(object, kind)
+        if object and object:IsA("GuiObject") and instanceVisible(object) then
             local position, size = object.AbsolutePosition, object.AbsoluteSize
             return position.X + size.X / 2, position.Y + size.Y / 2, object
         end
         -- Match UIs are usually destroyed and rebuilt between games. Recover a
         -- manual binding by its saved name/text instead of keeping a dead path.
         local recovered, score = findManualBindingCandidate(kind, binding)
-        if recovered and score >= 70 then
+        if recovered and score >= 64 then
             binding.path = guiPath(recovered)
             binding.objectName = recovered.Name
             binding.objectText = buttonText(recovered)
@@ -2060,11 +2223,6 @@ local function bindingPoint(kind, forDetection)
             return binding.nx * size.w, binding.ny * size.h, nil
         end
         return nil
-    end
-    local object, score = findBindingCandidate(kind)
-    if object and score >= 70 then
-        local position, size = object.AbsolutePosition, object.AbsoluteSize
-        return position.X + size.X / 2, position.Y + size.Y / 2, object
     end
     return nil
 end
@@ -2364,15 +2522,17 @@ installRemoteHook()
 if #state.config.macros > 0 then state.selectedId = state.config.macros[1].id end
 
 local palette = {
-    bg = Color3.fromRGB(15, 20, 30),
-    panel = Color3.fromRGB(23, 30, 43),
-    panel2 = Color3.fromRGB(30, 39, 55),
-    accent = Color3.fromRGB(54, 205, 177),
-    accent2 = Color3.fromRGB(65, 145, 255),
-    danger = Color3.fromRGB(235, 83, 95),
-    text = Color3.fromRGB(238, 244, 251),
-    muted = Color3.fromRGB(143, 158, 180),
-    line = Color3.fromRGB(50, 63, 83),
+    bg = Color3.fromRGB(25, 34, 49),
+    panel = Color3.fromRGB(34, 47, 65),
+    panel2 = Color3.fromRGB(43, 58, 78),
+    panelHover = Color3.fromRGB(53, 70, 92),
+    accent = Color3.fromRGB(71, 219, 194),
+    accentDark = Color3.fromRGB(29, 108, 103),
+    accent2 = Color3.fromRGB(105, 169, 255),
+    danger = Color3.fromRGB(239, 94, 111),
+    text = Color3.fromRGB(244, 248, 253),
+    muted = Color3.fromRGB(166, 181, 201),
+    line = Color3.fromRGB(77, 98, 124),
 }
 
 local function round(object, radius)
@@ -2410,26 +2570,26 @@ end
 local function button(parent, text, position, size, callback, color)
     local object = Instance.new("TextButton")
     object.AutoButtonColor = false
-    object.BackgroundColor3 = color or palette.panel2
+    local baseColor = color or palette.panel2
+    object.BackgroundColor3 = baseColor
+    object:SetAttribute("TDMacroBaseColor", baseColor)
     object.Position = position
     object.Size = size
     object.Font = Enum.Font.GothamSemibold
     object.Text = text
-    object.TextSize = 12
-    object.TextScaled = true
+    object.TextSize = 11
+    object.TextScaled = false
     object.TextColor3 = palette.text
+    object.TextTruncate = Enum.TextTruncate.AtEnd
     object.Parent = parent
-    local textConstraint = Instance.new("UITextSizeConstraint")
-    textConstraint.MinTextSize = 8
-    textConstraint.MaxTextSize = 12
-    textConstraint.Parent = object
-    round(object, 7)
-    local outline = stroke(object, palette.line, 0.18)
+    round(object, 10)
+    local outline = stroke(object, palette.line, 0.25)
     keep(object.MouseEnter:Connect(function()
-        TweenService:Create(object, TweenInfo.new(0.12), {BackgroundColor3 = color or Color3.fromRGB(38, 49, 68)}):Play()
+        local current = object:GetAttribute("TDMacroBaseColor") or baseColor
+        TweenService:Create(object, TweenInfo.new(0.1), {BackgroundColor3 = current:Lerp(Color3.new(1, 1, 1), 0.08)}):Play()
     end))
     keep(object.MouseLeave:Connect(function()
-        TweenService:Create(object, TweenInfo.new(0.12), {BackgroundColor3 = color or palette.panel2}):Play()
+        TweenService:Create(object, TweenInfo.new(0.1), {BackgroundColor3 = object:GetAttribute("TDMacroBaseColor") or baseColor}):Play()
     end))
     keep(object.Activated:Connect(function()
         outline.Color = palette.accent
@@ -2453,8 +2613,8 @@ local function textBox(parent, text, placeholder, position, size)
     object.TextSize = 12
     object.TextXAlignment = Enum.TextXAlignment.Left
     object.Parent = parent
-    round(object, 7)
-    stroke(object)
+    round(object, 10)
+    stroke(object, palette.line, 0.18)
     local padding = Instance.new("UIPadding")
     padding.PaddingLeft = UDim.new(0, 10)
     padding.PaddingRight = UDim.new(0, 10)
@@ -2468,14 +2628,27 @@ local function makeToggle(parent, title, position, getter, setter)
         saveDisk()
         refreshAll()
     end)
-    local titleLabel = label(object, title, UDim2.fromOffset(10, 0), UDim2.new(1, -55, 1, 0), 12)
-    local valueLabel = label(object, "", UDim2.new(1, -47, 0, 0), UDim2.fromOffset(38, 38), 11, palette.accent, Enum.TextXAlignment.Center)
+    local titleLabel = label(object, title, UDim2.fromOffset(12, 0), UDim2.new(1, -68, 1, 0), 11)
+    local track = Instance.new("Frame")
+    track.AnchorPoint = Vector2.new(1, 0.5)
+    track.Position = UDim2.new(1, -10, 0.5, 0)
+    track.Size = UDim2.fromOffset(42, 22)
+    track.Parent = object
+    round(track, 11)
+    local knob = Instance.new("Frame")
+    knob.AnchorPoint = Vector2.new(0, 0.5)
+    knob.Size = UDim2.fromOffset(16, 16)
+    knob.Parent = track
+    round(knob, 8)
     object.Text = ""
     local function update()
         local enabled = getter()
-        valueLabel.Text = enabled and "ВКЛ" or "ВЫКЛ"
-        valueLabel.TextColor3 = enabled and palette.accent or palette.muted
-        object.BackgroundColor3 = enabled and Color3.fromRGB(26, 53, 57) or palette.panel2
+        local base = enabled and Color3.fromRGB(36, 68, 72) or palette.panel2
+        object:SetAttribute("TDMacroBaseColor", base)
+        object.BackgroundColor3 = base
+        track.BackgroundColor3 = enabled and palette.accentDark or Color3.fromRGB(62, 77, 97)
+        knob.BackgroundColor3 = enabled and palette.accent or palette.muted
+        knob.Position = enabled and UDim2.new(1, -19, 0.5, 0) or UDim2.fromOffset(3, 11)
         titleLabel.TextColor3 = enabled and palette.text or palette.muted
     end
     state.rows[#state.rows + 1] = update
@@ -2503,33 +2676,43 @@ if not parented then gui.Parent = player:WaitForChild("PlayerGui") end
 local shadow = Instance.new("Frame")
 shadow.Name = "Shadow"
 shadow.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-shadow.BackgroundTransparency = 0.42
-shadow.Position = UDim2.new(0.5, -286, 0.5, -195)
-shadow.Size = UDim2.fromOffset(580, 398)
+shadow.BackgroundTransparency = 0.62
+shadow.Position = UDim2.new(0.5, -264, 0.5, -188)
+shadow.Size = UDim2.fromOffset(536, 382)
 shadow.ZIndex = 0
 shadow.Parent = gui
-round(shadow, 16)
+round(shadow, 22)
 
 local window = Instance.new("Frame")
 window.Name = "Window"
 window.BackgroundColor3 = palette.bg
-window.Position = UDim2.new(0.5, -290, 0.5, -199)
-window.Size = UDim2.fromOffset(580, 398)
+window.Position = UDim2.new(0.5, -268, 0.5, -191)
+window.Size = UDim2.fromOffset(536, 382)
 window.ClipsDescendants = true
 window.Parent = gui
-round(window, 15)
-stroke(window, palette.line)
+round(window, 20)
+stroke(window, Color3.fromRGB(99, 126, 157), 0.08)
 state.window = window
 
 local header = Instance.new("Frame")
 header.BackgroundColor3 = palette.panel
-header.Size = UDim2.new(1, 0, 0, 42)
+header.Size = UDim2.new(1, 0, 0, 52)
 header.Parent = window
+local headerGradient = Instance.new("UIGradient")
+headerGradient.Color = ColorSequence.new({
+    ColorSequenceKeypoint.new(0, Color3.fromRGB(44, 71, 91)),
+    ColorSequenceKeypoint.new(1, Color3.fromRGB(32, 48, 68)),
+})
+headerGradient.Rotation = 12
+headerGradient.Parent = header
 
-local title = label(header, "TD MACRO LAB  ·  v" .. SCRIPT_VERSION, UDim2.fromOffset(14, 0), UDim2.new(1, -180, 1, 0), 14)
+local title = label(header, "ALLIANCE  ·  MACRO", UDim2.fromOffset(16, 6), UDim2.new(1, -190, 0, 25), 15)
 title.Font = Enum.Font.GothamBold
-local versionLabel = label(header, "VERSION " .. SCRIPT_VERSION, UDim2.new(1, -178, 0, 0), UDim2.fromOffset(130, 42), 10, palette.accent, Enum.TextXAlignment.Right)
-local hideButton = button(header, "—", UDim2.new(1, -38, 0, 7), UDim2.fromOffset(30, 28), function()
+local subtitle = label(header, "SERVER MACRO  ·  БЕЗ КАМЕРЫ", UDim2.fromOffset(16, 28), UDim2.new(1, -190, 0, 17), 9, palette.muted)
+subtitle.Font = Enum.Font.GothamMedium
+local versionLabel = label(header, "v" .. SCRIPT_VERSION, UDim2.new(1, -176, 0, 6), UDim2.fromOffset(124, 39), 11, palette.accent, Enum.TextXAlignment.Right)
+versionLabel.Font = Enum.Font.GothamSemibold
+local hideButton = button(header, "—", UDim2.new(1, -40, 0, 10), UDim2.fromOffset(30, 30), function()
     window.Visible = false
     shadow.Visible = false
     state.showButton.Visible = true
@@ -2538,15 +2721,17 @@ hideButton.TextSize = 18
 hideButton.TextScaled = false
 
 local nav = Instance.new("Frame")
-nav.BackgroundColor3 = palette.bg
-nav.Position = UDim2.fromOffset(8, 48)
-nav.Size = UDim2.new(1, -16, 0, 32)
+nav.BackgroundColor3 = palette.panel
+nav.Position = UDim2.fromOffset(10, 60)
+nav.Size = UDim2.new(1, -20, 0, 34)
 nav.Parent = window
+round(nav, 11)
+stroke(nav, palette.line, 0.45)
 
 local content = Instance.new("Frame")
 content.BackgroundTransparency = 1
-content.Position = UDim2.fromOffset(10, 86)
-content.Size = UDim2.new(1, -20, 1, -96)
+content.Position = UDim2.fromOffset(12, 102)
+content.Size = UDim2.new(1, -24, 1, -104)
 content.ClipsDescendants = true
 content.Parent = window
 
@@ -2567,8 +2752,11 @@ local function showPage(name)
     activePage = name
     for pageName, page in pairs(state.pages) do page.Visible = pageName == name end
     for pageName, item in pairs(navButtons) do
-        item.BackgroundColor3 = pageName == name and Color3.fromRGB(31, 70, 72) or palette.panel
-        item.TextColor3 = pageName == name and palette.accent or palette.muted
+        local active = pageName == name
+        local base = active and Color3.fromRGB(42, 81, 84) or palette.panel
+        item:SetAttribute("TDMacroBaseColor", base)
+        item.BackgroundColor3 = base
+        item.TextColor3 = active and palette.accent or palette.muted
     end
     if name == "MACROS" then refreshMacros() end
     if name == "BINDINGS" then refreshBindings() end
@@ -2578,13 +2766,13 @@ local navItems = {
     {page = "RECORD", text = "ЗАПИСЬ"},
     {page = "MACROS", text = "МАКРОСЫ"},
     {page = "AUTO", text = "АВТО"},
-    {page = "BINDINGS", text = "НАСТРОЙКА"},
-    {page = "LOG", text = "ЛОГ"},
+    {page = "BINDINGS", text = "КНОПКИ"},
+    {page = "LOG", text = "ЖУРНАЛ"},
 }
 for index, navItem in ipairs(navItems) do
     local name = navItem.page
     local item = button(nav, navItem.text, UDim2.new((index - 1) / 5, 2, 0, 0), UDim2.new(0.2, -4, 1, 0), function() showPage(name) end, palette.panel)
-    item.TextSize = index == 4 and 9 or 10
+    item.TextSize = 10
     navButtons[name] = item
 end
 
@@ -2599,7 +2787,14 @@ statusCard.BackgroundColor3 = palette.panel
 statusCard.Size = UDim2.new(1, 0, 0, 57)
 statusCard.Parent = recordPage
 round(statusCard, 10)
-stroke(statusCard)
+stroke(statusCard, palette.line, 0.2)
+local statusRail = Instance.new("Frame")
+statusRail.BackgroundColor3 = palette.accent
+statusRail.BorderSizePixel = 0
+statusRail.Position = UDim2.fromOffset(0, 9)
+statusRail.Size = UDim2.fromOffset(3, 39)
+statusRail.Parent = statusCard
+round(statusRail, 2)
 
 label(statusCard, "СОСТОЯНИЕ", UDim2.fromOffset(12, 5), UDim2.fromOffset(95, 20), 10, palette.muted)
 state.labels.controller = label(statusCard, state.controllerState, UDim2.fromOffset(12, 22), UDim2.fromOffset(125, 30), 16, palette.accent)
@@ -2610,18 +2805,18 @@ state.labels.storage = label(statusCard, "", UDim2.fromOffset(145, 30), UDim2.ne
 state.labels.nameBox = textBox(recordPage, "Macro " .. (#state.config.macros + 1), "Название макроса", UDim2.fromOffset(0, 65), UDim2.new(1, -145, 0, 34))
 state.labels.recordCount = label(recordPage, "0 событий", UDim2.new(1, -137, 0, 65), UDim2.fromOffset(137, 34), 11, palette.muted, Enum.TextXAlignment.Right)
 
-state.labels.recordButton = button(recordPage, "НАЧАТЬ ЗАПИСЬ", UDim2.fromOffset(0, 107), UDim2.new(1, 0, 0, 35), startRecording, Color3.fromRGB(35, 119, 108))
+state.labels.recordButton = button(recordPage, "НАЧАТЬ ЗАПИСЬ", UDim2.fromOffset(0, 107), UDim2.new(1, 0, 0, 35), startRecording, palette.accentDark)
 state.labels.saveButton = button(recordPage, "ОСТАНОВИТЬ И СОХРАНИТЬ", UDim2.fromOffset(0, 147), UDim2.new(1, 0, 0, 35), function()
     stopAndSave(state.labels.nameBox.Text)
-end, Color3.fromRGB(50, 81, 125))
+end, Color3.fromRGB(54, 91, 137))
 
 state.labels.playSelectedButton = button(recordPage, "ЗАПУСТИТЬ ВЫБРАННЫЙ МАКРОС", UDim2.fromOffset(0, 187), UDim2.new(1, 0, 0, 35), function()
     -- Manual launch is intentionally allowed after the player has walked away from the recorded spawn.
     playMacro(selectedMacro(), true, false)
-end, Color3.fromRGB(35, 119, 108))
+end, palette.accentDark)
 state.labels.recordHint = label(recordPage,
     "1. Начни запись до первой волны.  2. Ставь и улучшай юнитов.  3. Останови и сохрани. Камера и ходьба не записываются.",
-    UDim2.fromOffset(2, 231), UDim2.new(1, -4, 0, 48), 11, palette.muted)
+    UDim2.fromOffset(2, 231), UDim2.new(1, -4, 0, 42), 10, palette.muted)
 state.labels.recordHint.TextWrapped = true
 state.labels.recordHint.TextYAlignment = Enum.TextYAlignment.Top
 
@@ -2678,11 +2873,11 @@ button(macrosPage, "УДАЛИТЬ", UDim2.new(0.81, 4, 1, -84), UDim2.new(0.19,
     state.selectedId = state.config.macros[1] and state.config.macros[1].id or nil
     saveDisk()
     refreshMacros()
-end, Color3.fromRGB(91, 39, 48))
+end, Color3.fromRGB(117, 49, 62))
 
 button(macrosPage, "ЗАПУСТИТЬ", UDim2.new(0, 0, 1, -41), UDim2.new(0.34, -4, 0, 35), function()
     playMacro(selectedMacro(), true, false)
-end, Color3.fromRGB(35, 119, 108))
+end, palette.accentDark)
 button(macrosPage, "ПРИВЯЗАТЬ К КАРТЕ", UDim2.new(0.34, 4, 1, -41), UDim2.new(0.39, -4, 0, 35), function()
     local macro = selectedMacro()
     if not macro then log("Выбери макрос") return end
@@ -2720,7 +2915,7 @@ button(autoPage, "ОСТАНОВИТЬ ВСЁ", UDim2.new(0.5, 5, 1, -43), UDim2
     stopPlayback("EMERGENCY STOP", true)
 end, palette.danger)
 
-label(bindingsPage, "«Найти» определяет элемент сам. «Указать» — затем нажми нужный элемент в игре.", UDim2.fromOffset(2, 0), UDim2.new(1, -4, 0, 34), 11, palette.muted)
+label(bindingsPage, "Кнопки ищутся сами. Ручной режим оставлен только как резерв после обновлений игры.", UDim2.fromOffset(2, 0), UDim2.new(1, -4, 0, 34), 10, palette.muted)
 for index, item in ipairs({
     {key = "x2", title = "СКОРОСТЬ x2"},
     {key = "autoSkip", title = "ПРОПУСК ВОЛН"},
@@ -2732,21 +2927,23 @@ for index, item in ipairs({
     row.Position = UDim2.fromOffset(0, 40 + (index - 1) * 47)
     row.Size = UDim2.new(1, 0, 0, 41)
     row.Parent = bindingsPage
-    round(row, 8)
-    stroke(row)
+    round(row, 10)
+    stroke(row, palette.line, 0.25)
     label(row, item.title, UDim2.fromOffset(11, 0), UDim2.new(0.42, -11, 1, 0), 12)
     local status = label(row, "", UDim2.new(0.42, 0, 0, 0), UDim2.new(0.25, 0, 1, 0), 10, palette.muted, Enum.TextXAlignment.Center)
     state.labels["binding_" .. item.key] = status
-    button(row, "НАЙТИ", UDim2.new(0.68, 0, 0, 4), UDim2.new(0.14, -5, 0, 33), function()
+    button(row, "АВТО", UDim2.new(0.68, 0, 0, 4), UDim2.new(0.14, -5, 0, 33), function()
         state.config.bindings[item.key] = {mode = "auto"}
+        state.bindingScanAt = 0
+        if item.key ~= "matchTimer" then findBindingCandidate(item.key, true) end
         saveDisk()
         refreshBindings()
     end)
-    button(row, "УКАЗАТЬ", UDim2.new(0.82, 0, 0, 4), UDim2.new(0.18, -7, 0, 33), function()
+    button(row, "ВРУЧН.", UDim2.new(0.82, 0, 0, 4), UDim2.new(0.18, -7, 0, 33), function()
         state.bindingCapture = item.key
         log("BIND " .. item.key .. ": кликни нужную кнопку в игре")
         refreshBindings()
-    end, Color3.fromRGB(50, 81, 125))
+    end, Color3.fromRGB(54, 91, 137))
 end
 
 local logScroll = Instance.new("ScrollingFrame")
@@ -2771,7 +2968,7 @@ local showButton = button(gui, "TD", UDim2.new(0, 12, 0.5, -25), UDim2.fromOffse
     window.Visible = true
     shadow.Visible = true
     state.showButton.Visible = false
-end, Color3.fromRGB(30, 92, 92))
+end, palette.accentDark)
 showButton.TextSize = 14
 showButton.Visible = false
 state.showButton = showButton
@@ -2798,8 +2995,8 @@ end))
 
 local function resizeWindow()
     local size = viewport()
-    local width = math.min(580, size.w - 18)
-    local height = math.min(398, size.h - 24)
+    local width = math.min(536, size.w - 18)
+    local height = math.min(382, size.h - 24)
     width = math.max(300, width)
     height = math.max(320, height)
     window.Size = UDim2.fromOffset(width, height)
@@ -2833,7 +3030,7 @@ refreshMacros = function()
             state.labels.renameBox.Text = macro.name
             refreshMacros()
             refreshAll()
-        end, macro.id == state.selectedId and Color3.fromRGB(31, 70, 72) or palette.panel2)
+        end, macro.id == state.selectedId and Color3.fromRGB(42, 81, 84) or palette.panel2)
         row.LayoutOrder = index
         row.TextWrapped = false
         row.TextXAlignment = Enum.TextXAlignment.Left
@@ -2862,8 +3059,8 @@ refreshBindings = function()
                 target.TextColor3 = clock and palette.accent or palette.muted
             else
                 local candidate, score = findBindingCandidate(kind)
-                target.Text = candidate and score >= 70 and "НАЙДЕН ✓" or "НЕ НАЙДЕН"
-                target.TextColor3 = candidate and score >= 70 and palette.accent or palette.muted
+                target.Text = candidate and score >= 64 and "НАЙДЕН ✓" or "ИЩУ…"
+                target.TextColor3 = candidate and score >= 64 and palette.accent or palette.muted
             end
         end
     end
@@ -2906,7 +3103,7 @@ refreshAll = function()
         state.labels.storage.TextColor3 = state.memoryOnly and Color3.fromRGB(255, 202, 91)
             or (state.remoteHookReady and palette.muted or palette.danger)
     end
-    refreshBindings()
+    if activePage == "BINDINGS" then refreshBindings() end
 end
 
 function state:Destroy()
