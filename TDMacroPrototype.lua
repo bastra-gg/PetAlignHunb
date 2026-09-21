@@ -2,7 +2,7 @@
 -- Records tower actions and replays the same server remotes without moving the camera.
 
 local VERSION = 2
-local SCRIPT_VERSION = "1.2.8"
+local SCRIPT_VERSION = "1.2.9"
 local REMOTE_BUS_VERSION = 3
 local ROOT_FOLDER = "TDMacroLab"
 local CONFIG_FILE = ROOT_FOLDER .. "/config.json"
@@ -2279,8 +2279,38 @@ local function visibleControlTexts(object)
     return output
 end
 
+local function parseSpeedValue(value)
+    if type(value) == "number" then
+        return value >= 0.25 and value <= 4 and value or nil
+    end
+    local text = string.lower(tostring(value or "")):gsub(",", "."):gsub("%s+", "")
+    local amount = text:match("x(%d+%.?%d*)") or text:match("(%d+%.?%d*)x")
+    amount = tonumber(amount)
+    return amount and amount >= 0.25 and amount <= 4 and amount or nil
+end
+
+local function controlSpeed(object)
+    if not object then return nil end
+    for _, attribute in ipairs({"Speed", "GameSpeed", "CurrentSpeed", "Multiplier", "Value"}) do
+        local amount = parseSpeedValue(object:GetAttribute(attribute))
+        if amount then return amount end
+    end
+    local best = nil
+    local texts = visibleControlTexts(object)
+    texts[#texts + 1] = guiObjectText(object, true)
+    for _, raw in ipairs(texts) do
+        local amount = parseSpeedValue(raw)
+        if amount and (not best or amount > best) then best = amount end
+    end
+    return best
+end
+
 local function controlState(kind, object)
     if not object then return nil end
+    if kind == "x2" then
+        local amount = controlSpeed(object)
+        if amount then return amount >= 1.99 end
+    end
     for _, attribute in ipairs({"Toggled", "Toggle", "IsOn", "On", "Selected", "Checked", "State", "Value"}) do
         local value = object:GetAttribute(attribute)
         if type(value) == "boolean" then return value end
@@ -2291,14 +2321,7 @@ local function controlState(kind, object)
         end
     end
     local texts = visibleControlTexts(object)
-    if kind == "x2" then
-        for _, raw in ipairs(texts) do
-            local text = string.lower(raw):gsub(",", "."):gsub("%s+", "")
-            local amount = text:match("^x(%d+%.?%d*)$") or text:match("^(%d+%.?%d*)x$")
-            amount = tonumber(amount)
-            if amount then return amount >= 1.99 end
-        end
-    else
+    if kind ~= "x2" then
         local clean = " " .. Core.cleanText(table.concat(texts, " ")) .. " "
         for _, word in ipairs({"off", "disabled", "false", "выкл", "отключено"}) do
             if clean:find(" " .. word .. " ", 1, true) then return false end
@@ -2338,7 +2361,7 @@ armMatchControls = function()
     state.controlRunId += 1
     local runId = state.controlRunId
     local pending = {}
-    if state.config.settings.x2 then pending.x2 = {attempts = 0, maxAttempts = 3} end
+    if state.config.settings.x2 then pending.x2 = {attempts = 0, maxAttempts = 5, maxSeen = 0, wrapped = false} end
     if state.config.settings.autoSkip then pending.autoSkip = {attempts = 0, maxAttempts = 3} end
     if not next(pending) then return end
 
@@ -2350,6 +2373,10 @@ armMatchControls = function()
                 local _, _, object = bindingPoint(kind, false)
                 if object then
                     local before = controlState(kind, object)
+                    local beforeSpeed = kind == "x2" and controlSpeed(object) or nil
+                    if kind == "x2" and beforeSpeed then
+                        item.maxSeen = math.max(item.maxSeen or 0, beforeSpeed)
+                    end
                     if before == true then
                         log(kind .. ": уже включено")
                         pending[kind] = nil
@@ -2358,8 +2385,31 @@ armMatchControls = function()
                         if clickBinding(kind, true) then
                             task.wait(0.16)
                             local _, _, currentObject = bindingPoint(kind, false)
-                            local after = controlState(kind, currentObject or object)
-                            if after == true or after == nil then
+                            local resolvedObject = currentObject or object
+                            local after = controlState(kind, resolvedObject)
+                            local afterSpeed = kind == "x2" and controlSpeed(resolvedObject) or nil
+                            if kind == "x2" and afterSpeed then
+                                local previousMax = item.maxSeen or 0
+                                if afterSpeed > previousMax + 0.01 then
+                                    item.maxSeen = afterSpeed
+                                elseif afterSpeed < previousMax - 0.01 then
+                                    item.wrapped = true
+                                elseif afterSpeed >= 1.49 and (item.wrapped or (beforeSpeed and math.abs(afterSpeed - beforeSpeed) <= 0.01)) then
+                                    log(string.format("скорость: максимум x%.1f", afterSpeed))
+                                    pending[kind] = nil
+                                end
+                                if pending[kind] and afterSpeed >= 1.99 then
+                                    log("скорость: x2 включена")
+                                    pending[kind] = nil
+                                elseif pending[kind] and item.attempts >= item.maxAttempts then
+                                    if (item.maxSeen or 0) >= 1.49 then
+                                        log(string.format("скорость: максимум x%.1f", item.maxSeen))
+                                    else
+                                        log("скорость: не удалось переключить", true)
+                                    end
+                                    pending[kind] = nil
+                                end
+                            elseif after == true or after == nil then
                                 log(kind .. ": включено")
                                 pending[kind] = nil
                             elseif item.attempts >= item.maxAttempts then
@@ -2899,7 +2949,7 @@ makeToggle(autoPage, "АВТОЗАПУСК", UDim2.fromOffset(0, 27), function()
     transition(value and "WAIT_MATCH" or "IDLE", value and "автоматизация включена" or "автоматизация выключена")
 end)
 makeToggle(autoPage, "ПОВТОР МАТЧЕЙ", UDim2.new(0.5, 8, 0, 27), function() return state.config.settings.autoLoop end, function(value) state.config.settings.autoLoop = value end)
-makeToggle(autoPage, "ВКЛЮЧАТЬ x2", UDim2.fromOffset(0, 73), function() return state.config.settings.x2 end, function(value)
+makeToggle(autoPage, "МАКС. СКОРОСТЬ", UDim2.fromOffset(0, 73), function() return state.config.settings.x2 end, function(value)
     state.config.settings.x2 = value
     if value and (state.playing or state.config.settings.auto) then task.defer(armMatchControls) end
 end)
@@ -2917,7 +2967,7 @@ end, palette.danger)
 
 label(bindingsPage, "Кнопки ищутся сами. Ручной режим оставлен только как резерв после обновлений игры.", UDim2.fromOffset(2, 0), UDim2.new(1, -4, 0, 34), 10, palette.muted)
 for index, item in ipairs({
-    {key = "x2", title = "СКОРОСТЬ x2"},
+    {key = "x2", title = "СКОРОСТЬ ИГРЫ"},
     {key = "autoSkip", title = "ПРОПУСК ВОЛН"},
     {key = "playAgain", title = "ИГРАТЬ СНОВА"},
     {key = "matchTimer", title = "ИГРОВОЙ ТАЙМЕР"},
