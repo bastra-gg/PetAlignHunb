@@ -215,7 +215,11 @@ function HUD.mount(runtime, options)
     function self:ClearPresses()
         for _,p in ipairs(self.panels)do for _,b in ipairs(p.buttons)do
             if b.press then b.press.cancelled=true end
-            if b.node.Parent then b.node.BackgroundTransparency=rowRest end
+            if b.node.Parent then
+                b.node.BackgroundTransparency=rowRest
+                if b.scale then b.scale.Scale=1 end
+                if b.stroke then b.stroke.Transparency=0.78 b.stroke.Thickness=1 end
+            end
         end end
         self.pressed={}; self.inputGeneration+=1
     end
@@ -835,6 +839,8 @@ function HUD.mount(runtime, options)
         if pressed and (pressed.x-event.Position.X)^2+(pressed.y-event.Position.Y)^2>144 then
             pressed.cancelled=true
             pressed.button.node.BackgroundTransparency=rowRest
+            if pressed.button.stroke then animateEase(pressed.button.stroke,0.14,{Transparency=0.78,Thickness=1},Enum.EasingStyle.Quad,Enum.EasingDirection.Out)end
+            if pressed.button.scale then animateEase(pressed.button.scale,0.14,{Scale=1},Enum.EasingStyle.Back,Enum.EasingDirection.Out)end
         end
     end)
     connect(input.InputEnded,function(event)
@@ -843,7 +849,11 @@ function HUD.mount(runtime, options)
         if not pressed then return end
         self.pressed[key]=nil
         if event.UserInputState==Enum.UserInputState.Cancel then pressed.cancelled=true end
-        if pressed.button.node.Parent then pressed.button.node.BackgroundTransparency=rowRest end
+        if pressed.button.node.Parent then
+            pressed.button.node.BackgroundTransparency=rowRest
+            if pressed.button.stroke then animateEase(pressed.button.stroke,0.14,{Transparency=0.78,Thickness=1},Enum.EasingStyle.Quad,Enum.EasingDirection.Out)end
+            if pressed.button.scale then animateEase(pressed.button.scale,0.14,{Scale=1},Enum.EasingStyle.Back,Enum.EasingDirection.Out)end
+        end
         -- Keep cancellation on the button until Activated or the next press:
         -- InputEnded can arrive before Activated on touch clients.
     end)
