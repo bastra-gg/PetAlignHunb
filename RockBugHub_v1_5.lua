@@ -1,5 +1,5 @@
--- RockBugHub TEST bootstrap T80
-local VERSION="T80"
+-- RockBugHub TEST bootstrap T78
+local VERSION="T78"
 local CORE_URL="https://raw.githubusercontent.com/bastra-gg/PetAlignHunb/09719f8e7536f55acda625e8e18ae0ff44ce9cdb/RockBugHub_v1_5_core.lua"
 local BOSS_RUNTIME_URL="https://raw.githubusercontent.com/bastra-gg/PetAlignHunb/09719f8e7536f55acda625e8e18ae0ff44ce9cdb/RockBugHub_TEST_RuntimeA.lua"
 local ROCK_PATCH_URL="https://raw.githubusercontent.com/bastra-gg/PetAlignHunb/09719f8e7536f55acda625e8e18ae0ff44ce9cdb/RockBugHub_TEST_AdaptiveRocks.lua"
@@ -50,7 +50,7 @@ if type(runtime)=="table"then
     pcall(function()if runtime.uiRoot and runtime.uiRoot:IsA("ScreenGui")then runtime.uiRoot.Enabled=false end end)
 end
 
--- T80: background autoboss must not call the core's global STOP.
+-- T78: background autoboss must not call the core's global STOP.
 -- The pinned core's bossAdapter.prepare() points at jT(), which also shuts down
 -- unrelated automation. Pause only modes that physically conflict with boss combat.
 pcall(function()
@@ -144,7 +144,7 @@ if not okRock then warn("[RockBugHub TEST "..VERSION.."] adaptive rocks patch fa
 local okMachine,problemMachine=pcall(function()run(MACHINE_PATCH_URL,"adaptive machines patch")end)
 if not okMachine then warn("[RockBugHub TEST "..VERSION.."] adaptive machines patch failed: "..tostring(problemMachine))end
 
--- T80: do NOT load the old machine-rebirth guard.
+-- T78: do NOT load the old machine-rebirth guard.
 -- It deliberately detached from the machine before every rebirth. The core already
 -- exposes machineRebirthAllowed(), which waits for a stable confirmed seat without
 -- forcing the player off first.
@@ -155,7 +155,7 @@ pcall(function()
     if type(runtime)=="table"then runtime.machineRebirthGuard=nil end
 end)
 
--- T80 boss/machine coordinator:
+-- T78 boss/machine coordinator:
 -- BEFORE BOSS: pause rebirth, gain enough strength with Weight, then fight immediately.
 -- NO machine seat is required before boss.
 -- AFTER BOSS: restore exact machine, confirm stable seat, only then resume auto-rebirth.
@@ -724,13 +724,13 @@ if not okBossUI then warn("[RockBugHub TEST "..VERSION.."] boss UI patch failed:
 local okBossRarity,problemBossRarity=pcall(function()run(BOSS_RARITY_PATCH_URL,"boss rarity filter")end)
 if not okBossRarity then warn("[RockBugHub TEST "..VERSION.."] boss rarity filter failed: "..tostring(problemBossRarity))end
 
--- T80 profile persistence extension. The pinned core profile writer predates
+-- T78 profile persistence extension. The pinned core profile writer predates
 -- autoboss rarity filters and several newer TEST toggles.
 pcall(function()
     if type(runtime)~="table"or type(runtime.layoutUI)~="table"
         or type(runtime.layoutUI.captureLastSession)~="function"
         or type(runtime.layoutUI.resumeLastSession)~="function"then return end
-    if runtime.layoutUI.testPersistenceVersion=="T80"then return end
+    if runtime.layoutUI.testPersistenceVersion=="T78"then return end
 
     local originalCapture=runtime.layoutUI.captureLastSession
     local originalResume=runtime.layoutUI.resumeLastSession
@@ -839,7 +839,7 @@ pcall(function()
         return result
     end
 
-    runtime.layoutUI.testPersistenceVersion="T80"
+    runtime.layoutUI.testPersistenceVersion="T78"
 end)
 
 local okCards,problemCards=pcall(function()run(CARD_PATCH_URL,"stable farm cards patch")end)
