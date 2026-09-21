@@ -2,7 +2,7 @@
 -- Records tower actions and replays the same server remotes without moving the camera.
 
 local VERSION = 2
-local SCRIPT_VERSION = "1.4.13"
+local SCRIPT_VERSION = "1.4.14"
 local REMOTE_BUS_VERSION = 5
 local ROOT_FOLDER = "TDMacroLab"
 local CONFIG_FILE = ROOT_FOLDER .. "/config.json"
@@ -1455,11 +1455,20 @@ local function captureRemote(remote, method, arguments, calledAt, cashBefore)
     if not state.recording or state.destroyed or state.generatedInput then return end
     if typeof(remote) ~= "Instance" or (not remote:IsA("RemoteEvent") and not remote:IsA("RemoteFunction")) then return end
     local action, position = classifyRemote(remote, arguments)
-    -- Selection/UI remotes are not replayable tower actions. Never record a
-    -- generic request just because it happened shortly after a tap: Alliance TD
-    -- can emit many service remotes from one unit-slot press, and serializing all
-    -- of them can starve the UI while recording.
-    if not action then return end
+    local recentInput = (tonumber(calledAt) or os.clock()) - state.lastUserGameInput <= 1.5
+    if not action and not recentInput then return end
+    if not action then
+        local remoteName = Core.cleanText(remote.Name)
+        if remoteName:find("ping", 1, true) or remoteName:find("heartbeat", 1, true)
+            or remoteName:find("camera", 1, true) or remoteName:find("position", 1, true) then
+            return
+        end
+        -- Some Alliance TD tower actions have no useful action word/position in
+        -- their arguments. They still need to be replayed exactly as recorded.
+        -- This runs only AFTER the game's real Remote call (v1.2.1 ordering), so
+        -- restoring generic requests cannot block the player's click.
+        action = "request"
+    end
     if not state.recordingLive then
         -- Timer detection is only a convenience. The first real tower request must never be lost.
         activateRecordingTimeline(detectGameClock(), nil, nil, false)
