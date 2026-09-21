@@ -2,7 +2,7 @@
 -- Records tower actions and replays the same server remotes without moving the camera.
 
 local VERSION = 2
-local SCRIPT_VERSION = "1.4.6"
+local SCRIPT_VERSION = "1.4.7"
 local REMOTE_BUS_VERSION = 3
 local ROOT_FOLDER = "TDMacroLab"
 local CONFIG_FILE = ROOT_FOLDER .. "/config.json"
@@ -402,7 +402,8 @@ local state = {
     cashCacheAt = 0,
     cashCache = nil,
     cashSource = nil,
-    cashSampleBusy = false,
+    cashDiscoveryAt = 0,
+    cashDiscoveryQueued = false,
     logs = {},
     destroyed = false,
     memoryOnly = false,
@@ -1056,21 +1057,22 @@ local function readCashSourceFast(source)
 end
 
 local function detectMatchCash(force)
-    -- Once the actual cash object is known, reading it is O(1). Do this before
-    -- any GUI scan so replay/recording never hammers every button on the screen.
+    -- The hot path must be O(1): once the real match-money object is known we
+    -- read only that object. Never rescan the whole PlayerGui from an input or
+    -- RemoteEvent path.
     local fastValue = readCashSourceFast(state.cashSource)
     if fastValue ~= nil then
         state.cashCacheAt = os.clock()
         state.cashCache = fastValue
         return fastValue, state.cashSource
-    elseif state.cashSource and not state.cashSource:IsDescendantOf(game) then
+    end
+    if state.cashSource then
         state.cashSource = nil
+        state.cashCache = nil
     end
+    if not force then return nil, nil end
 
-    if not force and os.clock() - state.cashCacheAt < 0.20 then
-        return state.cashCache, state.cashSource
-    end
-
+    state.cashDiscoveryAt = os.clock()
     local bestValue, bestScore, bestSource = nil, -math.huge, nil
 
     -- Prefer replicated values explicitly named as match money. Never accept
@@ -1095,11 +1097,13 @@ local function detectMatchCash(force)
         end
     end
 
+    -- GUI fallback is intentionally discovery-only. It may be a large tree, so
+    -- it is never polled every frame / every 0.2 s like 1.4.6 did.
     local playerGui = player:FindFirstChildOfClass("PlayerGui")
-    if playerGui then
+    if playerGui and not bestSource then
         for _, object in ipairs(playerGui:GetDescendants()) do
-            if (object:IsA("TextLabel") or object:IsA("TextButton")) and instanceVisible(object)
-                and not (state.gui and object:IsDescendantOf(state.gui)) then
+            if (object:IsA("TextLabel") or object:IsA("TextButton") or object:IsA("TextBox"))
+                and instanceVisible(object) and not (state.gui and object:IsDescendantOf(state.gui)) then
                 local raw = tostring(object.Text or "")
                 local value = parseCashNumber(raw)
                 if value ~= nil then
@@ -1120,8 +1124,6 @@ local function detectMatchCash(force)
                     if clean:find(" money", 1, true) or clean:find("money ", 1, true)
                         or compact:find("money", 1, true) then score += 115 end
                     if raw:find("$", 1, true) then score += 90 end
-
-                    -- Persistent/lobby currencies are deliberately rejected.
                     if compact:find("coin", 1, true) or compact:find("gem", 1, true)
                         or compact:find("summon", 1, true) or compact:find("shop", 1, true)
                         or compact:find("lobby", 1, true) then
@@ -1143,6 +1145,17 @@ local function detectMatchCash(force)
     return bestValue, bestSource
 end
 
+local function requestCashDiscovery(force)
+    if readCashSourceFast(state.cashSource) ~= nil then return end
+    if state.cashDiscoveryQueued then return end
+    if not force and os.clock() - state.cashDiscoveryAt < 1.25 then return end
+    state.cashDiscoveryQueued = true
+    task.defer(function()
+        pcall(detectMatchCash, true)
+        state.cashDiscoveryQueued = false
+    end)
+end
+
 local function waitForRecordedCash(event, token)
     local required = tonumber(event and event.cashBefore)
     if not required then return true end
@@ -1159,33 +1172,17 @@ local function waitForRecordedCash(event, token)
                 warned = true
                 log(string.format("Жду cash: %.0f / %.0f", current, required))
             end
-        elseif os.clock() - unseenSince >= 2.0 then
-            -- Cash is an extra guard, never a single point of failure.
-            return true
+        else
+            requestCashDiscovery(false)
+            if os.clock() - unseenSince >= 2.0 then
+                -- Money sync is a safety guard, not permission to freeze the macro.
+                return true
+            end
         end
         task.wait(0.08)
     end
     return false
 end
-
--- Discover/update cash outside the game's RemoteEvent call path. The old 1.4.5
--- hook scanned the whole PlayerGui before every FireServer/InvokeServer, which
--- could delay real button presses on mobile.
-local cashSampleAccumulator = 0
-keep(RunService.Heartbeat:Connect(function(delta)
-    if state.destroyed or not (state.recording or state.playing) then
-        cashSampleAccumulator = 0
-        return
-    end
-    cashSampleAccumulator += delta
-    if cashSampleAccumulator < 0.20 or state.cashSampleBusy then return end
-    cashSampleAccumulator = 0
-    state.cashSampleBusy = true
-    task.spawn(function()
-        pcall(detectMatchCash, true)
-        state.cashSampleBusy = false
-    end)
-end))
 
 local function addRecordedEvent(kind, data)
     if not state.recording or state.generatedInput then return end
@@ -1722,7 +1719,8 @@ local function resetMatchTracking(delay)
     state.cashCacheAt = 0
     state.cashCache = nil
     state.cashSource = nil
-    state.cashSampleBusy = false
+    state.cashDiscoveryAt = 0
+    state.cashDiscoveryQueued = false
     state.mapCacheKey = nil
     state.mapCacheAt = 0
     state.bindingScanAt = 0
@@ -2161,6 +2159,7 @@ local function playMacro(macro, force, fromAuto, expectedFingerprint)
     state.playToken += 1
     local token = state.playToken
     state.playing = true
+    if hasRemoteEvents then requestCashDiscovery(true) end
     state.paused = false
     state.playbackSource = fromAuto and "auto" or "manual"
     state.pauseAccum = 0
@@ -2257,7 +2256,8 @@ local function playMacro(macro, force, fromAuto, expectedFingerprint)
             for _, event in ipairs(opening) do
                 if token ~= state.playToken or state.destroyed then break end
                 while state.paused and token == state.playToken do task.wait(0.05) end
-                if not waitForRecordedCash(event, token) then break end
+                -- Before wave 1 we reproduce exactly the recorded opening with
+                -- the starting money. Cash adaptation begins only in combat.
                 if replayRemoteEvent(event) then openingSent[event] = true end
                 lastSent = os.clock()
                 task.wait(0.08)
@@ -2495,6 +2495,7 @@ local function startRecording()
     state.nextTouchId = 0
     state.recording = true
     if state.config.settings.remoteMode then
+        requestCashDiscovery(true)
         if not state.remoteHookReady then
             state.recording = false
             transition("ERROR", state.remoteHookError or "Remote hook недоступен")
@@ -2815,21 +2816,32 @@ local function clickBinding(kind, quiet)
         if not quiet then log(kind .. ": включено напрямую") end
         return true
     end
+
     state.generatedInput = true
-    local ok = pcall(function()
-        if UIS.TouchEnabled then
-            state.syntheticTouchId += 1
-            local touchId = state.syntheticTouchId
-            VIM:SendTouchEvent(touchId, 0, x, y)
-            task.wait(0.06)
-            VIM:SendTouchEvent(touchId, 2, x, y)
-        else
-            VIM:SendMouseButtonEvent(x, y, 0, true, game, 0)
-            task.wait(0.06)
-            VIM:SendMouseButtonEvent(x, y, 0, false, game, 0)
+    local ok = true
+    if UIS.TouchEnabled then
+        state.syntheticTouchId += 1
+        local touchId = state.syntheticTouchId
+        local downOk = pcall(function() VIM:SendTouchEvent(touchId, 0, x, y) end)
+        if downOk then
+            state.pressedTouches[touchId] = {x = x, y = y}
+            task.wait(0.045)
         end
-    end)
+        local upOk = pcall(function() VIM:SendTouchEvent(touchId, 2, x, y) end)
+        state.pressedTouches[touchId] = nil
+        ok = downOk and upOk
+    else
+        local downOk = pcall(function() VIM:SendMouseButtonEvent(x, y, 0, true, game, 0) end)
+        if downOk then
+            state.pressedButtons[0] = true
+            task.wait(0.045)
+        end
+        local upOk = pcall(function() VIM:SendMouseButtonEvent(x, y, 0, false, game, 0) end)
+        state.pressedButtons[0] = nil
+        ok = downOk and upOk
+    end
     state.generatedInput = false
+
     if not quiet then
         if ok then log(kind .. ": нажато") else log(kind .. ": ошибка нажатия", true) end
     end
@@ -2838,13 +2850,15 @@ end
 
 local function pressSpeedKey()
     state.generatedInput = true
-    local ok = pcall(function()
-        VIM:SendKeyEvent(true, Enum.KeyCode.Z, false, game)
-        task.wait(0.05)
-        VIM:SendKeyEvent(false, Enum.KeyCode.Z, false, game)
-    end)
+    local downOk = pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.Z, false, game) end)
+    if downOk then
+        state.pressedKeys.Z = true
+        task.wait(0.045)
+    end
+    local upOk = pcall(function() VIM:SendKeyEvent(false, Enum.KeyCode.Z, false, game) end)
+    state.pressedKeys.Z = nil
     state.generatedInput = false
-    return ok
+    return downOk and upOk
 end
 
 local function setMaximumGameSpeed(runId)
