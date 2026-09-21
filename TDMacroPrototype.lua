@@ -2,7 +2,7 @@
 -- Records tower actions and replays the same server remotes without moving the camera.
 
 local VERSION = 2
-local SCRIPT_VERSION = "1.4.11"
+local SCRIPT_VERSION = "1.4.12"
 local REMOTE_BUS_VERSION = 4
 local ROOT_FOLDER = "TDMacroLab"
 local CONFIG_FILE = ROOT_FOLDER .. "/config.json"
@@ -364,6 +364,8 @@ local state = {
     remoteHookError = nil,
     clockCacheAt = 0,
     clockCache = nil,
+    clockTimerSource = nil,
+    clockWaveSource = nil,
     currentSlot = nil,
     pendingPlacementSlot = nil,
     nextUnitId = 0,
@@ -967,7 +969,7 @@ local function detectGameClock()
                 if object:IsA("TextLabel") or object:IsA("TextButton") then
                     local clock = parseClockText(object.Text)
                     if clock then
-                        bestTimer = {time = clock, text = object.Text, path = guiPath(object)}
+                        bestTimer = {time = clock, text = object.Text, path = guiPath(object), source = object}
                         bestTimerScore = 1000
                         break
                     end
@@ -989,7 +991,7 @@ local function detectGameClock()
                 if object.AbsoluteSize.X >= 35 and object.AbsoluteSize.X <= 300 then score += 5 end
                 if score > bestTimerScore then
                     bestTimerScore = score
-                    bestTimer = {time = clock, text = text, path = guiPath(object)}
+                    bestTimer = {time = clock, text = text, path = guiPath(object), source = object}
                 end
             end
             if clean:find("wave", 1, true) or clean:find("волна", 1, true) then
@@ -1000,6 +1002,7 @@ local function detectGameClock()
                     if score > bestWaveScore then
                         bestWaveScore = score
                         bestWave = number
+                        state.clockWaveSource = object
                     end
                 end
             end
@@ -1016,9 +1019,31 @@ local function detectGameClock()
         text = bestTimer and bestTimer.text or nil,
         timerPath = bestTimer and bestTimer.path or nil,
     }
+    state.clockTimerSource = bestTimer and bestTimer.source or state.clockTimerSource
     state.clockCacheAt = os.clock()
     state.clockCache = result
     return result
+end
+
+local function readGameClockFast()
+    local timerSource = state.clockTimerSource
+    local waveSource = state.clockWaveSource
+    local time, timerText, timerPath = nil, nil, nil
+    local wave = nil
+
+    if timerSource and timerSource:IsDescendantOf(game) and instanceVisible(timerSource)
+        and (timerSource:IsA("TextLabel") or timerSource:IsA("TextButton") or timerSource:IsA("TextBox")) then
+        timerText = tostring(timerSource.Text or "")
+        time = parseClockText(timerText)
+        timerPath = guiPath(timerSource)
+    end
+    if waveSource and waveSource:IsDescendantOf(game) and instanceVisible(waveSource)
+        and (waveSource:IsA("TextLabel") or waveSource:IsA("TextButton") or waveSource:IsA("TextBox")) then
+        wave = tonumber(tostring(waveSource.Text or ""):match("(%d+)"))
+    end
+
+    if time == nil and wave == nil then return nil end
+    return {wave = wave, time = time, text = timerText, timerPath = timerPath}
 end
 
 
@@ -1748,6 +1773,8 @@ local function resetMatchTracking(delay)
     state.matchSpawnPosition = nil
     state.clockCacheAt = 0
     state.clockCache = nil
+    state.clockTimerSource = nil
+    state.clockWaveSource = nil
     state.cashCacheAt = 0
     state.cashCache = nil
     state.cashSource = nil
@@ -2409,7 +2436,9 @@ keep(RunService.Heartbeat:Connect(function(delta)
     clockAccumulator += delta
     if clockAccumulator < 0.2 then return end
     clockAccumulator = 0
-    local current = detectGameClock()
+    -- Recording must not rescan PlayerGui every 0.2 s. The sources were
+    -- discovered once before recording; from here we read only those objects.
+    local current = readGameClockFast()
     if not current then return end
     local previous = state.recordingClock
     state.recordingClock = current
@@ -2510,6 +2539,8 @@ local function startRecording()
     state.recordingLive = not state.config.settings.remoteMode
     state.recordingCombatStarted = not state.config.settings.remoteMode
     state.recordingPreCombatDirection = nil
+    -- One discovery before recording becomes active, then recording itself
+    -- performs only O(1) reads from the discovered timer/wave objects.
     state.recordingClock = detectGameClock()
     state.recordingClockInitial = state.recordingClock
     state.recordingClockChanges = 0
