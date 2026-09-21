@@ -2,7 +2,7 @@
 -- Records tower actions and replays the same server remotes without moving the camera.
 
 local VERSION = 2
-local SCRIPT_VERSION = "1.4.1"
+local SCRIPT_VERSION = "1.4.2"
 local REMOTE_BUS_VERSION = 3
 local ROOT_FOLDER = "TDMacroLab"
 local CONFIG_FILE = ROOT_FOLDER .. "/config.json"
@@ -2628,9 +2628,10 @@ local function prepareAutoRun(immediate, preparedFingerprint, autoRunToken)
         state.config.mapMatches
     )
     if not macro then
-        state.config.settings.auto = false
-        transition("ERROR", "Нет макроса для этой карты/спавна")
-        saveDisk()
+        -- Keep AUTOSTART armed. A lobby/unbound map is not a reason to erase
+        -- the user's persistent preference; just keep waiting for a bound map.
+        resetMatchTracking(2)
+        transition("WAIT_MATCH", "Нет макроса для этой карты/спавна · автозапуск остаётся включён")
         refreshAll()
         return
     end
@@ -2651,9 +2652,9 @@ local function prepareAutoRun(immediate, preparedFingerprint, autoRunToken)
     if not immediate then task.wait(math.max(0, tonumber(state.config.settings.initialDelay) or 1.2)) end
     if autoRunToken == state.autoRunToken and state.config.settings.auto then
         if not playMacro(macro, false, true, currentFingerprint) then
-            state.config.settings.auto = false
-            transition("ERROR", "Запуск макроса не удался")
-            saveDisk()
+            -- A transient launch failure must not clear persistent AUTOSTART.
+            resetMatchTracking(2)
+            transition("WAIT_MATCH", "Запуск макроса не удался · автозапуск остаётся включён")
         end
     end
     refreshAll()
@@ -3371,6 +3372,9 @@ end
 
 function state:Destroy()
     if self.destroyed then return end
+    -- Flush the current switches before hot-reload/close. In particular,
+    -- AUTOSTART must survive the next script launch unchanged.
+    pcall(saveDisk)
     self.destroyed = true
     self.recording = false
     self.playToken += 1
