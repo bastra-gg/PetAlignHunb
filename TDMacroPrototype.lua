@@ -2,7 +2,7 @@
 -- Records tower actions and replays the same server remotes without moving the camera.
 
 local VERSION = 2
-local SCRIPT_VERSION = "1.4.14"
+local SCRIPT_VERSION = "1.4.15"
 local REMOTE_BUS_VERSION = 5
 local ROOT_FOLDER = "TDMacroLab"
 local CONFIG_FILE = ROOT_FOLDER .. "/config.json"
@@ -400,6 +400,7 @@ local state = {
     controlRunId = 0,
     autoRunToken = 0,
     playbackSource = nil,
+    playbackUsesRemote = false,
     waitFreshMatch = false,
     cashCacheAt = 0,
     cashCache = nil,
@@ -1840,6 +1841,7 @@ local function stopPlayback(reason, emergency)
     state.playing = false
     state.paused = false
     state.playbackSource = nil
+    state.playbackUsesRemote = false
     releaseAll()
     releaseCameraControl()
     if emergency then
@@ -2234,6 +2236,7 @@ local function playMacro(macro, force, fromAuto, expectedFingerprint)
     state.playToken += 1
     local token = state.playToken
     state.playing = true
+    state.playbackUsesRemote = hasRemoteEvents == true
     if hasRemoteEvents then requestCashDiscovery(true) end
     state.paused = false
     state.playbackSource = fromAuto and "auto" or "manual"
@@ -2346,6 +2349,11 @@ local function playMacro(macro, force, fromAuto, expectedFingerprint)
             if event.kind == "remote" then
                 if not waitForRecordedMoment(event, macro.clock, waveTiming, token, playbackStarted) then break end
                 if not waitForRecordedCash(event, token) then break end
+            elseif hasRemoteEvents then
+                -- Server macros can contain legacy input events from older
+                -- recordings. The Remote already performs the action; replaying
+                -- synthetic mobile touches can break Roblox's movement thumbstick.
+                continue
             else
                 while state.paused and token == state.playToken do task.wait(0.05) end
                 while token == state.playToken do
@@ -2378,6 +2386,7 @@ local function playMacro(macro, force, fromAuto, expectedFingerprint)
             state.playing = false
             state.paused = false
             state.playbackSource = nil
+            state.playbackUsesRemote = false
             releaseAll()
             releaseCameraControl()
             state.playbackFinishedAt = os.clock()
@@ -2899,6 +2908,14 @@ local function clickBinding(kind, quiet)
     if direct then
         if not quiet then log(kind .. ": включено напрямую") end
         return true
+    end
+
+    -- During server-macro playback on mobile, never synthesize a touch
+    -- as a fallback for HUD automation. Direct GuiButton activation above is
+    -- safe; an ambiguous synthetic tap can interfere with the real thumbstick.
+    if UIS.TouchEnabled and state.playing and state.playbackUsesRemote then
+        if not quiet then log(kind .. ": mobile touch fallback пропущен") end
+        return false
     end
 
     state.generatedInput = true
