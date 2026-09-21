@@ -2,7 +2,7 @@
 -- Records tower actions and replays the same server remotes without moving the camera.
 
 local VERSION = 2
-local SCRIPT_VERSION = "1.4.8"
+local SCRIPT_VERSION = "1.4.9"
 local REMOTE_BUS_VERSION = 4
 local ROOT_FOLDER = "TDMacroLab"
 local CONFIG_FILE = ROOT_FOLDER .. "/config.json"
@@ -1150,8 +1150,17 @@ local function requestCashDiscovery(force)
     if state.cashDiscoveryQueued then return end
     if not force and os.clock() - state.cashDiscoveryAt < 1.25 then return end
     state.cashDiscoveryQueued = true
-    task.defer(function()
-        pcall(detectMatchCash, true)
+    task.spawn(function()
+        -- Full GUI discovery is allowed only while the player is idle. During
+        -- recording a scan that lands on the same frame as a real tap can delay
+        -- Roblox's own unit-slot/button handlers.
+        local deadline = os.clock() + 2.0
+        while state.recording and not state.destroyed
+            and os.clock() - state.lastUserGameInput < 0.35
+            and os.clock() < deadline do
+            task.wait(0.08)
+        end
+        if not state.destroyed then pcall(detectMatchCash, true) end
         state.cashDiscoveryQueued = false
     end)
 end
@@ -1597,6 +1606,22 @@ end
 keep(UIS.InputBegan:Connect(function(input, processed)
     if state.destroyed or state.generatedInput then return end
     if state.bindingCapture and captureBinding(state.bindingCapture, input) then return end
+
+    -- SERVER recording must be completely passive on the real input path.
+    -- Do not query GuiService, inspect controls or touch the player's gesture.
+    -- We only timestamp the input so the later RemoteEvent can be associated
+    -- with a user action. The game receives the tap with essentially no work
+    -- done by this callback.
+    if state.recording and state.config.settings.remoteMode then
+        local inputType = input.UserInputType
+        if inputType == Enum.UserInputType.MouseButton1 or inputType == Enum.UserInputType.MouseButton2
+            or inputType == Enum.UserInputType.Touch then
+            state.lastUserGameInput = os.clock()
+            state.lastUserActionHint = ""
+        end
+        return
+    end
+
     if input.UserInputType == Enum.UserInputType.Touch then
         local x, y = eventPosition(input)
         if isMovementControlPoint(x, y) then return end
