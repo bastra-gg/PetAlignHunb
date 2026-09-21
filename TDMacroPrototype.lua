@@ -2,7 +2,7 @@
 -- Records tower actions and replays the same server remotes without moving the camera.
 
 local VERSION = 2
-local SCRIPT_VERSION = "1.2.5"
+local SCRIPT_VERSION = "1.2.6"
 local REMOTE_BUS_VERSION = 3
 local ROOT_FOLDER = "TDMacroLab"
 local CONFIG_FILE = ROOT_FOLDER .. "/config.json"
@@ -1450,6 +1450,29 @@ local function replayRemoteEvent(event)
     return true
 end
 
+local function collectOpeningPlacements(events)
+    local opening = {}
+    local started = false
+    local openingWave = nil
+    for _, event in ipairs(type(events) == "table" and events or {}) do
+        if event.kind == "remote" then
+            local wave = tonumber(event.wave)
+            if started and openingWave ~= nil and wave ~= nil and wave ~= openingWave then break end
+            if event.action == "place" then
+                if not started then
+                    started = true
+                    openingWave = wave
+                end
+                opening[#opening + 1] = event
+            elseif started and (event.action == "upgrade" or event.action == "sell"
+                or event.action == "unit_action") then
+                break
+            end
+        end
+    end
+    return opening
+end
+
 local function waitForRecordedMoment(event, clockConfig, timing, token, playbackStarted)
     local direction = clockConfig and clockConfig.direction or "up"
     local eventWave = tonumber(event.wave)
@@ -1644,6 +1667,7 @@ local function playMacro(macro, force, fromAuto, expectedFingerprint)
         local tolerance = math.max(0.05, tonumber(state.config.settings.lateTolerance) or 0.35)
         local lastSent = 0
         local waveTiming = {wave = nil, waveStartClock = nil, waveStartedAt = nil, lastClock = nil, fallbackOrigin = 0}
+        local openingSent = {}
         if hasRemoteEvents then
             for _, event in ipairs(macro.events) do
                 if event.kind == "remote" then
@@ -1656,10 +1680,21 @@ local function playMacro(macro, force, fromAuto, expectedFingerprint)
             playbackStarted = os.clock()
             state.pauseAccum = 0
             log("Макрос активен · синхронизация по событиям")
+
+            local opening = collectOpeningPlacements(macro.events)
+            for _, event in ipairs(opening) do
+                if token ~= state.playToken or state.destroyed then break end
+                while state.paused and token == state.playToken do task.wait(0.05) end
+                if replayRemoteEvent(event) then openingSent[event] = true end
+                lastSent = os.clock()
+                task.wait(0.08)
+            end
+            if #opening > 0 then log("Стартовые юниты выставлены · " .. tostring(#opening)) end
         end
 
         for _, event in ipairs(macro.events) do
             if token ~= state.playToken or state.destroyed then break end
+            if openingSent[event] then continue end
             if event.kind == "remote" then
                 if not waitForRecordedMoment(event, macro.clock, waveTiming, token, playbackStarted) then break end
             else
