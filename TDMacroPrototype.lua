@@ -2,7 +2,7 @@
 -- Records tower actions and replays the same server remotes without moving the camera.
 
 local VERSION = 2
-local SCRIPT_VERSION = "1.4.5"
+local SCRIPT_VERSION = "1.4.6"
 local REMOTE_BUS_VERSION = 3
 local ROOT_FOLDER = "TDMacroLab"
 local CONFIG_FILE = ROOT_FOLDER .. "/config.json"
@@ -402,6 +402,7 @@ local state = {
     cashCacheAt = 0,
     cashCache = nil,
     cashSource = nil,
+    cashSampleBusy = false,
     logs = {},
     destroyed = false,
     memoryOnly = false,
@@ -1043,8 +1044,30 @@ local function parseCashNumber(value)
     return amount * multiplier
 end
 
+local function readCashSourceFast(source)
+    if not source or not source:IsDescendantOf(game) then return nil end
+    if source:IsA("IntValue") or source:IsA("NumberValue") then
+        return tonumber(source.Value)
+    end
+    if source:IsA("TextLabel") or source:IsA("TextButton") or source:IsA("TextBox") then
+        return parseCashNumber(source.Text)
+    end
+    return nil
+end
+
 local function detectMatchCash(force)
-    if not force and os.clock() - state.cashCacheAt < 0.12 then
+    -- Once the actual cash object is known, reading it is O(1). Do this before
+    -- any GUI scan so replay/recording never hammers every button on the screen.
+    local fastValue = readCashSourceFast(state.cashSource)
+    if fastValue ~= nil then
+        state.cashCacheAt = os.clock()
+        state.cashCache = fastValue
+        return fastValue, state.cashSource
+    elseif state.cashSource and not state.cashSource:IsDescendantOf(game) then
+        state.cashSource = nil
+    end
+
+    if not force and os.clock() - state.cashCacheAt < 0.20 then
         return state.cashCache, state.cashSource
     end
 
@@ -1128,7 +1151,7 @@ local function waitForRecordedCash(event, token)
     local unseenSince = os.clock()
     while token == state.playToken and state.playing and not state.destroyed do
         while state.paused and token == state.playToken do task.wait(0.05) end
-        local current = detectMatchCash(true)
+        local current = detectMatchCash(false)
         if current ~= nil then
             unseenSince = os.clock()
             if current + 0.5 >= required then return true end
@@ -1140,10 +1163,29 @@ local function waitForRecordedCash(event, token)
             -- Cash is an extra guard, never a single point of failure.
             return true
         end
-        task.wait(0.06)
+        task.wait(0.08)
     end
     return false
 end
+
+-- Discover/update cash outside the game's RemoteEvent call path. The old 1.4.5
+-- hook scanned the whole PlayerGui before every FireServer/InvokeServer, which
+-- could delay real button presses on mobile.
+local cashSampleAccumulator = 0
+keep(RunService.Heartbeat:Connect(function(delta)
+    if state.destroyed or not (state.recording or state.playing) then
+        cashSampleAccumulator = 0
+        return
+    end
+    cashSampleAccumulator += delta
+    if cashSampleAccumulator < 0.20 or state.cashSampleBusy then return end
+    cashSampleAccumulator = 0
+    state.cashSampleBusy = true
+    task.spawn(function()
+        pcall(detectMatchCash, true)
+        state.cashSampleBusy = false
+    end)
+end))
 
 local function addRecordedEvent(kind, data)
     if not state.recording or state.generatedInput then return end
@@ -1155,7 +1197,7 @@ local function addRecordedEvent(kind, data)
         -- Do not infer "opening" later from event order. Record the actual phase.
         data.opening = state.recordingCombatStarted ~= true
         if data.cashBefore == nil then
-            data.cashBefore = select(1, detectMatchCash())
+            data.cashBefore = readCashSourceFast(state.cashSource) or state.cashCache
         end
     end
     local clock = state.recordingClock
@@ -1452,8 +1494,13 @@ local function installRemoteHook()
             if listener and not fromExecutor and (method == "FireServer" or method == "InvokeServer") then
                 local arguments = table.pack(...)
                 local calledAt = os.clock()
-                local cashBefore = select(1, detectMatchCash(true))
-                -- Let the game send first. Recording work must never delay or swallow its button action.
+                local cashBefore = nil
+                if state.recording and state.config and state.config.settings.remoteMode then
+                    -- Never scan GUI here. This hook sits directly in the game's
+                    -- button -> RemoteEvent path, so it must stay essentially free.
+                    cashBefore = readCashSourceFast(state.cashSource) or state.cashCache
+                end
+                -- Let the game send immediately; recording work runs afterwards.
                 local results = table.pack(oldNamecall(self, ...))
                 task.defer(function()
                     if bus.listener == listener then pcall(listener, self, method, arguments, calledAt, cashBefore) end
@@ -1675,6 +1722,7 @@ local function resetMatchTracking(delay)
     state.cashCacheAt = 0
     state.cashCache = nil
     state.cashSource = nil
+    state.cashSampleBusy = false
     state.mapCacheKey = nil
     state.mapCacheAt = 0
     state.bindingScanAt = 0
