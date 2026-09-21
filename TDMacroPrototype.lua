@@ -2,7 +2,7 @@
 -- Records tower actions and replays the same server remotes without moving the camera.
 
 local VERSION = 2
-local SCRIPT_VERSION = "1.4.9"
+local SCRIPT_VERSION = "1.4.10"
 local REMOTE_BUS_VERSION = 4
 local ROOT_FOLDER = "TDMacroLab"
 local CONFIG_FILE = ROOT_FOLDER .. "/config.json"
@@ -1151,14 +1151,18 @@ local function requestCashDiscovery(force)
     if not force and os.clock() - state.cashDiscoveryAt < 1.25 then return end
     state.cashDiscoveryQueued = true
     task.spawn(function()
-        -- Full GUI discovery is allowed only while the player is idle. During
-        -- recording a scan that lands on the same frame as a real tap can delay
-        -- Roblox's own unit-slot/button handlers.
+        -- Never race a full GUI scan against real gameplay input. Opening
+        -- actions do not need cash sync, so discovery can safely wait.
+        if state.recording then task.wait(0.40) end
         local deadline = os.clock() + 2.0
         while state.recording and not state.destroyed
             and os.clock() - state.lastUserGameInput < 0.35
             and os.clock() < deadline do
             task.wait(0.08)
+        end
+        if state.recording and os.clock() - state.lastUserGameInput < 0.35 then
+            state.cashDiscoveryQueued = false
+            return
         end
         if not state.destroyed then pcall(detectMatchCash, true) end
         state.cashDiscoveryQueued = false
