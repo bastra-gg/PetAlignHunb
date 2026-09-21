@@ -2,7 +2,7 @@
 -- Records tower actions and replays the same server remotes without moving the camera.
 
 local VERSION = 2
-local SCRIPT_VERSION = "1.4.2"
+local SCRIPT_VERSION = "1.4.3"
 local REMOTE_BUS_VERSION = 3
 local ROOT_FOLDER = "TDMacroLab"
 local CONFIG_FILE = ROOT_FOLDER .. "/config.json"
@@ -339,6 +339,10 @@ local state = {
     recordingCamera = nil,
     recordedCameraTrack = {},
     recordingLive = false,
+    -- Explicit pre-wave/combat phase. Opening actions are replayed immediately;
+    -- actions after this flips true are synchronized to the live wave timer.
+    recordingCombatStarted = false,
+    recordingPreCombatDirection = nil,
     recordingClock = nil,
     recordingClockInitial = nil,
     recordingClockDirection = "up",
@@ -999,6 +1003,10 @@ local function addRecordedEvent(kind, data)
     data = data or {}
     data.kind = kind
     data.t = math.max(0, os.clock() - state.recordingStarted)
+    if kind == "remote" and state.config and state.config.settings.remoteMode then
+        -- Do not infer "opening" later from event order. Record the actual phase.
+        data.opening = state.recordingCombatStarted ~= true
+    end
     local clock = state.recordingClock
     if not clock and kind ~= "remote" then clock = detectGameClock() end
     if clock then
@@ -1236,7 +1244,7 @@ local function captureRemote(remote, method, arguments, calledAt)
     end
     if not state.recordingLive then
         -- Timer detection is only a convenience. The first real tower request must never be lost.
-        activateRecordingTimeline(detectGameClock())
+        activateRecordingTimeline(detectGameClock(), nil, nil, false)
     end
     if not state.recordingLive then return end
     local unitId = nil
@@ -1703,10 +1711,29 @@ local function replayRemoteEvent(event)
 end
 
 local function collectOpeningPlacements(events)
+    local source = type(events) == "table" and events or {}
+    local explicitPhase = false
+    for _, event in ipairs(source) do
+        if event.kind == "remote" and event.opening ~= nil then
+            explicitPhase = true
+            break
+        end
+    end
+    if explicitPhase then
+        local opening = {}
+        for _, event in ipairs(source) do
+            if event.kind == "remote" and event.opening == true then
+                opening[#opening + 1] = event
+            end
+        end
+        return opening, true
+    end
+
+    -- Compatibility for macros recorded before 1.4.3.
     local opening = {}
     local started = false
     local openingWave = nil
-    for _, event in ipairs(type(events) == "table" and events or {}) do
+    for _, event in ipairs(source) do
         if event.kind == "remote" then
             local wave = tonumber(event.wave)
             if started and openingWave ~= nil and wave ~= nil and wave ~= openingWave then break end
@@ -1722,7 +1749,7 @@ local function collectOpeningPlacements(events)
             end
         end
     end
-    return opening
+    return opening, false
 end
 
 local function waitForRecordedMoment(event, clockConfig, timing, token, playbackStarted)
@@ -1733,21 +1760,73 @@ local function waitForRecordedMoment(event, clockConfig, timing, token, playback
     while token == state.playToken and state.playing and not state.destroyed do
         while state.paused and token == state.playToken do task.wait(0.05) end
         local current = detectGameClock()
-        if current and current.wave ~= nil and current.wave ~= timing.wave then
-            timing.wave = current.wave
-            timing.waveStartClock = current.time
-            timing.waveStartedAt = os.clock()
-            timing.lastClock = current.time
-        elseif current and current.time ~= nil and timing.lastClock ~= nil and current.time ~= timing.lastClock then
-            local observedDirection = current.time > timing.lastClock and "up" or "down"
-            if math.abs(current.time - timing.lastClock) > 3 or observedDirection ~= direction then
-                -- Same wave label can survive the lobby -> combat timer reset.
+        local justAnchoredCombat = false
+
+        -- New recordings have an explicit OPENING phase. While it is active,
+        -- wave 1 shown by the lobby is not enough to unlock later actions.
+        -- We wait for the real combat timer: wave transition, timer reset /
+        -- direction flip, or movement from a plausible wave boundary.
+        if timing.strictFirstWave and not timing.combatStarted and current then
+            local previousWave = timing.wave
+            local previousClock = timing.lastClock
+            local startCombat = false
+            local anchorClock = current.time
+
+            if current.wave ~= nil and current.wave > 1 then
+                startCombat = true
+            elseif previousWave ~= nil and previousWave < 1
+                and current.wave ~= nil and current.wave >= 1 then
+                startCombat = true
+            elseif current.wave == 1 and current.time ~= nil and previousClock ~= nil
+                and current.time ~= previousClock then
+                local observedDirection = current.time > previousClock and "up" or "down"
+                local clockJump = math.abs(current.time - previousClock)
+                local directionFlip = timing.preCombatDirection ~= nil
+                    and observedDirection ~= timing.preCombatDirection
+                local boundaryStart = timing.preCombatDirection == nil and (
+                    (observedDirection == "up" and previousClock <= 1.5)
+                    or (observedDirection == "down" and previousClock >= 15)
+                )
+
+                if clockJump > 3 or directionFlip or boundaryStart then
+                    startCombat = true
+                    if boundaryStart and clockJump <= 3 then anchorClock = previousClock end
+                end
+                timing.preCombatDirection = observedDirection
+            end
+
+            if startCombat then
+                timing.combatStarted = true
+                timing.wave = current.wave
+                timing.waveStartClock = anchorClock
+                timing.waveStartedAt = os.clock()
+                timing.lastClock = current.time
+                justAnchoredCombat = true
+            else
+                if current.wave ~= nil then timing.wave = current.wave end
+                if current.time ~= nil then timing.lastClock = current.time end
+                task.wait(0.04)
+                continue
+            end
+        end
+
+        if not justAnchoredCombat then
+            if current and current.wave ~= nil and current.wave ~= timing.wave then
+                timing.wave = current.wave
                 timing.waveStartClock = current.time
                 timing.waveStartedAt = os.clock()
+                timing.lastClock = current.time
+            elseif current and current.time ~= nil and timing.lastClock ~= nil and current.time ~= timing.lastClock then
+                local observedDirection = current.time > timing.lastClock and "up" or "down"
+                if math.abs(current.time - timing.lastClock) > 3 or observedDirection ~= direction then
+                    -- Same wave label can survive the lobby -> combat timer reset.
+                    timing.waveStartClock = current.time
+                    timing.waveStartedAt = os.clock()
+                end
+                timing.lastClock = current.time
+            elseif current and current.time ~= nil then
+                timing.lastClock = current.time
             end
-            timing.lastClock = current.time
-        elseif current and current.time ~= nil then
-            timing.lastClock = current.time
         end
         local hasWaveClock = current and eventWave ~= nil and current.wave ~= nil
         if hasWaveClock then
@@ -1931,7 +2010,16 @@ local function playMacro(macro, force, fromAuto, expectedFingerprint)
     task.spawn(function()
         local tolerance = math.max(0.05, tonumber(state.config.settings.lateTolerance) or 0.35)
         local lastSent = 0
-        local waveTiming = {wave = nil, waveStartClock = nil, waveStartedAt = nil, lastClock = nil, fallbackOrigin = 0}
+        local waveTiming = {
+            wave = nil,
+            waveStartClock = nil,
+            waveStartedAt = nil,
+            lastClock = nil,
+            fallbackOrigin = 0,
+            strictFirstWave = false,
+            combatStarted = true,
+            preCombatDirection = nil,
+        }
         local openingSent = {}
         if hasRemoteEvents then
             for _, event in ipairs(macro.events) do
@@ -1946,7 +2034,9 @@ local function playMacro(macro, force, fromAuto, expectedFingerprint)
             state.pauseAccum = 0
             log("Макрос активен · синхронизация по событиям")
 
-            local opening = collectOpeningPlacements(macro.events)
+            local opening, explicitOpeningPhase = collectOpeningPlacements(macro.events)
+            waveTiming.strictFirstWave = explicitOpeningPhase
+            waveTiming.combatStarted = not explicitOpeningPhase
             for _, event in ipairs(opening) do
                 if token ~= state.playToken or state.destroyed then break end
                 while state.paused and token == state.playToken do task.wait(0.05) end
@@ -2018,9 +2108,11 @@ local function togglePause()
     refreshAll()
 end
 
-activateRecordingTimeline = function(clock, anchorAt, initialClock)
+activateRecordingTimeline = function(clock, anchorAt, initialClock, combatStarted)
     if not state.recording or state.recordingLive then return end
     state.recordingLive = true
+    state.recordingCombatStarted = combatStarted == true
+    state.recordingPreCombatDirection = nil
     state.recordingStarted = tonumber(anchorAt) or os.clock()
     state.recordingClock = clock
     state.recordingClockInitial = initialClock or clock
@@ -2030,9 +2122,26 @@ activateRecordingTimeline = function(clock, anchorAt, initialClock)
     state.recordingWave = clock and clock.wave or nil
     state.recordingWaveStartClock = clock and clock.time or nil
     state.recordingWaveStartedAt = state.recordingStarted
-    transition("RECORDING", "игровой таймер запущен")
-    log("Запись серверных действий началась")
+    transition("RECORDING", state.recordingCombatStarted and "игровой таймер запущен" or "записываю стартовые действия")
+    log(state.recordingCombatStarted and "Запись серверных действий началась"
+        or "Стартовые действия записываются до первой волны")
     refreshAll()
+end
+
+local function anchorCombatTimeline(clock, anchorClock)
+    if not state.recording or not state.recordingLive or state.recordingCombatStarted then return end
+    local now = os.clock()
+    state.recordingCombatStarted = true
+    state.recordingPreCombatDirection = nil
+    state.recordingStarted = now
+    state.recordingClock = clock
+    state.recordingClockInitial = clock or state.recordingClockInitial
+    state.recordingWave = clock and clock.wave or state.recordingWave
+    state.recordingWaveStartClock = anchorClock ~= nil and anchorClock
+        or (clock and clock.time) or state.recordingWaveStartClock
+    state.recordingWaveStartedAt = now
+    transition("RECORDING", "первая волна синхронизирована")
+    log("Первая волна: новый ноль синхронизации")
 end
 
 local clockAccumulator = 0
@@ -2053,9 +2162,9 @@ keep(RunService.Heartbeat:Connect(function(delta)
         if current.wave ~= nil then
             if current.wave >= 1 and timerChanged then
                 state.recordingClockDirection = current.time > previous.time and "up" or "down"
-                activateRecordingTimeline(current)
+                activateRecordingTimeline(current, nil, nil, true)
             elseif current.wave >= 1 and current.time == nil and previous and previous.wave and previous.wave < 1 then
-                activateRecordingTimeline(current)
+                activateRecordingTimeline(current, nil, nil, true)
             end
             return
         end
@@ -2067,20 +2176,50 @@ keep(RunService.Heartbeat:Connect(function(delta)
                 state.recordingClockFirstValue = current
             end
             if state.recordingClockChanges >= 2 then
-                activateRecordingTimeline(current, state.recordingClockFirstChangeAt, state.recordingClockFirstValue)
+                activateRecordingTimeline(current, state.recordingClockFirstChangeAt, state.recordingClockFirstValue, true)
             end
         end
         return
     end
+
+    if not state.recordingCombatStarted then
+        local startCombat = false
+        local anchorClock = current.time
+
+        if current.wave ~= nil and current.wave > 1 then
+            startCombat = true
+        elseif previous and previous.wave ~= nil and previous.wave < 1
+            and current.wave ~= nil and current.wave >= 1 then
+            startCombat = true
+        elseif previous and current.wave == 1 and previous.wave == 1
+            and current.time ~= nil and previous.time ~= nil and current.time ~= previous.time then
+            local nextDirection = current.time > previous.time and "up" or "down"
+            local clockJump = math.abs(current.time - previous.time)
+            local directionFlip = state.recordingPreCombatDirection ~= nil
+                and nextDirection ~= state.recordingPreCombatDirection
+            local boundaryStart = state.recordingPreCombatDirection == nil and (
+                (nextDirection == "up" and previous.time <= 1.5)
+                or (nextDirection == "down" and previous.time >= 15)
+            )
+
+            if clockJump > 3 or directionFlip or boundaryStart then
+                startCombat = true
+                if boundaryStart and clockJump <= 3 then anchorClock = previous.time end
+                state.recordingClockDirection = nextDirection
+            end
+            state.recordingPreCombatDirection = nextDirection
+        end
+
+        if startCombat then anchorCombatTimeline(current, anchorClock) end
+    end
+
     if previous and current.time and previous.time and current.time ~= previous.time
         and (not current.wave or not previous.wave or current.wave == previous.wave) then
         local nextDirection = current.time > previous.time and "up" or "down"
         local timerReset = math.abs(current.time - previous.time) > 3
         if #state.recordedEvents == 0 and current.wave == 1
             and (nextDirection ~= state.recordingClockDirection or timerReset) then
-            -- Some games show wave 1 during the lobby countdown, then reset the same
-            -- label's timer when combat really starts. Until an action is recorded we
-            -- can safely move zero to that reset instead of preserving lobby delay.
+            -- Preserve the old zero-correction when nothing has been recorded yet.
             local now = os.clock()
             state.recordingStarted = now
             state.recordingClockInitial = current
@@ -2113,6 +2252,8 @@ local function startRecording()
     state.recordedUnitInstances = {}
     state.pendingPlacements = {}
     state.recordingLive = not state.config.settings.remoteMode
+    state.recordingCombatStarted = not state.config.settings.remoteMode
+    state.recordingPreCombatDirection = nil
     state.recordingClock = detectGameClock()
     state.recordingClockInitial = state.recordingClock
     state.recordingClockChanges = 0
