@@ -2,8 +2,8 @@
 -- Records tower actions and replays the same server remotes without moving the camera.
 
 local VERSION = 2
-local SCRIPT_VERSION = "1.4.7"
-local REMOTE_BUS_VERSION = 3
+local SCRIPT_VERSION = "1.4.8"
+local REMOTE_BUS_VERSION = 4
 local ROOT_FOLDER = "TDMacroLab"
 local CONFIG_FILE = ROOT_FOLDER .. "/config.json"
 local FALLBACK_FILE = "td_macro_v2.json"
@@ -1482,7 +1482,7 @@ local function installRemoteHook()
         if type(bus) == "table" and type(bus.setListener) == "function" then
             pcall(function() bus:setListener(nil) end)
         end
-        bus = {listener = nil, version = REMOTE_BUS_VERSION}
+        bus = {listener = nil, preflight = nil, version = REMOTE_BUS_VERSION}
         local oldNamecall
         local callback = function(self, ...)
             local method = getnamecallmethod()
@@ -1492,12 +1492,17 @@ local function installRemoteHook()
                 local arguments = table.pack(...)
                 local calledAt = os.clock()
                 local cashBefore = nil
-                if state.recording and state.config and state.config.settings.remoteMode then
-                    -- Never scan GUI here. This hook sits directly in the game's
-                    -- button -> RemoteEvent path, so it must stay essentially free.
-                    cashBefore = readCashSourceFast(state.cashSource) or state.cashCache
+
+                -- preflight is replaced on every hot reload. The permanent hook
+                -- never closes over an old script state, so updating the script
+                -- cannot resurrect 1.4.5's expensive pre-Remote GUI scan.
+                local preflight = bus.preflight
+                if type(preflight) == "function" then
+                    local okCash, value = pcall(preflight)
+                    if okCash then cashBefore = value end
                 end
-                -- Let the game send immediately; recording work runs afterwards.
+
+                -- Always let the game send first. Listener work is deferred.
                 local results = table.pack(oldNamecall(self, ...))
                 task.defer(function()
                     if bus.listener == listener then pcall(listener, self, method, arguments, calledAt, cashBefore) end
@@ -1514,10 +1519,18 @@ local function installRemoteHook()
             state.remoteHookError = "не удалось поставить Remote hook"
             return false
         end
-        function bus:setListener(listener) self.listener = listener end
+        function bus:setListener(listener, preflight)
+            self.listener = listener
+            self.preflight = preflight
+        end
         env.__TDMacroRemoteBus = bus
     end
-    bus:setListener(captureRemote)
+    bus:setListener(captureRemote, function()
+        if state.recording and state.config and state.config.settings.remoteMode then
+            return readCashSourceFast(state.cashSource)
+        end
+        return nil
+    end)
     state.remoteBus = bus
     state.remoteHookReady = true
     return true
