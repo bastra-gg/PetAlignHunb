@@ -1452,7 +1452,7 @@ local function installRemoteHook()
             if listener and not fromExecutor and (method == "FireServer" or method == "InvokeServer") then
                 local arguments = table.pack(...)
                 local calledAt = os.clock()
-                local cashBefore = select(1, detectMatchCash())
+                local cashBefore = select(1, detectMatchCash(true))
                 -- Let the game send first. Recording work must never delay or swallow its button action.
                 local results = table.pack(oldNamecall(self, ...))
                 task.defer(function()
