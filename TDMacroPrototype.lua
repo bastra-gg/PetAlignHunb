@@ -2,7 +2,7 @@
 -- Records tower actions and replays the same server remotes without moving the camera.
 
 local VERSION = 2
-local SCRIPT_VERSION = "1.2.6"
+local SCRIPT_VERSION = "1.2.7"
 local REMOTE_BUS_VERSION = 3
 local ROOT_FOLDER = "TDMacroLab"
 local CONFIG_FILE = ROOT_FOLDER .. "/config.json"
@@ -223,23 +223,34 @@ function Core.chooseMacro(macros, currentFingerprint, manualMatches)
 end
 
 local aliases = {
-    x2 = {"x2", "2x", "speed", "скорость"},
-    autoSkip = {"auto skip", "autoskip", "skip", "пропуск", "авто пропуск"},
+    x2 = {"x2", "2x", "game speed", "speed", "скорость"},
+    autoSkip = {"auto skip", "autoskip", "skip waves", "skip wave", "авто пропуск", "автопропуск"},
     playAgain = {"play again", "replay", "retry", "again", "играть снова", "сыграть снова", "повторить"},
 }
 
 function Core.bindingScore(kind, text, name)
     local clean = Core.cleanText(text)
     local cleanName = Core.cleanText(name)
+    local compact = clean:gsub("%s+", "")
+    local compactName = cleanName:gsub("%s+", "")
     local padded = " " .. clean .. " "
     local paddedName = " " .. cleanName .. " "
     local score = 0
     for _, alias in ipairs(aliases[kind] or {}) do
         local target = Core.cleanText(alias)
+        local compactTarget = target:gsub("%s+", "")
         if clean == target then score = math.max(score, 100) end
         if cleanName == target then score = math.max(score, 88) end
         if padded:find(" " .. target .. " ", 1, true) then score = math.max(score, 70) end
         if paddedName:find(" " .. target .. " ", 1, true) then score = math.max(score, 55) end
+        -- Roblox GUI names are commonly AutoSkipButton/PlayAgainButton. They do
+        -- not contain separators, so word-only matching silently missed them.
+        if #compactTarget >= 4 and compact:find(compactTarget, 1, true) then score = math.max(score, 82) end
+        if #compactTarget >= 4 and compactName:find(compactTarget, 1, true) then score = math.max(score, 86) end
+        if (compactTarget == "x2" or compactTarget == "2x")
+            and (compact:find(compactTarget, 1, true) or compactName:find(compactTarget, 1, true)) then
+            score = math.max(score, 78)
+        end
     end
     return score
 end
@@ -336,6 +347,7 @@ local state = {
     mapCacheKey = nil,
     mapCacheAt = 0,
     bindingCapture = nil,
+    controlRunId = 0,
     logs = {},
     destroyed = false,
     memoryOnly = false,
@@ -629,6 +641,7 @@ local refreshAll = function() end
 local refreshMacros = function() end
 local refreshBindings = function() end
 local activateRecordingTimeline = function() end
+local armMatchControls = function() end
 
 local function isOwnPoint(x, y)
     if not state.gui then return false end
@@ -684,6 +697,53 @@ local function guiAtPoint(x, y)
         end
     end
     return nil
+end
+
+local function guiButtonFor(object)
+    local current = object
+    for _ = 1, 7 do
+        if not current then break end
+        if current:IsA("GuiButton") then return current end
+        current = current.Parent
+    end
+    return nil
+end
+
+local function guiObjectText(object, includeParents)
+    if not object then return "" end
+    local parts = {object.Name}
+    if object:IsA("TextLabel") or object:IsA("TextButton") or object:IsA("TextBox") then
+        parts[#parts + 1] = object.Text
+    end
+    local count = 0
+    for _, child in ipairs(object:GetDescendants()) do
+        if child:IsA("TextLabel") or child:IsA("TextButton") or child:IsA("TextBox") then
+            parts[#parts + 1] = child.Text
+            count += 1
+            if count >= 24 then break end
+        end
+    end
+    if includeParents then
+        local parent = object.Parent
+        for _ = 1, 3 do
+            if not parent or parent:IsA("LayerCollector") then break end
+            parts[#parts + 1] = parent.Name
+            local buttonCount = 0
+            for _, sibling in ipairs(parent:GetChildren()) do
+                if sibling:IsA("GuiButton") then buttonCount += 1 end
+            end
+            -- A wrapper with one button may keep its caption as a sibling. A
+            -- panel with several buttons must not lend every caption to every button.
+            if buttonCount > 1 then break end
+            for _, sibling in ipairs(parent:GetChildren()) do
+                if sibling ~= object and (sibling:IsA("TextLabel") or sibling:IsA("TextButton")) then
+                    parts[#parts + 1] = sibling.Text
+                end
+            end
+            parent = parent.Parent
+        end
+    end
+    return table.concat(parts, " ")
 end
 
 local function actionHintAtPoint(x, y)
@@ -1149,13 +1209,15 @@ local function captureBinding(kind, input)
     local x, y = eventPosition(input)
     if isOwnPoint(x, y) then return false end
     local size = viewport()
-    local object = guiAtPoint(x, y)
+    local pointed = guiAtPoint(x, y)
+    local object = guiButtonFor(pointed) or pointed
     state.config.bindings[kind] = {
         mode = "manual",
         nx = math.clamp(x / size.w, 0, 1),
         ny = math.clamp(y / size.h, 0, 1),
         path = guiPath(object),
         objectName = object and object.Name or nil,
+        objectText = object and guiObjectText(object, true) or nil,
     }
     state.bindingCapture = nil
     saveDisk()
@@ -1629,6 +1691,7 @@ local function playMacro(macro, force, fromAuto, expectedFingerprint)
     end
     log((force and "Force Play: " or "Запуск: ") .. macro.name .. " · " .. #macro.events .. " событий")
     refreshAll()
+    if not fromAuto then armMatchControls() end
 
     if not hasRemoteEvents and state.config.settings.lockCamera and lockedCamera then
         task.spawn(function()
@@ -1928,12 +1991,7 @@ local function stopAndSave(name)
 end
 
 local function buttonText(button)
-    local parts = {button.Name}
-    if button:IsA("TextButton") then parts[#parts + 1] = button.Text end
-    for _, child in ipairs(button:GetDescendants()) do
-        if child:IsA("TextLabel") or child:IsA("TextButton") then parts[#parts + 1] = child.Text end
-    end
-    return table.concat(parts, " ")
+    return guiObjectText(button, true)
 end
 
 local function findBindingCandidate(kind)
@@ -1957,13 +2015,44 @@ local function findBindingCandidate(kind)
     return best, bestScore
 end
 
+local function findManualBindingCandidate(kind, binding)
+    local playerGui = player:FindFirstChildOfClass("PlayerGui")
+    if not playerGui then return nil, 0 end
+    local wantedName = Core.cleanText(binding and binding.objectName or "")
+    local wantedText = Core.cleanText(binding and binding.objectText or "")
+    local best, bestScore = nil, 0
+    for _, object in ipairs(playerGui:GetDescendants()) do
+        if object:IsA("GuiButton") and instanceVisible(object) and not (state.gui and object:IsDescendantOf(state.gui)) then
+            local text = buttonText(object)
+            local score = Core.bindingScore(kind, text, object.Name)
+            local objectName = Core.cleanText(object.Name)
+            local objectText = Core.cleanText(text)
+            if wantedName ~= "" and objectName == wantedName then score += 55 end
+            if wantedText ~= "" and objectText == wantedText then score += 45 end
+            if score > bestScore then best, bestScore = object, score end
+        end
+    end
+    return best, bestScore
+end
+
 local function bindingPoint(kind, forDetection)
     local binding = state.config.bindings[kind] or {mode = "auto"}
     if binding.mode == "manual" then
         local object = resolveGuiPath(binding.path)
-        if object and instanceVisible(object) then
+        object = guiButtonFor(object) or object
+        if object and object:IsA("GuiButton") and instanceVisible(object) then
             local position, size = object.AbsolutePosition, object.AbsoluteSize
             return position.X + size.X / 2, position.Y + size.Y / 2, object
+        end
+        -- Match UIs are usually destroyed and rebuilt between games. Recover a
+        -- manual binding by its saved name/text instead of keeping a dead path.
+        local recovered, score = findManualBindingCandidate(kind, binding)
+        if recovered and score >= 70 then
+            binding.path = guiPath(recovered)
+            binding.objectName = recovered.Name
+            binding.objectText = buttonText(recovered)
+            local position, size = recovered.AbsolutePosition, recovered.AbsoluteSize
+            return position.X + size.X / 2, position.Y + size.Y / 2, recovered
         end
         if forDetection then return nil end
         local size = viewport()
@@ -1980,9 +2069,100 @@ local function bindingPoint(kind, forDetection)
     return nil
 end
 
-local function clickBinding(kind)
-    local x, y = bindingPoint(kind, false)
-    if not x then log(kind .. ": кнопка не найдена") return false end
+local function activateGuiButton(object)
+    if not object or not object:IsA("GuiButton") then return false, nil end
+    local inspectedConnections = false
+    if type(getconnections) == "function" then
+        for _, signal in ipairs({object.Activated, object.MouseButton1Click}) do
+            local ok, connections = pcall(getconnections, signal)
+            if ok and type(connections) == "table" and #connections > 0 then
+                inspectedConnections = true
+                local fired = false
+                for _, connection in ipairs(connections) do
+                    local enabled = true
+                    pcall(function() enabled = connection.Enabled ~= false end)
+                    if enabled then
+                        local called = false
+                        local fireOk = pcall(function()
+                            if type(connection.Fire) == "function" then
+                                connection:Fire()
+                                called = true
+                            elseif type(connection.Function) == "function" then
+                                connection.Function()
+                                called = true
+                            end
+                        end)
+                        fired = fired or (fireOk and called)
+                    end
+                end
+                if fired then return true, "сигнал" end
+            elseif ok and type(connections) == "table" then
+                inspectedConnections = true
+            end
+        end
+    end
+    if not inspectedConnections and type(firesignal) == "function" then
+        local ok = pcall(function() firesignal(object.Activated) end)
+        if ok then return true, "сигнал" end
+    end
+    return false, nil
+end
+
+local function visibleControlTexts(object)
+    local output = {}
+    if not object then return output end
+    local candidates = {object}
+    for _, child in ipairs(object:GetDescendants()) do candidates[#candidates + 1] = child end
+    for _, candidate in ipairs(candidates) do
+        if (candidate:IsA("TextLabel") or candidate:IsA("TextButton")) and instanceVisible(candidate) then
+            output[#output + 1] = tostring(candidate.Text or "")
+        end
+    end
+    return output
+end
+
+local function controlState(kind, object)
+    if not object then return nil end
+    for _, attribute in ipairs({"Toggled", "Toggle", "IsOn", "On", "Selected", "Checked", "State", "Value"}) do
+        local value = object:GetAttribute(attribute)
+        if type(value) == "boolean" then return value end
+        if type(value) == "string" then
+            local clean = Core.cleanText(value)
+            if clean == "on" or clean == "enabled" or clean == "true" or clean == "вкл" then return true end
+            if clean == "off" or clean == "disabled" or clean == "false" or clean == "выкл" then return false end
+        end
+    end
+    local texts = visibleControlTexts(object)
+    if kind == "x2" then
+        for _, raw in ipairs(texts) do
+            local text = string.lower(raw):gsub(",", "."):gsub("%s+", "")
+            local amount = text:match("^x(%d+%.?%d*)$") or text:match("^(%d+%.?%d*)x$")
+            amount = tonumber(amount)
+            if amount then return amount >= 1.99 end
+        end
+    else
+        local clean = " " .. Core.cleanText(table.concat(texts, " ")) .. " "
+        for _, word in ipairs({"off", "disabled", "false", "выкл", "отключено"}) do
+            if clean:find(" " .. word .. " ", 1, true) then return false end
+        end
+        for _, word in ipairs({"on", "enabled", "true", "вкл", "включено"}) do
+            if clean:find(" " .. word .. " ", 1, true) then return true end
+        end
+    end
+    return nil
+end
+
+local function clickBinding(kind, quiet)
+    local x, y, object = bindingPoint(kind, false)
+    if not x then
+        if not quiet then log(kind .. ": кнопка не найдена") end
+        return false
+    end
+    local direct = activateGuiButton(object)
+    if direct then
+        if not quiet then log(kind .. ": включено напрямую") end
+        return true
+    end
     state.generatedInput = true
     local ok = pcall(function()
         VIM:SendMouseButtonEvent(x, y, 0, true, game, 0)
@@ -1990,8 +2170,54 @@ local function clickBinding(kind)
         VIM:SendMouseButtonEvent(x, y, 0, false, game, 0)
     end)
     state.generatedInput = false
-    if ok then log(kind .. ": нажато") else log(kind .. ": ошибка нажатия", true) end
+    if not quiet then
+        if ok then log(kind .. ": нажато") else log(kind .. ": ошибка нажатия", true) end
+    end
     return ok
+end
+
+armMatchControls = function()
+    state.controlRunId += 1
+    local runId = state.controlRunId
+    local pending = {}
+    if state.config.settings.x2 then pending.x2 = {attempts = 0, maxAttempts = 3} end
+    if state.config.settings.autoSkip then pending.autoSkip = {attempts = 0, maxAttempts = 3} end
+    if not next(pending) then return end
+
+    task.spawn(function()
+        local deadline = os.clock() + 12
+        while runId == state.controlRunId and (state.config.settings.auto or state.playing) and not state.destroyed
+            and os.clock() < deadline and next(pending) do
+            for kind, item in pairs(pending) do
+                local _, _, object = bindingPoint(kind, false)
+                if object then
+                    local before = controlState(kind, object)
+                    if before == true then
+                        log(kind .. ": уже включено")
+                        pending[kind] = nil
+                    elseif item.attempts < item.maxAttempts then
+                        item.attempts += 1
+                        if clickBinding(kind, true) then
+                            task.wait(0.16)
+                            local _, _, currentObject = bindingPoint(kind, false)
+                            local after = controlState(kind, currentObject or object)
+                            if after == true or after == nil then
+                                log(kind .. ": включено")
+                                pending[kind] = nil
+                            elseif item.attempts >= item.maxAttempts then
+                                log(kind .. ": кнопка отвечает, состояние не включилось", true)
+                                pending[kind] = nil
+                            end
+                        end
+                    end
+                end
+            end
+            if next(pending) then task.wait(0.35) end
+        end
+        if runId == state.controlRunId then
+            for kind in pairs(pending) do log(kind .. ": кнопка не появилась", true) end
+        end
+    end)
 end
 
 local endWords = {
@@ -2062,8 +2288,9 @@ local function prepareAutoRun()
     if not remoteMacro then restoreCamera(macro.camera or (macro.fingerprint and macro.fingerprint.camera)) end
     task.wait(0.35)
     if not state.config.settings.auto then return end
-    if state.config.settings.x2 and macro.settings.x2 ~= false then clickBinding("x2") end
-    if state.config.settings.autoSkip and macro.settings.autoSkip ~= false then clickBinding("autoSkip") end
+    -- Current switches are authoritative. Old macros used to permanently block
+    -- x2/auto-skip when they were disabled during the original recording.
+    armMatchControls()
     task.wait(math.max(0, tonumber(state.config.settings.initialDelay) or 1.2))
     if state.config.settings.auto then
         if not playMacro(macro, false, true, currentFingerprint) then
@@ -2108,7 +2335,14 @@ keep(RunService.Heartbeat:Connect(function(delta)
             transition("REPLAY", reason)
             task.spawn(function()
                 task.wait(0.8)
-                if state.config.settings.autoPlayAgain then clickBinding("playAgain") end
+                if state.config.settings.autoPlayAgain then
+                    local clicked = false
+                    for _ = 1, 4 do
+                        if clickBinding("playAgain", true) then clicked = true break end
+                        task.wait(0.35)
+                    end
+                    log(clicked and "playAgain: нажато" or "playAgain: кнопка не сработала", not clicked)
+                end
                 if not state.config.settings.autoLoop then
                     state.config.settings.auto = false
                     transition("IDLE", "цикл выключен")
@@ -2470,8 +2704,14 @@ makeToggle(autoPage, "АВТОЗАПУСК", UDim2.fromOffset(0, 27), function()
     transition(value and "WAIT_MATCH" or "IDLE", value and "автоматизация включена" or "автоматизация выключена")
 end)
 makeToggle(autoPage, "ПОВТОР МАТЧЕЙ", UDim2.new(0.5, 8, 0, 27), function() return state.config.settings.autoLoop end, function(value) state.config.settings.autoLoop = value end)
-makeToggle(autoPage, "ВКЛЮЧАТЬ x2", UDim2.fromOffset(0, 73), function() return state.config.settings.x2 end, function(value) state.config.settings.x2 = value end)
-makeToggle(autoPage, "АВТОПРОПУСК ВОЛН", UDim2.new(0.5, 8, 0, 73), function() return state.config.settings.autoSkip end, function(value) state.config.settings.autoSkip = value end)
+makeToggle(autoPage, "ВКЛЮЧАТЬ x2", UDim2.fromOffset(0, 73), function() return state.config.settings.x2 end, function(value)
+    state.config.settings.x2 = value
+    if value and (state.playing or state.config.settings.auto) then task.defer(armMatchControls) end
+end)
+makeToggle(autoPage, "АВТОПРОПУСК ВОЛН", UDim2.new(0.5, 8, 0, 73), function() return state.config.settings.autoSkip end, function(value)
+    state.config.settings.autoSkip = value
+    if value and (state.playing or state.config.settings.auto) then task.defer(armMatchControls) end
+end)
 makeToggle(autoPage, "ИГРАТЬ СНОВА", UDim2.fromOffset(0, 119), function() return state.config.settings.autoPlayAgain end, function(value) state.config.settings.autoPlayAgain = value end)
 makeToggle(autoPage, "СЕРВЕРНЫЙ РЕЖИМ", UDim2.new(0.5, 8, 0, 119), function() return state.config.settings.remoteMode end, function(value) state.config.settings.remoteMode = value end)
 
