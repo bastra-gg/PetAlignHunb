@@ -1,11 +1,11 @@
 -- ORBIT_UI_BEGIN
 local HUD=(function()
--- RockBugHub UI T78; polished motion pass, version label comes from TEST bootstrap.
+-- RockBugHub UI T79; closed-form spring motion engine + animated hologram.
 -- All geometry is local, non-colliding and excluded from game raycasts.
 local HUD = {}
 
 function HUD.versionTag(runtime,env)
-    local raw=tostring((env and env.RockBugTestVersion) or (runtime and runtime.testVersion) or "T78")
+    local raw=tostring((env and env.RockBugTestVersion) or (runtime and runtime.testVersion) or "T79")
     return raw:match("T%d+") or raw
 end
 
@@ -76,7 +76,6 @@ function HUD.mount(runtime, options)
     local background = Color3.fromRGB(30, 62, 79)
     local rowRest, rowPressed = 0.78, 0.48
     local savedGroup=options.env.RockBugHologramGroup
-    local tweenService=game:GetService("TweenService")
     assert(options.content,"Missing hologram content bridge")
     local self = {visible=false, suspended=false, destroyed=false, group=HUD.groups[savedGroup] and savedGroup~="settings" and savedGroup or "farm", cardPage=1, cards={}, modalTabs={}, modalOpen=false, panels={}, connections={}, pressed={}, beams={}, samples={}, fps=0, inputGeneration=0, noticeToken=0, motion={}, modalToken=0, visualElapsed=0, lowDetail=false}
     runtime.hologram = self -- Allows cleanup even if construction fails.
@@ -93,23 +92,115 @@ function HUD.mount(runtime, options)
         object.Parent = parent
         return object
     end
+    -- T79 motion engine.
+    -- Closed-form damped spring, inspired by the MIT luau-spring approach.
+    -- It is frame-drop stable and keeps the UI self-contained: no remote runtime dependency.
+    local function springStep(x,v,target,frequency,damping,dt)
+        dt=math.max(0,math.min(dt or 0,0.2))
+        local omega=math.max(0.001,2*math.pi*frequency)
+        local y=x-target
+        damping=math.max(0.05,damping or 1)
+
+        if damping<0.999 then
+            local wd=omega*math.sqrt(math.max(0.0001,1-damping*damping))
+            local e=math.exp(-damping*omega*dt)
+            local c=y
+            local d=(v+damping*omega*y)/wd
+            local cosv=math.cos(wd*dt)
+            local sinv=math.sin(wd*dt)
+            local ny=e*(c*cosv+d*sinv)
+            local nv=e*((-damping*omega)*(c*cosv+d*sinv)+(-c*wd*sinv+d*wd*cosv))
+            return target+ny,nv
+        end
+
+        -- Critical damping: exact solution, no Euler wobble after a dropped frame.
+        local e=math.exp(-omega*dt)
+        local c1=y
+        local c2=v+omega*y
+        local ny=(c1+c2*dt)*e
+        local nv=(v-omega*c2*dt)*e
+        return target+ny,nv
+    end
+
+    local function mixValue(a,b,t)
+        local kind=typeof(a)
+        if type(a)=="number"and type(b)=="number"then return a+(b-a)*t end
+        if kind=="UDim2"and typeof(b)=="UDim2"then
+            return UDim2.new(
+                a.X.Scale+(b.X.Scale-a.X.Scale)*t,
+                a.X.Offset+(b.X.Offset-a.X.Offset)*t,
+                a.Y.Scale+(b.Y.Scale-a.Y.Scale)*t,
+                a.Y.Offset+(b.Y.Offset-a.Y.Offset)*t
+            )
+        end
+        if kind=="Vector2"and typeof(b)=="Vector2"then
+            return Vector2.new(a.X+(b.X-a.X)*t,a.Y+(b.Y-a.Y)*t)
+        end
+        if kind=="Color3"and typeof(b)=="Color3"then
+            return Color3.new(
+                math.clamp(a.R+(b.R-a.R)*t,0,1),
+                math.clamp(a.G+(b.G-a.G)*t,0,1),
+                math.clamp(a.B+(b.B-a.B)*t,0,1)
+            )
+        end
+        return t>=1 and b or a
+    end
+
     local function animateEase(object,duration,properties,style,direction)
-        if self.motion[object] then self.motion[object]:Cancel() end
+        local prior=self.motion[object]
+        if prior and prior.Cancel then prior:Cancel() end
         if self.lowDetail or options.env.RockBugHologramMotion==false then
             for key,value in pairs(properties)do object[key]=value end
             return nil
         end
-        local tween=tweenService:Create(object,TweenInfo.new(
-            duration,
-            style or Enum.EasingStyle.Quad,
-            direction or Enum.EasingDirection.Out
-        ),properties)
-        self.motion[object]=tween
-        tween.Completed:Connect(function()
-            if self.motion[object]==tween then self.motion[object]=nil end
+
+        local startValues={}
+        for key in pairs(properties)do
+            local ok,value=pcall(function()return object[key]end)
+            if ok then startValues[key]=value end
+        end
+
+        -- JS-style motion semantics: normal transitions are critically damped,
+        -- "Back" transitions get a small physical overshoot instead of a canned curve.
+        local damping=1
+        if style==Enum.EasingStyle.Back then damping=0.72
+        elseif style==Enum.EasingStyle.Elastic then damping=0.58
+        elseif style==Enum.EasingStyle.Quart then damping=0.9
+        elseif direction==Enum.EasingDirection.In then damping=0.98 end
+
+        local frequency=math.clamp(1/math.max(0.055,tonumber(duration)or 0.2),3.0,14.0)
+        local handle={cancelled=false}
+        function handle:Cancel()self.cancelled=true end
+        self.motion[object]=handle
+
+        task.spawn(function()
+            local value,velocity=0,0
+            local started=os.clock()
+            local last=started
+            while not handle.cancelled and not self.destroyed and object.Parent do
+                local now=os.clock()
+                local dt=math.max(1/240,now-last)
+                last=now
+                value,velocity=springStep(value,velocity,1,frequency,damping,dt)
+
+                for key,target in pairs(properties)do
+                    local initial=startValues[key]
+                    if initial~=nil then
+                        pcall(function()object[key]=mixValue(initial,target,value)end)
+                    end
+                end
+
+                if math.abs(1-value)<0.0015 and math.abs(velocity)<0.015 then break end
+                if now-started>1.35 then break end
+                run.RenderStepped:Wait()
+            end
+
+            if not handle.cancelled and not self.destroyed and object.Parent then
+                for key,target in pairs(properties)do pcall(function()object[key]=target end)end
+            end
+            if self.motion[object]==handle then self.motion[object]=nil end
         end)
-        tween:Play()
-        return tween
+        return handle
     end
     local function animate(object,duration,properties)
         return animateEase(object,duration,properties,Enum.EasingStyle.Quad,Enum.EasingDirection.Out)
@@ -117,10 +208,10 @@ function HUD.mount(runtime, options)
     local function tapPulse(scaleObject)
         if not scaleObject or not scaleObject.Parent then return end
         if self.lowDetail or options.env.RockBugHologramMotion==false then scaleObject.Scale=1 return end
-        animateEase(scaleObject,0.07,{Scale=0.94},Enum.EasingStyle.Quad,Enum.EasingDirection.Out)
-        task.delay(0.07,function()
+        animateEase(scaleObject,0.065,{Scale=0.935},Enum.EasingStyle.Quart,Enum.EasingDirection.Out)
+        task.delay(0.06,function()
             if self.destroyed or not scaleObject.Parent then return end
-            animateEase(scaleObject,0.16,{Scale=1},Enum.EasingStyle.Back,Enum.EasingDirection.Out)
+            animateEase(scaleObject,0.15,{Scale=1},Enum.EasingStyle.Back,Enum.EasingDirection.Out)
         end)
     end
     local function assign(object,key,value)
@@ -170,9 +261,11 @@ function HUD.mount(runtime, options)
     self.overlay = create("ScreenGui", {Name="RockBugHubHologramControl", ResetOnSpawn=false, DisplayOrder=1000010, ZIndexBehavior=Enum.ZIndexBehavior.Sibling}, playerGui)
     -- Compact utility controls live in the lower-right gap between Roblox controls.
     -- Keep them small and together so they do not sit over the center hotbar.
-    self.menu = create("TextButton", {Name="OpenFullMenu", AnchorPoint=Vector2.new(1,1), Position=UDim2.new(1,-108,1,-66), Size=UDim2.fromOffset(82,34), BackgroundColor3=background, BackgroundTransparency=0.08, TextColor3=white, TextSize=10, Font=Enum.Font.GothamBold, Text=tr("НАСТР.","SET"), AutoButtonColor=true, ZIndex=12},self.overlay)
+    self.menu = create("TextButton", {Name="OpenFullMenu", AnchorPoint=Vector2.new(1,1), Position=UDim2.new(1,-108,1,-66), Size=UDim2.fromOffset(82,34), BackgroundColor3=background, BackgroundTransparency=0.08, TextColor3=white, TextSize=10, Font=Enum.Font.GothamBold, Text=tr("НАСТР.","SET"), AutoButtonColor=false, ZIndex=12},self.overlay)
+    self.menuScale=create("UIScale",{Scale=1},self.menu)
     round(self.menu,13); edge(self.menu,0.5)
-    self.handle = create("TextButton", {Name="ToggleHologram", AnchorPoint=Vector2.new(1,1), Position=UDim2.new(1,-20,1,-66), Size=UDim2.fromOffset(82,34), BackgroundColor3=background, BackgroundTransparency=0.08, TextColor3=cyan, TextSize=10, Font=Enum.Font.GothamBold, Text="", AutoButtonColor=true, ZIndex=12}, self.overlay)
+    self.handle = create("TextButton", {Name="ToggleHologram", AnchorPoint=Vector2.new(1,1), Position=UDim2.new(1,-20,1,-66), Size=UDim2.fromOffset(82,34), BackgroundColor3=background, BackgroundTransparency=0.08, TextColor3=cyan, TextSize=10, Font=Enum.Font.GothamBold, Text="", AutoButtonColor=false, ZIndex=12}, self.overlay)
+    self.handleScale=create("UIScale",{Scale=1},self.handle)
     round(self.handle,13); edge(self.handle,0.12)
     self.noticePanel=create("Frame",{Name="DetailsPopup",AnchorPoint=Vector2.new(0.5,0.5),Size=UDim2.fromOffset(336,180),BackgroundColor3=Color3.fromRGB(45,91,112),BorderSizePixel=0,Visible=false,ZIndex=40,Active=true},self.overlay)
     self.noticeScale=create("UIScale",{Scale=1},self.noticePanel)
@@ -753,14 +846,18 @@ function HUD.mount(runtime, options)
             end
             assign(p.gui,"Enabled",enabled)
         end
-        if not self.lastEffects or now-self.lastEffects>=0.1 or changed then
+        local effectInterval=self.lowDetail and 0.1 or 0.035
+        if not self.lastEffects or now-self.lastEffects>=effectInterval or changed then
             self.lastEffects=now
             local humanoid=character:FindFirstChildOfClass("Humanoid")
             local leg=character:FindFirstChild("Left Leg")
             local footY=root.Position.Y-root.Size.Y/2-(humanoid and humanoid.HipHeight or 2)-(leg and leg.Size.Y or 0)
-            self.ringRoot.CFrame=CFrame.new(root.Position.X,footY+0.05,root.Position.Z)
+            local ringSpin=self.lowDetail and 0 or now*0.34
+            self.ringRoot.CFrame=CFrame.new(root.Position.X,footY+0.05,root.Position.Z)*CFrame.Angles(0,ringSpin,0)
             local basis=CFrame.fromMatrix(root.Position,camera.CFrame.RightVector,camera.CFrame.UpVector,-camera.CFrame.LookVector)
-            self.crystalRoot.CFrame=basis*CFrame.new(0,(mode=="portrait"and 5.45 or 3.7)*scale,0)
+            local bob=self.lowDetail and 0 or math.sin(now*2.15)*0.085*scale
+            local sway=self.lowDetail and 0 or math.sin(now*1.35)*0.035
+            self.crystalRoot.CFrame=basis*CFrame.new(0,(mode=="portrait"and 5.45 or 3.7)*scale+bob,0)*CFrame.Angles(0,0,sway)
         end
         if not self.nextRefresh or now>=self.nextRefresh then self.nextRefresh=now+0.5;refresh(now)end
     end
@@ -831,6 +928,12 @@ function HUD.mount(runtime, options)
         if self.destroyed then return end
         self.chestInput=value==true;self:ApplyVisibility()
     end
+    connect(self.handle.InputBegan,function(event)
+        if event.UserInputType==Enum.UserInputType.Touch or event.UserInputType==Enum.UserInputType.MouseButton1 then tapPulse(self.handleScale)end
+    end)
+    connect(self.menu.InputBegan,function(event)
+        if event.UserInputType==Enum.UserInputType.Touch or event.UserInputType==Enum.UserInputType.MouseButton1 then tapPulse(self.menuScale)end
+    end)
     connect(self.handle.Activated,function()self:SetVisible(not self.visible)end)
     connect(self.menu.Activated,function()self:OpenFull("system",nil,"settings")end)
     connect(input.InputChanged,function(event)
