@@ -2,7 +2,7 @@
 -- Records tower actions and replays the same server remotes without moving the camera.
 
 local VERSION = 2
-local SCRIPT_VERSION = "1.2.9"
+local SCRIPT_VERSION = "1.3.0"
 local REMOTE_BUS_VERSION = 3
 local ROOT_FOLDER = "TDMacroLab"
 local CONFIG_FILE = ROOT_FOLDER .. "/config.json"
@@ -58,6 +58,35 @@ function Core.fingerprintKey(fingerprint)
         tostring(fingerprint.mapKey or "unknown"),
         tostring(fingerprint.spawnKey or "unknown"),
     }, "::")
+end
+
+function Core.mapBindingKey(fingerprint)
+    fingerprint = type(fingerprint) == "table" and fingerprint or {}
+    return table.concat({
+        tostring(fingerprint.placeId or 0),
+        tostring(fingerprint.mapKey or "unknown"),
+    }, "::")
+end
+
+function Core.boundMacroId(currentFingerprint, manualMatches, mapMatches)
+    local mapKey = Core.mapBindingKey(currentFingerprint)
+    if type(mapMatches) == "table" and mapMatches[mapKey] then
+        return mapMatches[mapKey], "map"
+    end
+    local exactKey = Core.fingerprintKey(currentFingerprint)
+    if type(manualMatches) == "table" and manualMatches[exactKey] then
+        return manualMatches[exactKey], "exact"
+    end
+    -- Before v1.3.0 the button called "bind to map" actually saved a full
+    -- map+spawn fingerprint. Treat every old entry from this map as a map
+    -- binding so existing configs start working without rebinding.
+    if type(manualMatches) == "table" then
+        local prefix = mapKey .. "::"
+        for oldKey, macroId in pairs(manualMatches) do
+            if tostring(oldKey):sub(1, #prefix) == prefix then return macroId, "legacy_map" end
+        end
+    end
+    return nil, nil
 end
 
 function Core.eventPoint(event, currentViewport, recordedViewport)
@@ -203,12 +232,13 @@ function Core.normalizeMacro(source, fallbackName)
     }
 end
 
-function Core.chooseMacro(macros, currentFingerprint, manualMatches)
+function Core.chooseMacro(macros, currentFingerprint, manualMatches, mapMatches)
     local key = Core.fingerprintKey(currentFingerprint)
+    local boundId = Core.boundMacroId(currentFingerprint, manualMatches, mapMatches)
     local candidates = {}
     for _, macro in ipairs(type(macros) == "table" and macros or {}) do
         local macroKey = tostring(macro.fingerprintKey or Core.fingerprintKey(macro.fingerprint))
-        if macroKey == key or (type(manualMatches) == "table" and manualMatches[key] == macro.id) then
+        if (boundId and macro.id == boundId) or (not boundId and macroKey == key) then
             candidates[#candidates + 1] = macro
         end
     end
@@ -267,6 +297,7 @@ local defaultConfig = {
     version = VERSION,
     macros = {},
     manualMatches = {},
+    mapMatches = {},
     bindings = {
         x2 = {mode = "auto"},
         autoSkip = {mode = "auto"},
@@ -1733,8 +1764,9 @@ end
 local function macroMatches(macro, currentFingerprint)
     if not macro or tonumber(macro.placeId) ~= game.PlaceId then return false end
     local key = Core.fingerprintKey(currentFingerprint)
-    if tostring(macro.fingerprintKey) == key then return true end
-    return state.config.manualMatches[key] == macro.id
+    local boundId = Core.boundMacroId(currentFingerprint, state.config.manualMatches, state.config.mapMatches)
+    if boundId then return boundId == macro.id end
+    return tostring(macro.fingerprintKey) == key
 end
 
 local function playMacro(macro, force, fromAuto, expectedFingerprint)
@@ -2471,13 +2503,18 @@ local function endDetected()
     return false
 end
 
-local function prepareAutoRun()
+local function prepareAutoRun(immediate, preparedFingerprint)
     if not state.config.settings.auto or state.destroyed then return end
-    transition("PREPARE")
-    local currentFingerprint = fingerprint(state.matchSpawnPosition)
+    transition("PREPARE", immediate and "привязка карты найдена" or nil)
+    local currentFingerprint = preparedFingerprint or fingerprint(state.matchSpawnPosition)
     state.lastFingerprint = currentFingerprint
     log("Карта: " .. currentFingerprint.mapKey .. " · спавн " .. currentFingerprint.spawnKey)
-    local macro, choices = Core.chooseMacro(state.config.macros, currentFingerprint, state.config.manualMatches)
+    local macro, choices = Core.chooseMacro(
+        state.config.macros,
+        currentFingerprint,
+        state.config.manualMatches,
+        state.config.mapMatches
+    )
     if not macro then
         state.config.settings.auto = false
         transition("ERROR", "Нет макроса для этой карты/спавна")
@@ -2494,12 +2531,12 @@ local function prepareAutoRun()
         end
     end
     if not remoteMacro then restoreCamera(macro.camera or (macro.fingerprint and macro.fingerprint.camera)) end
-    task.wait(0.35)
+    if immediate then task.wait() else task.wait(0.35) end
     if not state.config.settings.auto then return end
     -- Current switches are authoritative. Old macros used to permanently block
     -- x2/auto-skip when they were disabled during the original recording.
     armMatchControls()
-    task.wait(math.max(0, tonumber(state.config.settings.initialDelay) or 1.2))
+    if not immediate then task.wait(math.max(0, tonumber(state.config.settings.initialDelay) or 1.2)) end
     if state.config.settings.auto then
         if not playMacro(macro, false, true, currentFingerprint) then
             state.config.settings.auto = false
@@ -2514,7 +2551,8 @@ local controllerAccumulator = 0
 keep(RunService.Heartbeat:Connect(function(delta)
     if state.destroyed then return end
     controllerAccumulator += delta
-    if controllerAccumulator < 0.5 then return end
+    local controllerInterval = state.controllerState == "WAIT_MATCH" and 0.15 or 0.5
+    if controllerAccumulator < controllerInterval then return end
     controllerAccumulator = 0
     if not state.config or not state.config.settings.auto or state.recording then return end
     if os.clock() < state.controllerNotBefore then return end
@@ -2531,11 +2569,18 @@ keep(RunService.Heartbeat:Connect(function(delta)
         end
         if not state.matchSpawnPosition then state.matchSpawnPosition = rootPart().Position end
         local current = fingerprint(state.matchSpawnPosition)
+        local boundId = Core.boundMacroId(current, state.config.manualMatches, state.config.mapMatches)
+        if boundId then
+            transition("PREPARE")
+            task.spawn(function() prepareAutoRun(true, current) end)
+            return
+        end
         if current.key ~= state.stableKey then
             state.stableKey = current.key
             state.stableSince = os.clock()
         elseif os.clock() - state.stableSince >= 2 then
-            task.spawn(prepareAutoRun)
+            transition("PREPARE")
+            task.spawn(function() prepareAutoRun(false, current) end)
         end
     elseif state.controllerState == "WAIT_END" then
         local ended, reason = endDetected()
@@ -2932,9 +2977,11 @@ button(macrosPage, "ПРИВЯЗАТЬ К КАРТЕ", UDim2.new(0.34, 4, 1, -41
     local macro = selectedMacro()
     if not macro then log("Выбери макрос") return end
     local current = fingerprint()
+    state.config.mapMatches[Core.mapBindingKey(current)] = macro.id
+    -- Keep the exact entry for backward compatibility with old configs/tools.
     state.config.manualMatches[current.key] = macro.id
     saveDisk()
-    log("Текущая карта/спавн привязаны к " .. macro.name)
+    log("Карта привязана к " .. macro.name .. " · автозапуск будет сразу")
 end)
 button(macrosPage, "СТОП", UDim2.new(0.73, 4, 1, -41), UDim2.new(0.27, -4, 0, 35), function()
     stopPlayback("Остановлено пользователем", true)
