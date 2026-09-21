@@ -2,7 +2,7 @@
 -- Records tower actions and replays the same server remotes without moving the camera.
 
 local VERSION = 2
-local SCRIPT_VERSION = "1.4.3"
+local SCRIPT_VERSION = "1.4.4"
 local REMOTE_BUS_VERSION = 3
 local ROOT_FOLDER = "TDMacroLab"
 local CONFIG_FILE = ROOT_FOLDER .. "/config.json"
@@ -307,6 +307,8 @@ local defaultConfig = {
     slotLabels = {"1", "2", "3", "4", "5"},
     settings = {
         auto = false,
+        -- Persisted separately from temporary runtime stops.
+        autoPreference = false,
         autoLoop = true,
         x2 = true,
         autoSkip = true,
@@ -493,7 +495,22 @@ end
 
 local function loadConfig()
     local loaded = readJson(CONFIG_FILE) or readJson(FALLBACK_FILE)
+    local savedAutoPreference = loaded and loaded.settings and loaded.settings.autoPreference
+    local savedAuto = loaded and loaded.settings and loaded.settings.auto
+
     state.config = mergeDefaults(loaded, copyTable(defaultConfig))
+
+    -- 1.4.4: AUTOSTART preference is owned only by the toggle.
+    -- Runtime code may temporarily set settings.auto=false, but that must not
+    -- erase the user's choice for the next script launch.
+    if type(savedAutoPreference) == "boolean" then
+        state.config.settings.autoPreference = savedAutoPreference
+    else
+        -- Migration from <=1.4.3.
+        state.config.settings.autoPreference = savedAuto == true
+    end
+    state.config.settings.auto = state.config.settings.autoPreference == true
+
     local normalized = {}
     for index, macro in ipairs(type(state.config.macros) == "table" and state.config.macros or {}) do
         normalized[#normalized + 1] = Core.normalizeMacro(macro, "Macro " .. index)
@@ -3261,6 +3278,7 @@ end, palette.danger)
 label(autoPage, "АВТОМАТИКА МАТЧА", UDim2.fromOffset(2, 0), UDim2.new(1, -4, 0, 22), 10, palette.muted)
 makeToggle(autoPage, "АВТОЗАПУСК", UDim2.fromOffset(0, 27), function() return state.config.settings.auto end, function(value)
     state.config.settings.auto = value
+    state.config.settings.autoPreference = value
     saveDisk()
     resetMatchTracking(0)
     transition(value and "WAIT_MATCH" or "IDLE", value and "автоматизация включена" or "автоматизация выключена")
