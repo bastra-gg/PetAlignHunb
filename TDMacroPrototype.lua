@@ -2,7 +2,7 @@
 -- Records tower actions and replays the same server remotes without moving the camera.
 
 local VERSION = 2
-local SCRIPT_VERSION = "1.4.4"
+local SCRIPT_VERSION = "1.4.5"
 local REMOTE_BUS_VERSION = 3
 local ROOT_FOLDER = "TDMacroLab"
 local CONFIG_FILE = ROOT_FOLDER .. "/config.json"
@@ -397,6 +397,11 @@ local state = {
     bindingScan = {},
     controlRunId = 0,
     autoRunToken = 0,
+    playbackSource = nil,
+    waitFreshMatch = false,
+    cashCacheAt = 0,
+    cashCache = nil,
+    cashSource = nil,
     logs = {},
     destroyed = false,
     memoryOnly = false,
@@ -1014,6 +1019,132 @@ local function detectGameClock()
     return result
 end
 
+
+local function parseCashNumber(value)
+    if type(value) == "number" then
+        return value >= 0 and value or nil
+    end
+    local text = tostring(value or "")
+        :gsub(",", "")
+        :gsub("%s+", "")
+        :gsub("[$€£¥₽]", "")
+    local amount, suffix = text:match("^([%d%.]+)([kKmMbBtT]?)$")
+    if not amount then
+        amount, suffix = text:match("([%d%.]+)([kKmMbBtT]?)$")
+    end
+    amount = tonumber(amount)
+    if not amount then return nil end
+    suffix = string.lower(tostring(suffix or ""))
+    local multiplier = suffix == "k" and 1e3
+        or suffix == "m" and 1e6
+        or suffix == "b" and 1e9
+        or suffix == "t" and 1e12
+        or 1
+    return amount * multiplier
+end
+
+local function detectMatchCash(force)
+    if not force and os.clock() - state.cashCacheAt < 0.12 then
+        return state.cashCache, state.cashSource
+    end
+
+    local bestValue, bestScore, bestSource = nil, -math.huge, nil
+
+    -- Prefer replicated values explicitly named as match money. Never accept
+    -- "Coins" here: Alliance TD uses Coins as the persistent lobby wallet.
+    for _, root in ipairs({player, player:FindFirstChild("leaderstats")}) do
+        if root then
+            for _, object in ipairs(root:GetDescendants()) do
+                if object:IsA("IntValue") or object:IsA("NumberValue") then
+                    local name = Core.cleanText(object.Name):gsub("%s+", "")
+                    local score = nil
+                    if name == "cash" or name == "money" or name == "matchcash"
+                        or name == "matchmoney" or name == "ingamecash" then
+                        score = 220
+                    elseif name:find("cash", 1, true) or name:find("matchmoney", 1, true) then
+                        score = 180
+                    end
+                    if score and tonumber(object.Value) ~= nil and score > bestScore then
+                        bestValue, bestScore, bestSource = tonumber(object.Value), score, object
+                    end
+                end
+            end
+        end
+    end
+
+    local playerGui = player:FindFirstChildOfClass("PlayerGui")
+    if playerGui then
+        for _, object in ipairs(playerGui:GetDescendants()) do
+            if (object:IsA("TextLabel") or object:IsA("TextButton")) and instanceVisible(object)
+                and not (state.gui and object:IsDescendantOf(state.gui)) then
+                local raw = tostring(object.Text or "")
+                local value = parseCashNumber(raw)
+                if value ~= nil then
+                    local parent = object.Parent
+                    local context = object.Name
+                    for _ = 1, 3 do
+                        if not parent or parent:IsA("LayerCollector") then break end
+                        context ..= " " .. parent.Name
+                        parent = parent.Parent
+                    end
+                    local clean = Core.cleanText(context .. " " .. raw)
+                    local compact = clean:gsub("%s+", "")
+                    local score = 0
+
+                    if compact:find("matchcash", 1, true) or compact:find("ingamecash", 1, true) then score += 180 end
+                    if clean:find(" cash", 1, true) or clean:find("cash ", 1, true)
+                        or compact:find("cash", 1, true) then score += 130 end
+                    if clean:find(" money", 1, true) or clean:find("money ", 1, true)
+                        or compact:find("money", 1, true) then score += 115 end
+                    if raw:find("$", 1, true) then score += 90 end
+
+                    -- Persistent/lobby currencies are deliberately rejected.
+                    if compact:find("coin", 1, true) or compact:find("gem", 1, true)
+                        or compact:find("summon", 1, true) or compact:find("shop", 1, true)
+                        or compact:find("lobby", 1, true) then
+                        score -= 180
+                    end
+
+                    if object.AbsoluteSize.X >= 25 and object.AbsoluteSize.X <= 320 then score += 5 end
+                    if score > bestScore and score >= 70 then
+                        bestValue, bestScore, bestSource = value, score, object
+                    end
+                end
+            end
+        end
+    end
+
+    state.cashCacheAt = os.clock()
+    state.cashCache = bestValue
+    state.cashSource = bestSource
+    return bestValue, bestSource
+end
+
+local function waitForRecordedCash(event, token)
+    local required = tonumber(event and event.cashBefore)
+    if not required then return true end
+
+    local warned = false
+    local unseenSince = os.clock()
+    while token == state.playToken and state.playing and not state.destroyed do
+        while state.paused and token == state.playToken do task.wait(0.05) end
+        local current = detectMatchCash(true)
+        if current ~= nil then
+            unseenSince = os.clock()
+            if current + 0.5 >= required then return true end
+            if not warned then
+                warned = true
+                log(string.format("Жду cash: %.0f / %.0f", current, required))
+            end
+        elseif os.clock() - unseenSince >= 2.0 then
+            -- Cash is an extra guard, never a single point of failure.
+            return true
+        end
+        task.wait(0.06)
+    end
+    return false
+end
+
 local function addRecordedEvent(kind, data)
     if not state.recording or state.generatedInput then return end
     if state.config and state.config.settings.remoteMode and not state.recordingLive then return end
@@ -1023,6 +1154,9 @@ local function addRecordedEvent(kind, data)
     if kind == "remote" and state.config and state.config.settings.remoteMode then
         -- Do not infer "opening" later from event order. Record the actual phase.
         data.opening = state.recordingCombatStarted ~= true
+        if data.cashBefore == nil then
+            data.cashBefore = select(1, detectMatchCash())
+        end
     end
     local clock = state.recordingClock
     if not clock and kind ~= "remote" then clock = detectGameClock() end
@@ -1247,7 +1381,7 @@ local function firstUsefulString(arguments)
     return fallback
 end
 
-local function captureRemote(remote, method, arguments, calledAt)
+local function captureRemote(remote, method, arguments, calledAt, cashBefore)
     if not state.recording or state.destroyed or state.generatedInput then return end
     if typeof(remote) ~= "Instance" or (not remote:IsA("RemoteEvent") and not remote:IsA("RemoteFunction")) then return end
     local action, position = classifyRemote(remote, arguments)
@@ -1284,6 +1418,7 @@ local function captureRemote(remote, method, arguments, calledAt)
         unitId = unitId,
         unitName = firstUsefulString(arguments),
         position = position and {x = position.X, y = position.Y, z = position.Z} or nil,
+        cashBefore = tonumber(cashBefore),
     })
     if recorded then
         if action == "place" then
@@ -1317,10 +1452,11 @@ local function installRemoteHook()
             if listener and not fromExecutor and (method == "FireServer" or method == "InvokeServer") then
                 local arguments = table.pack(...)
                 local calledAt = os.clock()
+                local cashBefore = select(1, detectMatchCash())
                 -- Let the game send first. Recording work must never delay or swallow its button action.
                 local results = table.pack(oldNamecall(self, ...))
                 task.defer(function()
-                    if bus.listener == listener then pcall(listener, self, method, arguments, calledAt) end
+                    if bus.listener == listener then pcall(listener, self, method, arguments, calledAt, cashBefore) end
                 end)
                 return table.unpack(results, 1, results.n)
             end
@@ -1536,6 +1672,9 @@ local function resetMatchTracking(delay)
     state.matchSpawnPosition = nil
     state.clockCacheAt = 0
     state.clockCache = nil
+    state.cashCacheAt = 0
+    state.cashCache = nil
+    state.cashSource = nil
     state.mapCacheKey = nil
     state.mapCacheAt = 0
     state.bindingScanAt = 0
@@ -1579,6 +1718,7 @@ local function stopPlayback(reason, emergency)
     state.playToken += 1
     state.playing = false
     state.paused = false
+    state.playbackSource = nil
     releaseAll()
     releaseCameraControl()
     if emergency then
@@ -1940,7 +2080,13 @@ end
 
 local function playMacro(macro, force, fromAuto, expectedFingerprint)
     if state.recording then log("Сначала останови запись") return false end
-    if state.playing then stopPlayback("Предыдущий запуск остановлен") end
+    if state.playing then
+        if fromAuto then
+            log("Автозапуск пропущен · макрос уже идёт")
+            return true
+        end
+        stopPlayback("Предыдущий запуск остановлен")
+    end
     if not macro or type(macro.events) ~= "table" or #macro.events == 0 then
         log("У выбранного макроса нет событий", true)
         return false
@@ -1959,10 +2105,16 @@ local function playMacro(macro, force, fromAuto, expectedFingerprint)
         return false
     end
 
+    if not fromAuto then
+        -- A manual launch owns this run and cancels any queued AUTO prepare task.
+        state.autoRunToken += 1
+        state.controlRunId += 1
+    end
     state.playToken += 1
     local token = state.playToken
     state.playing = true
     state.paused = false
+    state.playbackSource = fromAuto and "auto" or "manual"
     state.pauseAccum = 0
     state.playbackFinishedAt = 0
     state.replayUnits = {}
@@ -2057,6 +2209,7 @@ local function playMacro(macro, force, fromAuto, expectedFingerprint)
             for _, event in ipairs(opening) do
                 if token ~= state.playToken or state.destroyed then break end
                 while state.paused and token == state.playToken do task.wait(0.05) end
+                if not waitForRecordedCash(event, token) then break end
                 if replayRemoteEvent(event) then openingSent[event] = true end
                 lastSent = os.clock()
                 task.wait(0.08)
@@ -2069,6 +2222,7 @@ local function playMacro(macro, force, fromAuto, expectedFingerprint)
             if openingSent[event] then continue end
             if event.kind == "remote" then
                 if not waitForRecordedMoment(event, macro.clock, waveTiming, token, playbackStarted) then break end
+                if not waitForRecordedCash(event, token) then break end
             else
                 while state.paused and token == state.playToken do task.wait(0.05) end
                 while token == state.playToken do
@@ -2100,11 +2254,16 @@ local function playMacro(macro, force, fromAuto, expectedFingerprint)
         if token == state.playToken then
             state.playing = false
             state.paused = false
+            state.playbackSource = nil
             releaseAll()
             releaseCameraControl()
             state.playbackFinishedAt = os.clock()
             log("Воспроизведение завершено")
-            if fromAuto and state.config.settings.auto then transition("WAIT_END", "жду конец матча") else transition("IDLE") end
+            if state.config.settings.auto then
+                transition("WAIT_END", "жду конец матча")
+            else
+                transition("IDLE")
+            end
             refreshAll()
         end
     end)
@@ -2775,6 +2934,10 @@ end
 
 local function prepareAutoRun(immediate, preparedFingerprint, autoRunToken)
     if autoRunToken ~= state.autoRunToken or not state.config.settings.auto or state.destroyed then return end
+    if state.playing then
+        transition("PLAYING", "автозапуск пропущен · макрос уже идёт")
+        return
+    end
     transition("PREPARE", immediate and "привязка карты найдена" or nil)
     local currentFingerprint = preparedFingerprint or fingerprint(state.matchSpawnPosition)
     state.lastFingerprint = currentFingerprint
@@ -2809,6 +2972,11 @@ local function prepareAutoRun(immediate, preparedFingerprint, autoRunToken)
     armMatchControls()
     if not immediate then task.wait(math.max(0, tonumber(state.config.settings.initialDelay) or 1.2)) end
     if autoRunToken == state.autoRunToken and state.config.settings.auto then
+        if state.playing then
+            transition("PLAYING", "автозапуск пропущен · макрос уже идёт")
+            refreshAll()
+            return
+        end
         if not playMacro(macro, false, true, currentFingerprint) then
             -- A transient launch failure must not clear persistent AUTOSTART.
             resetMatchTracking(2)
@@ -2826,6 +2994,10 @@ keep(RunService.Heartbeat:Connect(function(delta)
     if controllerAccumulator < controllerInterval then return end
     controllerAccumulator = 0
     if not state.config or not state.config.settings.auto or state.recording then return end
+    if state.playing then
+        if state.controllerState ~= "PLAYING" then transition("PLAYING", "макрос уже запущен") end
+        return
+    end
     if os.clock() < state.controllerNotBefore then return end
 
     if state.controllerState == "IDLE" then
@@ -2837,6 +3009,22 @@ keep(RunService.Heartbeat:Connect(function(delta)
         if not workspace.CurrentCamera or not rootPart() then
             state.stableKey = nil
             return
+        end
+        local liveClock = detectGameClock()
+        local liveWave = liveClock and tonumber(liveClock.wave) or nil
+        if liveWave and liveWave > 1 then
+            if not state.waitFreshMatch then
+                state.waitFreshMatch = true
+                log("Автозапуск: текущий матч уже идёт · жду следующую волну 1")
+            end
+            return
+        elseif state.waitFreshMatch then
+            if liveWave == nil then return end
+            state.waitFreshMatch = false
+            state.stableKey = nil
+            state.stableSince = os.clock()
+            state.matchSpawnPosition = nil
+            log("Автозапуск: новый матч обнаружен")
         end
         if not state.matchSpawnPosition then state.matchSpawnPosition = rootPart().Position end
         local current = fingerprint(state.matchSpawnPosition)
@@ -3281,6 +3469,16 @@ makeToggle(autoPage, "АВТОЗАПУСК", UDim2.fromOffset(0, 27), function()
     state.config.settings.autoPreference = value
     saveDisk()
     resetMatchTracking(0)
+    if value and state.playing then
+        transition("PLAYING", "автозапуск включён · текущий макрос уже идёт")
+        return
+    end
+    if value then
+        local liveClock = detectGameClock(true)
+        state.waitFreshMatch = liveClock and tonumber(liveClock.wave) and tonumber(liveClock.wave) > 1 or false
+    else
+        state.waitFreshMatch = false
+    end
     transition(value and "WAIT_MATCH" or "IDLE", value and "автоматизация включена" or "автоматизация выключена")
 end)
 makeToggle(autoPage, "ПОВТОР МАТЧЕЙ", UDim2.new(0.5, 8, 0, 27), function() return state.config.settings.autoLoop end, function(value) state.config.settings.autoLoop = value end)
