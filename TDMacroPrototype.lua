@@ -2,7 +2,7 @@
 -- Records tower actions and replays the same server remotes without moving the camera.
 
 local VERSION = 2
-local SCRIPT_VERSION = "1.4.0"
+local SCRIPT_VERSION = "1.4.1"
 local REMOTE_BUS_VERSION = 3
 local ROOT_FOLDER = "TDMacroLab"
 local CONFIG_FILE = ROOT_FOLDER .. "/config.json"
@@ -390,6 +390,7 @@ local state = {
     bindingScanAt = 0,
     bindingScan = {},
     controlRunId = 0,
+    autoRunToken = 0,
     logs = {},
     destroyed = false,
     memoryOnly = false,
@@ -1499,6 +1500,23 @@ local function transition(nextState, reason)
     if reason then log(nextState .. ": " .. reason) end
 end
 
+local function resetMatchTracking(delay)
+    state.autoRunToken += 1
+    state.controlRunId += 1
+    state.controllerNotBefore = delay and delay > 0 and (os.clock() + delay) or 0
+    state.stableKey = nil
+    state.stableSince = 0
+    state.playbackFinishedAt = 0
+    state.lastFingerprint = nil
+    state.matchSpawnPosition = nil
+    state.clockCacheAt = 0
+    state.clockCache = nil
+    state.mapCacheKey = nil
+    state.mapCacheAt = 0
+    state.bindingScanAt = 0
+    state.bindingScan = {}
+end
+
 local function releaseAll()
     state.generatedInput = true
     for keyName in pairs(state.pressedKeys) do
@@ -1540,11 +1558,27 @@ local function stopPlayback(reason, emergency)
     releaseCameraControl()
     if emergency then
         state.config.settings.auto = false
-        state.matchSpawnPosition = nil
+        resetMatchTracking(0)
         transition("IDLE", reason or "Emergency stop")
         saveDisk()
     end
     if reason then log(reason, emergency == true) end
+    refreshAll()
+end
+
+local function stopCurrentMacro(reason)
+    local keepAutomation = state.config.settings.auto == true
+    stopPlayback(nil, false)
+    state.autoRunToken += 1
+    state.controlRunId += 1
+    if keepAutomation then
+        state.playbackFinishedAt = os.clock()
+        transition("WAIT_END", "макрос остановлен · жду конец матча")
+    else
+        state.playbackFinishedAt = 0
+        transition("IDLE", reason or "макрос остановлен")
+    end
+    if reason then log(reason) end
     refreshAll()
 end
 
@@ -1834,6 +1868,7 @@ local function playMacro(macro, force, fromAuto, expectedFingerprint)
     state.playing = true
     state.paused = false
     state.pauseAccum = 0
+    state.playbackFinishedAt = 0
     state.replayUnits = {}
     state.selectedId = macro.id
     macro.lastUsed = os.time()
@@ -2580,8 +2615,8 @@ local function endDetected()
     return false
 end
 
-local function prepareAutoRun(immediate, preparedFingerprint)
-    if not state.config.settings.auto or state.destroyed then return end
+local function prepareAutoRun(immediate, preparedFingerprint, autoRunToken)
+    if autoRunToken ~= state.autoRunToken or not state.config.settings.auto or state.destroyed then return end
     transition("PREPARE", immediate and "привязка карты найдена" or nil)
     local currentFingerprint = preparedFingerprint or fingerprint(state.matchSpawnPosition)
     state.lastFingerprint = currentFingerprint
@@ -2609,12 +2644,12 @@ local function prepareAutoRun(immediate, preparedFingerprint)
     end
     if not remoteMacro then restoreCamera(macro.camera or (macro.fingerprint and macro.fingerprint.camera)) end
     if immediate then task.wait() else task.wait(0.35) end
-    if not state.config.settings.auto then return end
+    if autoRunToken ~= state.autoRunToken or not state.config.settings.auto then return end
     -- Current switches are authoritative. Old macros used to permanently block
     -- x2/auto-skip when they were disabled during the original recording.
     armMatchControls()
     if not immediate then task.wait(math.max(0, tonumber(state.config.settings.initialDelay) or 1.2)) end
-    if state.config.settings.auto then
+    if autoRunToken == state.autoRunToken and state.config.settings.auto then
         if not playMacro(macro, false, true, currentFingerprint) then
             state.config.settings.auto = false
             transition("ERROR", "Запуск макроса не удался")
@@ -2649,7 +2684,8 @@ keep(RunService.Heartbeat:Connect(function(delta)
         local boundId = Core.boundMacroId(current, state.config.manualMatches, state.config.mapMatches)
         if boundId then
             transition("PREPARE")
-            task.spawn(function() prepareAutoRun(true, current) end)
+            local autoRunToken = state.autoRunToken
+            task.spawn(function() prepareAutoRun(true, current, autoRunToken) end)
             return
         end
         if current.key ~= state.stableKey then
@@ -2657,29 +2693,33 @@ keep(RunService.Heartbeat:Connect(function(delta)
             state.stableSince = os.clock()
         elseif os.clock() - state.stableSince >= 2 then
             transition("PREPARE")
-            task.spawn(function() prepareAutoRun(false, current) end)
+            local autoRunToken = state.autoRunToken
+            task.spawn(function() prepareAutoRun(false, current, autoRunToken) end)
         end
     elseif state.controllerState == "WAIT_END" then
         local ended, reason = endDetected()
         if ended then
             transition("REPLAY", reason)
+            local autoRunToken = state.autoRunToken
             task.spawn(function()
                 task.wait(0.8)
+                if autoRunToken ~= state.autoRunToken or not state.config.settings.auto then return end
                 if state.config.settings.autoPlayAgain then
                     local clicked = false
                     for _ = 1, 4 do
+                        if autoRunToken ~= state.autoRunToken or not state.config.settings.auto then return end
                         if clickBinding("playAgain", true) then clicked = true break end
                         task.wait(0.35)
                     end
                     log(clicked and "playAgain: нажато" or "playAgain: кнопка не сработала", not clicked)
                 end
+                if autoRunToken ~= state.autoRunToken or not state.config.settings.auto then return end
                 if not state.config.settings.autoLoop then
                     state.config.settings.auto = false
+                    resetMatchTracking(0)
                     transition("IDLE", "цикл выключен")
                 else
-                    state.controllerNotBefore = os.clock() + 5
-                    state.stableKey = nil
-                    state.matchSpawnPosition = nil
+                    resetMatchTracking(5)
                     transition("WAIT_MATCH", "жду новую карту")
                 end
                 saveDisk()
@@ -3072,16 +3112,14 @@ button(macrosPage, "ПРИВЯЗАТЬ К КАРТЕ", UDim2.new(0.34, 4, 1, -41
     saveDisk()
     log("Карта привязана к " .. macro.name .. " · автозапуск будет сразу")
 end)
-button(macrosPage, "СТОП", UDim2.new(0.73, 4, 1, -41), UDim2.new(0.27, -4, 0, 35), function()
-    stopPlayback("Остановлено пользователем", true)
+button(macrosPage, "СТОП МАКРОСА", UDim2.new(0.73, 4, 1, -41), UDim2.new(0.27, -4, 0, 35), function()
+    stopCurrentMacro("Макрос остановлен пользователем")
 end, palette.danger)
 
 label(autoPage, "АВТОМАТИКА МАТЧА", UDim2.fromOffset(2, 0), UDim2.new(1, -4, 0, 22), 10, palette.muted)
 makeToggle(autoPage, "АВТОЗАПУСК", UDim2.fromOffset(0, 27), function() return state.config.settings.auto end, function(value)
     state.config.settings.auto = value
-    state.controllerNotBefore = 0
-    state.stableKey = nil
-    state.matchSpawnPosition = nil
+    resetMatchTracking(0)
     transition(value and "WAIT_MATCH" or "IDLE", value and "автоматизация включена" or "автоматизация выключена")
 end)
 makeToggle(autoPage, "ПОВТОР МАТЧЕЙ", UDim2.new(0.5, 8, 0, 27), function() return state.config.settings.autoLoop end, function(value) state.config.settings.autoLoop = value end)
@@ -3351,7 +3389,8 @@ end
 state.StartRecording = startRecording
 state.StopAndSave = stopAndSave
 state.PlaySelected = function(force) return playMacro(selectedMacro(), force == true, false) end
-state.Stop = function() stopPlayback("Остановлено через API", true) end
+state.Stop = function() stopCurrentMacro("Макрос остановлен через API") end
+state.StopAll = function() stopPlayback("Полная остановка через API", true) end
 state.Pause = togglePause
 state.Fingerprint = fingerprint
 state.Core = Core
