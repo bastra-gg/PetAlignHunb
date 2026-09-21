@@ -2,7 +2,7 @@
 -- Records tower actions and replays the same server remotes without moving the camera.
 
 local VERSION = 2
-local SCRIPT_VERSION = "1.3.0"
+local SCRIPT_VERSION = "1.4.0"
 local REMOTE_BUS_VERSION = 3
 local ROOT_FOLDER = "TDMacroLab"
 local CONFIG_FILE = ROOT_FOLDER .. "/config.json"
@@ -364,6 +364,7 @@ local state = {
     touchInputIds = {},
     touchGestures = {},
     nextTouchId = 0,
+    syntheticTouchId = 1000,
     playing = false,
     paused = false,
     playToken = 0,
@@ -891,6 +892,27 @@ local function eventPosition(input)
     return math.floor(position.X), math.floor(position.Y)
 end
 
+local function isMovementControlPoint(x, y)
+    if not UIS.TouchEnabled then return false end
+    local ok, objects = pcall(function() return GuiService:GetGuiObjectsAtPosition(x, y) end)
+    if ok then
+        for _, object in ipairs(objects) do
+            local current = object
+            for _ = 1, 7 do
+                if not current then break end
+                local name = Core.cleanText(current.Name):gsub("%s+", "")
+                if name:find("thumbstick", 1, true) or name:find("joystick", 1, true)
+                    or name:find("touchcontrol", 1, true) or name:find("movementcontrol", 1, true) then
+                    return true
+                end
+                current = current.Parent
+            end
+        end
+    end
+    local screen = viewport()
+    return x <= screen.w * 0.34 and y >= screen.h * 0.56
+end
+
 local function parseClockText(text)
     text = tostring(text or "")
     local minutes, seconds = text:match("(%d+)%s*:%s*(%d%d?)")
@@ -1356,6 +1378,10 @@ end
 keep(UIS.InputBegan:Connect(function(input, processed)
     if state.destroyed or state.generatedInput then return end
     if state.bindingCapture and captureBinding(state.bindingCapture, input) then return end
+    if input.UserInputType == Enum.UserInputType.Touch then
+        local x, y = eventPosition(input)
+        if isMovementControlPoint(x, y) then return end
+    end
     if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.MouseButton2
         or input.UserInputType == Enum.UserInputType.Touch then
         local x, y = eventPosition(input)
@@ -1419,6 +1445,7 @@ keep(UIS.InputEnded:Connect(function(input)
         if focused and state.gui and focused:IsDescendantOf(state.gui) then return end
         addRecordedEvent("key_up", {key = input.KeyCode.Name, slot = slotCodes[input.KeyCode]})
     elseif inputType == Enum.UserInputType.MouseButton1 or inputType == Enum.UserInputType.MouseButton2 or inputType == Enum.UserInputType.Touch then
+        if inputType == Enum.UserInputType.Touch and not state.touchInputIds[input] then return end
         local x, y = eventPosition(input)
         local gesture = inputType == Enum.UserInputType.Touch and state.touchGestures[input] or nil
         if inputType == Enum.UserInputType.Touch then state.touchGestures[input] = nil end
@@ -1480,7 +1507,9 @@ local function releaseAll()
     end
     local size = viewport()
     for button in pairs(state.pressedButtons) do
-        pcall(function() VIM:SendMouseButtonEvent(size.w / 2, size.h / 2, button, false, game, 0) end)
+        if not UIS.TouchEnabled then
+            pcall(function() VIM:SendMouseButtonEvent(size.w / 2, size.h / 2, button, false, game, 0) end)
+        end
     end
     for touchId, point in pairs(state.pressedTouches) do
         pcall(function() VIM:SendTouchEvent(touchId, 2, point.x, point.y) end)
@@ -1742,19 +1771,29 @@ local function sendEvent(event, recordedViewport)
             local down = event.kind == "mouse_down"
             local sentTouch = false
             if event.touch then
-                local touchId = tonumber(event.touchId) or 1
+                -- Never reuse the low IDs assigned to the player's real fingers;
+                -- doing so can release/replace the mobile movement thumbstick.
+                local touchId = 1000 + (tonumber(event.touchId) or 1)
                 sentTouch = pcall(function() VIM:SendTouchEvent(touchId, down and 0 or 2, x, y) end)
                 if sentTouch then
                     if down then state.pressedTouches[touchId] = {x = x, y = y} else state.pressedTouches[touchId] = nil end
                 end
             end
             if not sentTouch then
-                VIM:SendMouseButtonEvent(x, y, button, down, game, 0)
-                if down then state.pressedButtons[button] = true else state.pressedButtons[button] = nil end
+                if UIS.TouchEnabled then
+                    local touchId = 2000 + button
+                    VIM:SendTouchEvent(touchId, down and 0 or 2, x, y)
+                    if down then state.pressedTouches[touchId] = {x = x, y = y} else state.pressedTouches[touchId] = nil end
+                else
+                    VIM:SendMouseButtonEvent(x, y, button, down, game, 0)
+                    if down then state.pressedButtons[button] = true else state.pressedButtons[button] = nil end
+                end
             end
         elseif event.kind == "mouse_wheel" then
             local x, y = Core.eventPoint(event, size, recordedViewport)
-            VIM:SendMouseWheelEvent(x, y, (tonumber(event.delta) or 0) > 0, game)
+            if not UIS.TouchEnabled then
+                VIM:SendMouseWheelEvent(x, y, (tonumber(event.delta) or 0) > 0, game)
+            end
         end
     end)
     state.generatedInput = false
@@ -2378,9 +2417,17 @@ local function clickBinding(kind, quiet)
     end
     state.generatedInput = true
     local ok = pcall(function()
-        VIM:SendMouseButtonEvent(x, y, 0, true, game, 0)
-        task.wait(0.06)
-        VIM:SendMouseButtonEvent(x, y, 0, false, game, 0)
+        if UIS.TouchEnabled then
+            state.syntheticTouchId += 1
+            local touchId = state.syntheticTouchId
+            VIM:SendTouchEvent(touchId, 0, x, y)
+            task.wait(0.06)
+            VIM:SendTouchEvent(touchId, 2, x, y)
+        else
+            VIM:SendMouseButtonEvent(x, y, 0, true, game, 0)
+            task.wait(0.06)
+            VIM:SendMouseButtonEvent(x, y, 0, false, game, 0)
+        end
     end)
     state.generatedInput = false
     if not quiet then
@@ -2389,15 +2436,72 @@ local function clickBinding(kind, quiet)
     return ok
 end
 
+local function pressSpeedKey()
+    state.generatedInput = true
+    local ok = pcall(function()
+        VIM:SendKeyEvent(true, Enum.KeyCode.Z, false, game)
+        task.wait(0.05)
+        VIM:SendKeyEvent(false, Enum.KeyCode.Z, false, game)
+    end)
+    state.generatedInput = false
+    return ok
+end
+
+local function setMaximumGameSpeed(runId)
+    local maxSeen, wrapped = 0, false
+    for attempt = 1, 5 do
+        if runId ~= state.controlRunId or state.destroyed
+            or not (state.config.settings.auto or state.playing) then return end
+        local _, _, object = bindingPoint("x2", true)
+        local before = controlSpeed(object)
+        if before then maxSeen = math.max(maxSeen, before) end
+        if before and before >= 1.99 then
+            log("скорость: x2 уже включена")
+            return
+        end
+        if not pressSpeedKey() then
+            log("скорость: клавиша Z не сработала", true)
+            return
+        end
+        task.wait(0.18)
+        local _, _, currentObject = bindingPoint("x2", true)
+        local after = controlSpeed(currentObject or object)
+        if after then
+            local previousMax = maxSeen
+            if after > previousMax + 0.01 then
+                maxSeen = after
+            elseif after < previousMax - 0.01 then
+                wrapped = true
+            elseif after >= 1.49 and (wrapped or (before and math.abs(after - before) <= 0.01)) then
+                log(string.format("скорость: максимум x%.1f через Z", after))
+                return
+            end
+            if after >= 1.99 then
+                log("скорость: x2 включена через Z")
+                return
+            end
+        elseif attempt >= 2 then
+            log("скорость: Z отправлена дважды")
+            return
+        end
+        task.wait(0.16)
+    end
+    if maxSeen >= 1.49 then
+        log(string.format("скорость: максимум x%.1f", maxSeen))
+    else
+        log("скорость: значение не распознано", true)
+    end
+end
+
 armMatchControls = function()
     state.controlRunId += 1
     local runId = state.controlRunId
     local pending = {}
-    if state.config.settings.x2 then pending.x2 = {attempts = 0, maxAttempts = 5, maxSeen = 0, wrapped = false} end
     if state.config.settings.autoSkip then pending.autoSkip = {attempts = 0, maxAttempts = 3} end
-    if not next(pending) then return end
+    if not state.config.settings.x2 and not next(pending) then return end
 
     task.spawn(function()
+        if state.config.settings.x2 then setMaximumGameSpeed(runId) end
         local deadline = os.clock() + 12
         while runId == state.controlRunId and (state.config.settings.auto or state.playing) and not state.destroyed
             and os.clock() < deadline and next(pending) do
@@ -2405,10 +2509,6 @@ armMatchControls = function()
                 local _, _, object = bindingPoint(kind, false)
                 if object then
                     local before = controlState(kind, object)
-                    local beforeSpeed = kind == "x2" and controlSpeed(object) or nil
-                    if kind == "x2" and beforeSpeed then
-                        item.maxSeen = math.max(item.maxSeen or 0, beforeSpeed)
-                    end
                     if before == true then
                         log(kind .. ": уже включено")
                         pending[kind] = nil
@@ -2417,31 +2517,8 @@ armMatchControls = function()
                         if clickBinding(kind, true) then
                             task.wait(0.16)
                             local _, _, currentObject = bindingPoint(kind, false)
-                            local resolvedObject = currentObject or object
-                            local after = controlState(kind, resolvedObject)
-                            local afterSpeed = kind == "x2" and controlSpeed(resolvedObject) or nil
-                            if kind == "x2" and afterSpeed then
-                                local previousMax = item.maxSeen or 0
-                                if afterSpeed > previousMax + 0.01 then
-                                    item.maxSeen = afterSpeed
-                                elseif afterSpeed < previousMax - 0.01 then
-                                    item.wrapped = true
-                                elseif afterSpeed >= 1.49 and (item.wrapped or (beforeSpeed and math.abs(afterSpeed - beforeSpeed) <= 0.01)) then
-                                    log(string.format("скорость: максимум x%.1f", afterSpeed))
-                                    pending[kind] = nil
-                                end
-                                if pending[kind] and afterSpeed >= 1.99 then
-                                    log("скорость: x2 включена")
-                                    pending[kind] = nil
-                                elseif pending[kind] and item.attempts >= item.maxAttempts then
-                                    if (item.maxSeen or 0) >= 1.49 then
-                                        log(string.format("скорость: максимум x%.1f", item.maxSeen))
-                                    else
-                                        log("скорость: не удалось переключить", true)
-                                    end
-                                    pending[kind] = nil
-                                end
-                            elseif after == true or after == nil then
+                            local after = controlState(kind, currentObject or object)
+                            if after == true or after == nil then
                                 log(kind .. ": включено")
                                 pending[kind] = nil
                             elseif item.attempts >= item.maxAttempts then
@@ -2772,8 +2849,8 @@ local shadow = Instance.new("Frame")
 shadow.Name = "Shadow"
 shadow.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
 shadow.BackgroundTransparency = 0.62
-shadow.Position = UDim2.new(0.5, -264, 0.5, -188)
-shadow.Size = UDim2.fromOffset(536, 382)
+shadow.Position = UDim2.new(0.5, -270, 0.5, -179)
+shadow.Size = UDim2.fromOffset(548, 366)
 shadow.ZIndex = 0
 shadow.Parent = gui
 round(shadow, 22)
@@ -2781,8 +2858,9 @@ round(shadow, 22)
 local window = Instance.new("Frame")
 window.Name = "Window"
 window.BackgroundColor3 = palette.bg
-window.Position = UDim2.new(0.5, -268, 0.5, -191)
-window.Size = UDim2.fromOffset(536, 382)
+window.BackgroundTransparency = 0.04
+window.Position = UDim2.new(0.5, -274, 0.5, -183)
+window.Size = UDim2.fromOffset(548, 366)
 window.ClipsDescendants = true
 window.Parent = gui
 round(window, 20)
@@ -2791,7 +2869,7 @@ state.window = window
 
 local header = Instance.new("Frame")
 header.BackgroundColor3 = palette.panel
-header.Size = UDim2.new(1, 0, 0, 52)
+header.Size = UDim2.new(1, 0, 0, 50)
 header.Parent = window
 local headerGradient = Instance.new("UIGradient")
 headerGradient.Color = ColorSequence.new({
@@ -2801,13 +2879,13 @@ headerGradient.Color = ColorSequence.new({
 headerGradient.Rotation = 12
 headerGradient.Parent = header
 
-local title = label(header, "ALLIANCE  ·  MACRO", UDim2.fromOffset(16, 6), UDim2.new(1, -190, 0, 25), 15)
+local title = label(header, "ALLIANCE MACRO", UDim2.fromOffset(16, 5), UDim2.new(1, -190, 0, 24), 15)
 title.Font = Enum.Font.GothamBold
-local subtitle = label(header, "SERVER MACRO  ·  БЕЗ КАМЕРЫ", UDim2.fromOffset(16, 28), UDim2.new(1, -190, 0, 17), 9, palette.muted)
+local subtitle = label(header, "ЗАПИСЬ И АВТОЗАПУСК ПО КАРТЕ", UDim2.fromOffset(16, 27), UDim2.new(1, -190, 0, 16), 9, palette.muted)
 subtitle.Font = Enum.Font.GothamMedium
-local versionLabel = label(header, "v" .. SCRIPT_VERSION, UDim2.new(1, -176, 0, 6), UDim2.fromOffset(124, 39), 11, palette.accent, Enum.TextXAlignment.Right)
+local versionLabel = label(header, "v" .. SCRIPT_VERSION, UDim2.new(1, -176, 0, 5), UDim2.fromOffset(124, 38), 11, palette.accent, Enum.TextXAlignment.Right)
 versionLabel.Font = Enum.Font.GothamSemibold
-local hideButton = button(header, "—", UDim2.new(1, -40, 0, 10), UDim2.fromOffset(30, 30), function()
+local hideButton = button(header, "—", UDim2.new(1, -40, 0, 9), UDim2.fromOffset(30, 30), function()
     window.Visible = false
     shadow.Visible = false
     state.showButton.Visible = true
@@ -2817,24 +2895,31 @@ hideButton.TextScaled = false
 
 local nav = Instance.new("Frame")
 nav.BackgroundColor3 = palette.panel
-nav.Position = UDim2.fromOffset(10, 60)
-nav.Size = UDim2.new(1, -20, 0, 34)
+nav.BackgroundTransparency = 0.12
+nav.Position = UDim2.fromOffset(10, 58)
+nav.Size = UDim2.new(0, 108, 1, -68)
 nav.Parent = window
-round(nav, 11)
-stroke(nav, palette.line, 0.45)
+round(nav, 14)
+stroke(nav, palette.line, 0.3)
+local navTitle = label(nav, "РАЗДЕЛЫ", UDim2.fromOffset(11, 4), UDim2.new(1, -22, 0, 25), 9, palette.muted)
+navTitle.Font = Enum.Font.GothamSemibold
 
 local content = Instance.new("Frame")
-content.BackgroundTransparency = 1
-content.Position = UDim2.fromOffset(12, 102)
-content.Size = UDim2.new(1, -24, 1, -104)
+content.BackgroundColor3 = palette.panel
+content.BackgroundTransparency = 0.28
+content.Position = UDim2.fromOffset(128, 58)
+content.Size = UDim2.new(1, -138, 1, -68)
 content.ClipsDescendants = true
 content.Parent = window
+round(content, 14)
+stroke(content, palette.line, 0.34)
 
 local function createPage(name)
     local page = Instance.new("Frame")
     page.Name = name
     page.BackgroundTransparency = 1
-    page.Size = UDim2.fromScale(1, 1)
+    page.Position = UDim2.fromOffset(10, 10)
+    page.Size = UDim2.new(1, -20, 1, -20)
     page.Visible = false
     page.Parent = content
     state.pages[name] = page
@@ -2866,8 +2951,12 @@ local navItems = {
 }
 for index, navItem in ipairs(navItems) do
     local name = navItem.page
-    local item = button(nav, navItem.text, UDim2.new((index - 1) / 5, 2, 0, 0), UDim2.new(0.2, -4, 1, 0), function() showPage(name) end, palette.panel)
+    local item = button(nav, navItem.text, UDim2.fromOffset(7, 32 + (index - 1) * 48), UDim2.new(1, -14, 0, 41), function() showPage(name) end, palette.panel)
     item.TextSize = 10
+    item.TextXAlignment = Enum.TextXAlignment.Left
+    local padding = Instance.new("UIPadding")
+    padding.PaddingLeft = UDim.new(0, 11)
+    padding.Parent = item
     navButtons[name] = item
 end
 
@@ -3012,9 +3101,9 @@ button(autoPage, "ОСТАНОВИТЬ ВСЁ", UDim2.new(0.5, 5, 1, -43), UDim2
     stopPlayback("EMERGENCY STOP", true)
 end, palette.danger)
 
-label(bindingsPage, "Кнопки ищутся сами. Ручной режим оставлен только как резерв после обновлений игры.", UDim2.fromOffset(2, 0), UDim2.new(1, -4, 0, 34), 10, palette.muted)
+label(bindingsPage, "Скорость переключается через Z. Остальные кнопки ищутся автоматически.", UDim2.fromOffset(2, 0), UDim2.new(1, -4, 0, 34), 10, palette.muted)
 for index, item in ipairs({
-    {key = "x2", title = "СКОРОСТЬ ИГРЫ"},
+    {key = "x2", title = "СКОРОСТЬ ИГРЫ", keyboard = true},
     {key = "autoSkip", title = "ПРОПУСК ВОЛН"},
     {key = "playAgain", title = "ИГРАТЬ СНОВА"},
     {key = "matchTimer", title = "ИГРОВОЙ ТАЙМЕР"},
@@ -3027,20 +3116,26 @@ for index, item in ipairs({
     round(row, 10)
     stroke(row, palette.line, 0.25)
     label(row, item.title, UDim2.fromOffset(11, 0), UDim2.new(0.42, -11, 1, 0), 12)
-    local status = label(row, "", UDim2.new(0.42, 0, 0, 0), UDim2.new(0.25, 0, 1, 0), 10, palette.muted, Enum.TextXAlignment.Center)
+    local status = label(row, "", item.keyboard and UDim2.new(0.58, 0, 0, 0) or UDim2.new(0.42, 0, 0, 0),
+        item.keyboard and UDim2.new(0.38, 0, 1, 0) or UDim2.new(0.25, 0, 1, 0), 10, palette.muted, Enum.TextXAlignment.Center)
     state.labels["binding_" .. item.key] = status
-    button(row, "АВТО", UDim2.new(0.68, 0, 0, 4), UDim2.new(0.14, -5, 0, 33), function()
-        state.config.bindings[item.key] = {mode = "auto"}
-        state.bindingScanAt = 0
-        if item.key ~= "matchTimer" then findBindingCandidate(item.key, true) end
-        saveDisk()
-        refreshBindings()
-    end)
-    button(row, "ВРУЧН.", UDim2.new(0.82, 0, 0, 4), UDim2.new(0.18, -7, 0, 33), function()
-        state.bindingCapture = item.key
-        log("BIND " .. item.key .. ": кликни нужную кнопку в игре")
-        refreshBindings()
-    end, Color3.fromRGB(54, 91, 137))
+    if item.keyboard then
+        status.Text = "КЛАВИША Z"
+        status.TextColor3 = palette.accent
+    else
+        button(row, "АВТО", UDim2.new(0.68, 0, 0, 4), UDim2.new(0.14, -5, 0, 33), function()
+            state.config.bindings[item.key] = {mode = "auto"}
+            state.bindingScanAt = 0
+            if item.key ~= "matchTimer" then findBindingCandidate(item.key, true) end
+            saveDisk()
+            refreshBindings()
+        end)
+        button(row, "ВРУЧН.", UDim2.new(0.82, 0, 0, 4), UDim2.new(0.18, -7, 0, 33), function()
+            state.bindingCapture = item.key
+            log("BIND " .. item.key .. ": кликни нужную кнопку в игре")
+            refreshBindings()
+        end, Color3.fromRGB(54, 91, 137))
+    end
 end
 
 local logScroll = Instance.new("ScrollingFrame")
@@ -3061,12 +3156,12 @@ logText.TextWrapped = true
 logText.TextYAlignment = Enum.TextYAlignment.Top
 state.labels.logText = logText
 
-local showButton = button(gui, "TD", UDim2.new(0, 12, 0.5, -25), UDim2.fromOffset(50, 50), function()
+local showButton = button(gui, "TD", UDim2.new(1, -58, 0, 72), UDim2.fromOffset(46, 38), function()
     window.Visible = true
     shadow.Visible = true
     state.showButton.Visible = false
 end, palette.accentDark)
-showButton.TextSize = 14
+showButton.TextSize = 12
 showButton.Visible = false
 state.showButton = showButton
 
@@ -3092,15 +3187,44 @@ end))
 
 local function resizeWindow()
     local size = viewport()
-    local width = math.min(536, size.w - 18)
-    local height = math.min(382, size.h - 24)
+    local width = math.min(548, size.w - 18)
+    local height = math.min(366, size.h - 24)
     width = math.max(300, width)
     height = math.max(320, height)
     window.Size = UDim2.fromOffset(width, height)
     window.Position = UDim2.fromOffset(math.max(8, (size.w - width) / 2), math.max(8, (size.h - height) / 2))
     shadow.Size = UDim2.fromOffset(width, height)
     shadow.Position = UDim2.fromOffset(window.Position.X.Offset + 4, window.Position.Y.Offset + 4)
-    if state.labels.recordHint then state.labels.recordHint.Visible = height >= 380 end
+    local compact = width < 470
+    navTitle.Visible = not compact
+    if compact then
+        nav.Position = UDim2.fromOffset(10, 58)
+        nav.Size = UDim2.new(1, -20, 0, 34)
+        content.Position = UDim2.fromOffset(10, 100)
+        content.Size = UDim2.new(1, -20, 1, -110)
+        for index, itemData in ipairs(navItems) do
+            local item = navButtons[itemData.page]
+            item.Position = UDim2.new((index - 1) / #navItems, 2, 0, 0)
+            item.Size = UDim2.new(1 / #navItems, -4, 1, 0)
+            item.TextXAlignment = Enum.TextXAlignment.Center
+            local padding = item:FindFirstChildOfClass("UIPadding")
+            if padding then padding.PaddingLeft = UDim.new(0, 0) end
+        end
+    else
+        nav.Position = UDim2.fromOffset(10, 58)
+        nav.Size = UDim2.new(0, 108, 1, -68)
+        content.Position = UDim2.fromOffset(128, 58)
+        content.Size = UDim2.new(1, -138, 1, -68)
+        for index, itemData in ipairs(navItems) do
+            local item = navButtons[itemData.page]
+            item.Position = UDim2.fromOffset(7, 32 + (index - 1) * 48)
+            item.Size = UDim2.new(1, -14, 0, 41)
+            item.TextXAlignment = Enum.TextXAlignment.Left
+            local padding = item:FindFirstChildOfClass("UIPadding")
+            if padding then padding.PaddingLeft = UDim.new(0, 11) end
+        end
+    end
+    if state.labels.recordHint then state.labels.recordHint.Visible = not compact and height >= 350 end
 end
 resizeWindow()
 if workspace.CurrentCamera then keep(workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(resizeWindow)) end
@@ -3144,7 +3268,10 @@ refreshBindings = function()
         local target = state.labels["binding_" .. kind]
         if target then
             local binding = state.config.bindings[kind] or {mode = "auto"}
-            if state.bindingCapture == kind then
+            if kind == "x2" then
+                target.Text = "КЛАВИША Z"
+                target.TextColor3 = palette.accent
+            elseif state.bindingCapture == kind then
                 target.Text = "ЖДУ КЛИК"
                 target.TextColor3 = Color3.fromRGB(255, 202, 91)
             elseif binding.mode == "manual" then
