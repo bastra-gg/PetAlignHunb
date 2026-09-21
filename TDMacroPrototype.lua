@@ -2,8 +2,8 @@
 -- Records tower actions and replays the same server remotes without moving the camera.
 
 local VERSION = 2
-local SCRIPT_VERSION = "1.4.12"
-local REMOTE_BUS_VERSION = 4
+local SCRIPT_VERSION = "1.4.13"
+local REMOTE_BUS_VERSION = 5
 local ROOT_FOLDER = "TDMacroLab"
 local CONFIG_FILE = ROOT_FOLDER .. "/config.json"
 local FALLBACK_FILE = "td_macro_v2.json"
@@ -1510,7 +1510,7 @@ local function installRemoteHook()
         if type(bus) == "table" and type(bus.setListener) == "function" then
             pcall(function() bus:setListener(nil) end)
         end
-        bus = {listener = nil, preflight = nil, version = REMOTE_BUS_VERSION}
+        bus = {listener = nil, cashSnapshot = nil, version = REMOTE_BUS_VERSION}
         local oldNamecall
         local callback = function(self, ...)
             local method = getnamecallmethod()
@@ -1519,18 +1519,11 @@ local function installRemoteHook()
             if listener and not fromExecutor and (method == "FireServer" or method == "InvokeServer") then
                 local arguments = table.pack(...)
                 local calledAt = os.clock()
-                local cashBefore = nil
+                local cashBefore = bus.cashSnapshot
 
-                -- preflight is replaced on every hot reload. The permanent hook
-                -- never closes over an old script state, so updating the script
-                -- cannot resurrect 1.4.5's expensive pre-Remote GUI scan.
-                local preflight = bus.preflight
-                if type(preflight) == "function" then
-                    local okCash, value = pcall(preflight)
-                    if okCash then cashBefore = value end
-                end
-
-                -- Always let the game send first. Listener work is deferred.
+                -- v1.2.1 fix: absolutely no recording callback/function is allowed
+                -- before the game's own Remote call. The real click/action goes
+                -- through first; capture work happens only afterwards.
                 local results = table.pack(oldNamecall(self, ...))
                 task.defer(function()
                     if bus.listener == listener then pcall(listener, self, method, arguments, calledAt, cashBefore) end
@@ -1547,22 +1540,36 @@ local function installRemoteHook()
             state.remoteHookError = "не удалось поставить Remote hook"
             return false
         end
-        function bus:setListener(listener, preflight)
+        function bus:setListener(listener)
             self.listener = listener
-            self.preflight = preflight
         end
         env.__TDMacroRemoteBus = bus
     end
-    bus:setListener(captureRemote, function()
-        if state.recording and state.config and state.config.settings.remoteMode then
-            return readCashSourceFast(state.cashSource)
-        end
-        return nil
-    end)
+    bus:setListener(captureRemote)
     state.remoteBus = bus
     state.remoteHookReady = true
     return true
 end
+
+-- Keep the money snapshot fresh outside __namecall. This is O(1) after the
+-- source is discovered and preserves cash-before-action without putting any
+-- recording logic back in front of the game's real click/Remote path.
+local cashSnapshotAccumulator = 0
+keep(RunService.Heartbeat:Connect(function(delta)
+    if state.destroyed or not state.recording or not state.remoteBus then
+        cashSnapshotAccumulator = 0
+        return
+    end
+    cashSnapshotAccumulator += delta
+    if cashSnapshotAccumulator < 0.05 then return end
+    cashSnapshotAccumulator = 0
+    local value = readCashSourceFast(state.cashSource)
+    if value ~= nil then
+        state.cashCache = value
+        state.cashCacheAt = os.clock()
+        state.remoteBus.cashSnapshot = value
+    end
+end))
 
 keep(workspace.DescendantAdded:Connect(function(object)
     if not state.recording or not state.recordingLive or not state.config or not state.config.settings.remoteMode then return end
@@ -2557,10 +2564,11 @@ local function startRecording()
     state.touchGestures = {}
     state.nextTouchId = 0
     if state.config.settings.remoteMode and readCashSourceFast(state.cashSource) == nil then
-        -- One synchronous discovery before recording becomes active. This may
-        -- cost a frame, but it cannot race the game buttons afterwards.
+        -- One discovery before recording becomes active. During recording the
+        -- source is read directly; __namecall never performs discovery work.
         pcall(detectMatchCash, true)
     end
+    if state.remoteBus then state.remoteBus.cashSnapshot = readCashSourceFast(state.cashSource) or state.cashCache end
     state.recording = true
     if state.config.settings.remoteMode then
         if not state.remoteHookReady then
