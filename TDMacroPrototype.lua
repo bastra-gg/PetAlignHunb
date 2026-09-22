@@ -2,7 +2,7 @@
 -- Records tower actions and replays the same server remotes without moving the camera.
 
 local VERSION = 2
-local SCRIPT_VERSION = "1.4.16"
+local SCRIPT_VERSION = "1.4.17"
 local REMOTE_BUS_VERSION = 5
 local ROOT_FOLDER = "TDMacroLab"
 local CONFIG_FILE = ROOT_FOLDER .. "/config.json"
@@ -1787,6 +1787,7 @@ local function transition(nextState, reason)
 end
 
 local function resetMatchTracking(delay)
+    state.replayCheck = nil
     state.autoRunToken += 1
     state.controlRunId += 1
     state.controllerNotBefore = delay and delay > 0 and (os.clock() + delay) or 0
@@ -2923,13 +2924,13 @@ local function controlState(kind, object)
     return nil
 end
 
-local function clickBinding(kind, quiet)
-    local x, y, object = bindingPoint(kind, false)
+local function clickBinding(kind, quiet, physicalOnly, requireLive)
+    local x, y, object = bindingPoint(kind, requireLive == true)
     if not x then
         if not quiet then log(kind .. ": кнопка не найдена") end
         return false
     end
-    local direct = activateGuiButton(object)
+    local direct = not physicalOnly and activateGuiButton(object)
     if direct then
         if not quiet then log(kind .. ": включено напрямую") end
         return true
@@ -3082,7 +3083,7 @@ local endWords = {
     "завершено", "матч окончен", "играть снова", "сыграть снова",
 }
 
-local function endDetected()
+local function endDetected(visibleOnly)
     local x = bindingPoint("playAgain", true)
     if x then return true, "Play Again видна" end
     local playerGui = player:FindFirstChildOfClass("PlayerGui")
@@ -3114,9 +3115,71 @@ local function endDetected()
         end
     end
     local timeout = tonumber(state.config.settings.endTimeout) or 600
-    if state.playbackFinishedAt > 0 and os.clock() - state.playbackFinishedAt >= timeout then
+    if not visibleOnly and state.playbackFinishedAt > 0 and os.clock() - state.playbackFinishedAt >= timeout then
         return true, "таймаут"
     end
+    return false
+end
+
+local function waitForReplayTransition(autoRunToken)
+    local deadline = os.clock() + 30
+    local nextAttempt = os.clock() + 0.8
+    local attempts = 0
+    local initialClock = detectGameClock()
+    local tracking = state.replayCheck
+    if not tracking or tracking.token ~= autoRunToken then
+        tracking = {token = autoRunToken, sawResults = endDetected(true) == true,
+            initialWave = initialClock and tonumber(initialClock.wave)}
+        state.replayCheck = tracking
+    end
+    local sawResults = tracking.sawResults
+    local initialWave = tracking.initialWave
+    local hiddenSince, hiddenClock = nil, nil
+    while os.clock() < deadline do
+        if autoRunToken ~= state.autoRunToken or not state.config.settings.auto
+            or state.destroyed or state.recording or state.playing
+            or state.controllerState ~= "REPLAY" then return nil end
+        local resultsVisible = endDetected(true) == true
+        local clock = detectGameClock()
+        local wave = clock and tonumber(clock.wave)
+        if resultsVisible then
+            sawResults = true
+            tracking.sawResults = true
+            hiddenSince, hiddenClock = nil, nil
+        elseif sawResults or (initialWave and initialWave > 1 and wave and wave <= 1) then
+            if not hiddenSince then
+                hiddenSince = os.clock()
+                hiddenClock = clock and clock.time
+            end
+            local newWave = wave ~= nil and wave <= 1
+            local movingClock = wave == nil and clock and clock.time ~= nil
+                and hiddenClock ~= nil and clock.time ~= hiddenClock
+            if (newWave or movingClock) and rootPart() and workspace.CurrentCamera
+                and os.clock() - hiddenSince >= 1 then
+                log("Играть снова: новая катка подтверждена")
+                state.replayCheck = nil
+                return true
+            end
+        end
+        if state.config.settings.autoPlayAgain and os.clock() >= nextAttempt then
+            -- Reacquire rebuilt/late result controls. Never tap old saved coordinates.
+            state.bindingScanAt = 0
+            local x, _, object = bindingPoint("playAgain", true)
+            local enabled = x ~= nil
+            if object then
+                pcall(function() if object.Interactable == false then enabled = false end end)
+            end
+            if enabled and not hiddenSince then
+                attempts += 1
+                -- A signal can run without changing the game. Try actual input next.
+                local sent = clickBinding("playAgain", true, attempts % 2 == 0, true)
+                if sent then log("Играть снова: попытка " .. tostring(attempts) .. " · жду переход") end
+            end
+            nextAttempt = os.clock() + 2
+        end
+        task.wait(0.2)
+    end
+    log("Играть снова: переход не подтверждён · продолжу проверять")
     return false
 end
 
@@ -3233,28 +3296,32 @@ keep(RunService.Heartbeat:Connect(function(delta)
         end
     elseif state.controllerState == "WAIT_END" then
         local ended, reason = endDetected()
+        if state.replayCheck and state.replayCheck.token == state.autoRunToken then
+            ended, reason = true, "повторная проверка перехода"
+        end
         if ended then
             transition("REPLAY", reason)
             local autoRunToken = state.autoRunToken
             task.spawn(function()
-                task.wait(0.8)
-                if autoRunToken ~= state.autoRunToken or not state.config.settings.auto then return end
-                if state.config.settings.autoPlayAgain then
-                    local clicked = false
-                    for _ = 1, 4 do
-                        if autoRunToken ~= state.autoRunToken or not state.config.settings.auto then return end
-                        if clickBinding("playAgain", true) then clicked = true break end
-                        task.wait(0.35)
-                    end
-                    log(clicked and "playAgain: нажато" or "playAgain: кнопка не сработала", not clicked)
+                local ok, confirmed = pcall(waitForReplayTransition, autoRunToken)
+                if not ok then
+                    log("Играть снова: ошибка проверки · " .. tostring(confirmed), true)
+                    confirmed = false
                 end
-                if autoRunToken ~= state.autoRunToken or not state.config.settings.auto then return end
+                if confirmed == nil or autoRunToken ~= state.autoRunToken
+                    or not state.config.settings.auto or state.playing or state.recording or state.destroyed then return end
+                if not confirmed then
+                    state.controllerNotBefore = os.clock() + 3
+                    transition("WAIT_END", "жду кнопку или подтверждение новой катки")
+                    refreshAll()
+                    return
+                end
                 if not state.config.settings.autoLoop then
                     state.config.settings.auto = false
                     resetMatchTracking(0)
                     transition("IDLE", "цикл выключен")
                 else
-                    resetMatchTracking(5)
+                    resetMatchTracking(0)
                     transition("WAIT_MATCH", "жду новую карту")
                 end
                 saveDisk()
