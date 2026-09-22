@@ -3,7 +3,7 @@
 -- 1.5.0: autonomous macros + server StartedAt timeline + late-start catch-up.
 
 local VERSION = 2
-local SCRIPT_VERSION = "1.5.3"
+local SCRIPT_VERSION = "1.5.5"
 local REMOTE_BUS_VERSION = 5
 local ROOT_FOLDER = "TDMacroLab"
 local CONFIG_FILE = ROOT_FOLDER .. "/config.json"
@@ -282,7 +282,7 @@ local aliases = {
     },
     playAgain = {
         "play again", "playagain", "replay", "retry", "try again", "retry battle",
-        "restart", "restart match", "again", "return match",
+        "restart", "restart match", "again",
         "играть снова", "сыграть снова", "повторить", "заново",
     },
 }
@@ -3378,12 +3378,42 @@ local endWords = {
     "завершено", "матч окончен", "играть снова", "сыграть снова",
 }
 
+local function resultContext(object)
+    if not object then return false end
+    local current = object
+    for _ = 1, 9 do
+        if not current then break end
+        local name = Core.cleanText(current.Name)
+        if name:find("gameend", 1, true)
+            or name:find("game end", 1, true)
+            or name:find("result", 1, true)
+            or name:find("defeat", 1, true)
+            or name:find("victory", 1, true)
+            or name:find("gameover", 1, true)
+            or name:find("game over", 1, true)
+            or name:find("finish", 1, true) then
+            return true
+        end
+        current = current.Parent
+    end
+    return false
+end
+
 local function endDetected(visibleOnly)
-    local x = bindingPoint("playAgain", true)
-    if x then return true, "Play Again видна" end
+    local x, _, playAgainObject = bindingPoint("playAgain", true, true)
+    if x and playAgainObject and resultContext(playAgainObject) then
+        return true, "Play Again видна"
+    end
     local playerGui = player:FindFirstChildOfClass("PlayerGui")
     if playerGui then
         for _, object in ipairs(playerGui:GetDescendants()) do
+            if object:IsA("GuiObject") and instanceVisible(object) and resultContext(object) then
+                local name = Core.cleanText(object.Name)
+                if name:find("gameend", 1, true) or name:find("defeat", 1, true)
+                    or name:find("victory", 1, true) or name:find("gameover", 1, true) then
+                    return true, object.Name
+                end
+            end
             if (object:IsA("TextLabel") or object:IsA("TextButton")) and instanceVisible(object) then
                 local text = Core.cleanText(object.Text)
                 for _, word in ipairs(endWords) do
@@ -3466,7 +3496,7 @@ local function waitForReplayTransition(autoRunToken)
             end
         end
 
-        if state.config.settings.autoPlayAgain and resultsVisible and os.clock() >= nextAttempt then
+        if state.config.settings.autoPlayAgain and sawResults and os.clock() >= nextAttempt then
             attempts += 1
             state.bindingScanAt = 0
             state.bindingScan = {}
@@ -3563,6 +3593,11 @@ keep(RunService.Heartbeat:Connect(function(delta)
     controllerAccumulator = 0
     if not state.config or not state.config.settings.auto or state.recording then return end
     if state.playing then
+        local ended, reason = endDetected(true)
+        if ended then
+            stopCurrentMacro("Матч завершён · " .. tostring(reason or "results"))
+            return
+        end
         if state.controllerState ~= "PLAYING" then transition("PLAYING", "макрос уже запущен") end
         return
     end
