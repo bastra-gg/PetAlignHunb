@@ -1,0 +1,33 @@
+name: Verify Main VM Fastfix
+
+on:
+  push:
+    paths:
+      - ".github/workflows/verify-main-vm-fastfix.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Fetch and parse protected variants
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq lua5.4
+          URL='https://szfjrpkdbccsveklkwyy.supabase.co/functions/v1/rb-main-core'
+          seen=''
+          for i in $(seq 1 18); do
+            curl -fsS -D /tmp/h "$URL?cb=$(date +%s)-$RANDOM-$i" -o /tmp/core.lua
+            v="$(tr -d '\r' </tmp/h | awk -F': ' 'tolower($1)=="x-rb-variant"{print $2}' | tail -1)"
+            echo "try=$i variant=$v bytes=$(wc -c </tmp/core.lua)"
+            grep -q 'Custom bytecode VM' /tmp/core.lua
+            ! grep -q 'task.wait' /tmp/core.lua
+            lua5.4 -e 'assert(loadfile("/tmp/core.lua"))'
+            seen="$seen $v"
+          done
+          echo "seen:$seen"
