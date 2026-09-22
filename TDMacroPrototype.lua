@@ -2,7 +2,7 @@
 -- Records tower actions and replays the same server remotes without moving the camera.
 
 local VERSION = 2
-local SCRIPT_VERSION = "1.4.17-mapfix"
+local SCRIPT_VERSION = "1.4.17-mapfix2"
 local REMOTE_BUS_VERSION = 5
 local ROOT_FOLDER = "TDMacroLab"
 local CONFIG_FILE = ROOT_FOLDER .. "/config.json"
@@ -66,6 +66,28 @@ function Core.mapBindingKey(fingerprint)
         tostring(fingerprint.placeId or 0),
         tostring(fingerprint.mapKey or "unknown"),
     }, "::")
+end
+
+function Core.mapDisplayName(value)
+    local raw = tostring(value or "unknown")
+    raw = raw:match("^%d+::(.+)$") or raw
+
+    if raw:sub(1, 5) == "attr:" then
+        raw = raw:sub(6)
+    elseif raw:sub(1, 6) == "value:" then
+        raw = raw:sub(7)
+    elseif raw:sub(1, 5) == "maps:" then
+        raw = raw:sub(6)
+    elseif raw:sub(1, 7) == "object:" then
+        raw = raw:sub(8):gsub(":%d+$", "")
+    elseif raw:sub(1, 6) == "world:" then
+        local hash = raw:sub(7)
+        return "Карта #" .. hash:sub(math.max(1, #hash - 5))
+    end
+
+    raw = raw:gsub("^%s+", ""):gsub("%s+$", "")
+    if raw == "" or raw == "unknown" then return "Неизвестная карта" end
+    return raw
 end
 
 function Core.boundMacroId(currentFingerprint, manualMatches, mapMatches)
@@ -235,20 +257,33 @@ end
 function Core.chooseMacro(macros, currentFingerprint, manualMatches, mapMatches)
     local mapKey = Core.mapBindingKey(currentFingerprint)
     local explicitBoundId = type(mapMatches) == "table" and mapMatches[mapKey] or nil
-    local legacyBoundId = nil
 
-    -- Old versions sometimes stored "bind to map" as map+spawn. Treat that
-    -- only as a legacy map binding and ignore the random spawn suffix.
-    if not explicitBoundId and type(manualMatches) == "table" then
+    -- 1) Explicit "ПРИВЯЗАТЬ К КАРТЕ" is absolute priority.
+    if explicitBoundId then
+        for _, macro in ipairs(type(macros) == "table" and macros or {}) do
+            if macro.id == explicitBoundId and tonumber(macro.placeId) == tonumber(currentFingerprint.placeId) then
+                return macro, {macro}
+            end
+        end
+    end
+
+    -- Compatibility with old map+spawn bindings. Spawn itself is ignored.
+    if type(manualMatches) == "table" then
         local prefix = mapKey .. "::"
         for oldKey, macroId in pairs(manualMatches) do
             if tostring(oldKey):sub(1, #prefix) == prefix then
-                legacyBoundId = macroId
+                for _, macro in ipairs(type(macros) == "table" and macros or {}) do
+                    if macro.id == macroId and tonumber(macro.placeId) == tonumber(currentFingerprint.placeId) then
+                        return macro, {macro}
+                    end
+                end
                 break
             end
         end
     end
 
+    -- 2) No explicit binding: choose among macros recorded on this map.
+    -- "ОСНОВНЫМ" wins, then last used, then newest.
     local candidates = {}
     for _, macro in ipairs(type(macros) == "table" and macros or {}) do
         if tonumber(macro.placeId) == tonumber(currentFingerprint.placeId)
@@ -256,18 +291,13 @@ function Core.chooseMacro(macros, currentFingerprint, manualMatches, mapMatches)
             candidates[#candidates + 1] = macro
         end
     end
-
-    local preferredId = explicitBoundId or legacyBoundId
     table.sort(candidates, function(a, b)
-        local aBound, bBound = a.id == preferredId, b.id == preferredId
-        if aBound ~= bBound then return aBound end
         if (a.isDefault == true) ~= (b.isDefault == true) then return a.isDefault == true end
         if (tonumber(a.lastUsed) or 0) ~= (tonumber(b.lastUsed) or 0) then
             return (tonumber(a.lastUsed) or 0) > (tonumber(b.lastUsed) or 0)
         end
         return (tonumber(a.savedAt) or 0) > (tonumber(b.savedAt) or 0)
     end)
-
     return candidates[1], candidates
 end
 
@@ -3718,12 +3748,21 @@ end)
 button(macrosPage, "УДАЛИТЬ", UDim2.new(0.81, 4, 1, -84), UDim2.new(0.19, -4, 0, 35), function()
     local macro = selectedMacro()
     if not macro then return end
+
+    -- Never leave dead bindings pointing to a deleted macro.
+    for mapKey, macroId in pairs(state.config.mapMatches or {}) do
+        if macroId == macro.id then state.config.mapMatches[mapKey] = nil end
+    end
+    for exactKey, macroId in pairs(state.config.manualMatches or {}) do
+        if macroId == macro.id then state.config.manualMatches[exactKey] = nil end
+    end
     for index, other in ipairs(state.config.macros) do
         if other.id == macro.id then table.remove(state.config.macros, index) break end
     end
     state.selectedId = state.config.macros[1] and state.config.macros[1].id or nil
     saveDisk()
     refreshMacros()
+    refreshAll()
 end, Color3.fromRGB(117, 49, 62))
 
 button(macrosPage, "ЗАПУСТИТЬ", UDim2.new(0, 0, 1, -41), UDim2.new(0.34, -4, 0, 35), function()
@@ -3736,7 +3775,9 @@ button(macrosPage, "ПРИВЯЗАТЬ К КАРТЕ", UDim2.new(0.34, 4, 1, -41
     local mapKey = Core.mapBindingKey(current)
     state.config.mapMatches[mapKey] = macro.id
     saveDisk()
-    log("Карта привязана к " .. macro.name .. " · это приоритет №1")
+    log(Core.mapDisplayName(current.mapKey) .. " → " .. macro.name .. " · приоритет №1")
+    refreshMacros()
+    refreshAll()
 end)
 button(macrosPage, "СТОП МАКРОСА", UDim2.new(0.73, 4, 1, -41), UDim2.new(0.27, -4, 0, 35), function()
     stopCurrentMacro("Макрос остановлен пользователем")
@@ -3916,13 +3957,28 @@ refreshMacros = function()
         empty.LayoutOrder = 1
         return
     end
+
+    local boundMapsByMacro = {}
+    for mapKey, macroId in pairs(state.config.mapMatches or {}) do
+        boundMapsByMacro[macroId] = boundMapsByMacro[macroId] or {}
+        boundMapsByMacro[macroId][#boundMapsByMacro[macroId] + 1] = Core.mapDisplayName(mapKey)
+    end
+    for _, names in pairs(boundMapsByMacro) do table.sort(names) end
+
     for index, macro in ipairs(state.config.macros) do
         local duration = #macro.events > 0 and (tonumber(macro.events[#macro.events].t) or 0) or 0
-        local marker = macro.isDefault and "★ " or ""
-        local text = string.format("%s%s  [%s]\n%s · %s · %.1f сек · %d событий", marker, macro.name,
+        local recordedMap = Core.mapDisplayName(macro.fingerprint and macro.fingerprint.mapKey)
+        local boundMaps = boundMapsByMacro[macro.id] or {}
+        local tags = {}
+        if #boundMaps > 0 then tags[#tags + 1] = "ПРИВЯЗАНО: " .. table.concat(boundMaps, ", ") end
+        if macro.isDefault then tags[#tags + 1] = "ОСНОВНОЙ: " .. recordedMap end
+        if #tags == 0 then tags[#tags + 1] = "КАРТА ЗАПИСИ: " .. recordedMap end
+
+        local text = string.format("%s  [%s]\n%s · %.1f сек · %d событий",
+            macro.name,
             macro.recordMode == "remote" and "СЕРВЕР" or "СТАРЫЙ",
-            tostring(macro.fingerprint.mapKey), tostring(macro.fingerprint.spawnKey), duration, #macro.events)
-        local row = button(list, text, UDim2.new(), UDim2.new(1, 0, 0, 51), function()
+            table.concat(tags, "  |  "), duration, #macro.events)
+        local row = button(list, text, UDim2.new(), UDim2.new(1, 0, 0, 58), function()
             state.selectedId = macro.id
             state.labels.renameBox.Text = macro.name
             refreshMacros()
@@ -3995,7 +4051,18 @@ refreshAll = function()
         state.labels.playSelectedButton.Text = macro and ("ЗАПУСТИТЬ: " .. macro.name) or "СНАЧАЛА СОЗДАЙ МАКРОС"
     end
     local current = fingerprint()
-    if state.labels.fingerprint then state.labels.fingerprint.Text = current.mapKey .. " · " .. current.spawnKey end
+    if state.labels.fingerprint then
+        local mapKey = Core.mapBindingKey(current)
+        local boundId = state.config.mapMatches and state.config.mapMatches[mapKey]
+        local boundName = nil
+        if boundId then
+            for _, macro in ipairs(state.config.macros or {}) do
+                if macro.id == boundId then boundName = macro.name break end
+            end
+        end
+        state.labels.fingerprint.Text = "КАРТА: " .. Core.mapDisplayName(current.mapKey)
+            .. (boundName and ("  →  " .. boundName) or "  →  не привязана")
+    end
     if state.labels.storage then
         local hook = state.remoteHookReady and "СЕРВЕРНЫЙ РЕЖИМ ГОТОВ" or "ОШИБКА СЕРВЕРНОГО РЕЖИМА"
         state.labels.storage.Text = state.memoryOnly and "MEMORY ONLY · записи пропадут после перезапуска"
