@@ -3,7 +3,7 @@
 -- 1.5.0: autonomous macros + server StartedAt timeline + late-start catch-up.
 
 local VERSION = 2
-local SCRIPT_VERSION = "1.5.7"
+local SCRIPT_VERSION = "1.5.8"
 local REMOTE_BUS_VERSION = 5
 local ROOT_FOLDER = "TDMacroLab"
 local CONFIG_FILE = ROOT_FOLDER .. "/config.json"
@@ -438,6 +438,7 @@ local state = {
     matchReadySince = 0,
     resultObject = nil,
     resultSignal = nil,
+    resultVisible = false,
     cashCacheAt = 0,
     cashCache = nil,
     cashSource = nil,
@@ -2012,6 +2013,7 @@ local function resetMatchTracking(delay)
     state.matchReadySince = 0
     state.resultObject = nil
     state.resultSignal = nil
+    state.resultVisible = false
     resetWaveSync()
 end
 
@@ -3407,68 +3409,92 @@ local function resultContext(object)
     return false
 end
 
-local function markResultObject(object)
-    if not object or not object:IsA("GuiObject") then return end
-
+local function resultCandidate(object)
+    if not object or not object:IsA("GuiObject") then return false end
     local name = Core.cleanText(object.Name)
     local text = ""
     if object:IsA("TextLabel") or object:IsA("TextButton") then
         text = Core.cleanText(object.Text)
     end
-
-    local strongName = name:find("gameend", 1, true)
+    return name:find("gameend", 1, true)
         or name:find("game end", 1, true)
         or name:find("gameover", 1, true)
         or name:find("game over", 1, true)
         or name:find("defeat", 1, true)
         or name:find("victory", 1, true)
         or name:find("result", 1, true)
-
-    local strongText = text == "defeat" or text == "victory"
+        or text == "defeat" or text == "victory"
         or text == "you lost" or text == "you win"
         or text == "поражение" or text == "победа"
+end
 
-    if strongName or strongText then
-        state.resultObject = object
-        state.resultSignal = strongText and text or name
+local function observeResultObject(object)
+    if not resultCandidate(object) then return end
+
+    local function refresh()
+        if state.destroyed or not object:IsDescendantOf(game) then return end
+        local visible = instanceVisible(object)
+        if visible then
+            state.resultObject = object
+            state.resultSignal = object.Name
+            state.resultVisible = true
+        elseif state.resultObject == object then
+            state.resultVisible = false
+        end
+    end
+
+    refresh()
+    keep(object:GetPropertyChangedSignal("Visible"):Connect(refresh))
+    if object:IsA("TextLabel") or object:IsA("TextButton") then
+        keep(object:GetPropertyChangedSignal("Text"):Connect(refresh))
     end
 end
 
 local function installResultWatcher()
-    local playerGui = player:FindFirstChildOfClass("PlayerGui") or player:WaitForChild("PlayerGui", 10)
+    local playerGui = player:FindFirstChildOfClass("PlayerGui")
     if not playerGui then return end
 
-    -- One lightweight top-level pass at install; after that result detection is
-    -- event-driven instead of rescanning the whole PlayerGui every 0.5 seconds.
-    for _, child in ipairs(playerGui:GetChildren()) do
-        if child:IsA("GuiObject") then markResultObject(child) end
+    -- One startup pass only. During gameplay there is no repeated full-GUI scan.
+    for _, object in ipairs(playerGui:GetDescendants()) do
+        observeResultObject(object)
     end
 
     keep(playerGui.DescendantAdded:Connect(function(object)
         if state.destroyed then return end
-        markResultObject(object)
+        observeResultObject(object)
     end))
 end
 
 local function liveResultSignal()
     local object = state.resultObject
-    if not object or not object:IsDescendantOf(game) then
-        state.resultObject = nil
-        state.resultSignal = nil
+    if not state.resultVisible or not object or not object:IsDescendantOf(game) then
         return false, nil
     end
-
-    if instanceVisible(object) or resultContext(object) then
+    if instanceVisible(object) then
         return true, state.resultSignal or object.Name
     end
+    state.resultVisible = false
     return false, nil
 end
 
-local function endDetected(visibleOnly)
-    local signaled, signal = liveResultSignal()
-    if signaled then return true, signal end
-    if visibleOnly then return false end
+local function matchReadyForOpening()
+    local waveState = ReplicatedStorage:FindFirstChild("WaveState")
+    if not waveState then return false end
 
+    local wave = tonumber(waveState:GetAttribute("CurrentWave"))
+    local intermission = tonumber(waveState:GetAttribute("IntermissionRemaining"))
+    local startedAt = tonumber(waveState:GetAttribute("StartedAt"))
+
+    -- Wave 0 is valid: this is exactly when opening towers are allowed.
+    -- We only reject the broken/transient map-change state where wave=0,
+    -- StartedAt is still zero AND no intermission countdown is actually running.
+    if startedAt and startedAt > 0 then return true end
+    if wave and wave >= 1 then return true end
+    if wave == 0 and intermission and intermission > 0 then return true end
+    return false
+end
+
+local function endDetected(visibleOnly)
     local x, _, playAgainObject = bindingPoint("playAgain", true, true)
     if x and playAgainObject and resultContext(playAgainObject) then
         return true, "Play Again видна"
@@ -3662,7 +3688,7 @@ keep(RunService.Heartbeat:Connect(function(delta)
     controllerAccumulator = 0
     if not state.config or not state.config.settings.auto or state.recording then return end
     if state.playing then
-        local ended, reason = endDetected(true)
+        local ended, reason = liveResultSignal()
         if ended then
             stopCurrentMacro("Матч завершён · " .. tostring(reason or "results"))
             return
@@ -3684,22 +3710,18 @@ keep(RunService.Heartbeat:Connect(function(delta)
             return
         end
 
-        local waveState = ReplicatedStorage:FindFirstChild("WaveState")
-        if waveState then
-            local liveWave = tonumber(waveState:GetAttribute("CurrentWave"))
-            if not liveWave or liveWave <= 0 then
-                state.stableKey = nil
-                state.matchReadySince = 0
-                transition("WAIT_MATCH", "карта загружается · жду WaveState")
-                return
-            end
-
-            if state.matchReadySince <= 0 then
-                state.matchReadySince = os.clock()
-                return
-            end
-            if os.clock() - state.matchReadySince < 0.35 then return end
+        if not matchReadyForOpening() then
+            state.matchReadySince = 0
+            state.stableKey = nil
+            transition("WAIT_MATCH", "карта ещё не инициализирована")
+            return
         end
+
+        if state.matchReadySince <= 0 then
+            state.matchReadySince = os.clock()
+            return
+        end
+        if os.clock() - state.matchReadySince < 0.2 then return end
 
         -- Script startup time is irrelevant. AUTO may attach before the match
         -- starts or in the middle of an already-running match.
