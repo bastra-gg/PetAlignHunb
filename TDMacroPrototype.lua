@@ -3,7 +3,7 @@
 -- 1.5.0: autonomous macros + server StartedAt timeline + late-start catch-up.
 
 local VERSION = 2
-local SCRIPT_VERSION = "1.5.2"
+local SCRIPT_VERSION = "1.5.1"
 local REMOTE_BUS_VERSION = 5
 local ROOT_FOLDER = "TDMacroLab"
 local CONFIG_FILE = ROOT_FOLDER .. "/config.json"
@@ -426,7 +426,6 @@ local state = {
     waitFreshMatch = false,
     lastAutoStartedAt = nil,
     replayCheck = nil,
-    controlsPrearmed = false,
     cashCacheAt = 0,
     cashCache = nil,
     cashSource = nil,
@@ -1901,7 +1900,6 @@ local function resetMatchTracking(delay)
     state.bindingScanAt = 0
     state.bindingScan = {}
     state.replayCheck = nil
-    state.controlsPrearmed = false
 end
 
 local function releaseAll()
@@ -3177,52 +3175,47 @@ end
 armMatchControls = function()
     state.controlRunId += 1
     local runId = state.controlRunId
+    local pending = {}
+    if state.config.settings.autoSkip then pending.autoSkip = {attempts = 0, maxAttempts = 3} end
+    if not state.config.settings.x2 and not next(pending) then return end
 
-    -- AUTO SKIP is timing-critical. It must not wait behind the speed routine:
-    -- even a 1-2 second late enable changes wave/cash progression and then the
-    -- cash guard legitimately delays recorded actions.
-    if state.config.settings.autoSkip then
-        task.spawn(function()
-            local deadline = os.clock() + 20
-            local attempts = 0
-            while runId == state.controlRunId and (state.config.settings.auto or state.playing)
-                and not state.destroyed and os.clock() < deadline do
-                local _, _, object = bindingPoint("autoSkip", false, true)
+    task.spawn(function()
+        if state.config.settings.x2 then setMaximumGameSpeed(runId) end
+        local deadline = os.clock() + 12
+        while runId == state.controlRunId and (state.config.settings.auto or state.playing) and not state.destroyed
+            and os.clock() < deadline and next(pending) do
+            for kind, item in pairs(pending) do
+                local _, _, object = bindingPoint(kind, false)
                 if object then
-                    local before = controlState("autoSkip", object)
+                    local before = controlState(kind, object)
                     if before == true then
-                        log("autoSkip: уже включено")
-                        return
-                    end
-                    if attempts < 5 then
-                        attempts += 1
-                        local sent = clickBinding("autoSkip", true, true, attempts % 2 == 0)
-                        if sent then
-                            task.wait(0.10)
-                            local _, _, currentObject = bindingPoint("autoSkip", false, true)
-                            local after = controlState("autoSkip", currentObject or object)
+                        log(kind .. ": уже включено")
+                        pending[kind] = nil
+                    elseif item.attempts < item.maxAttempts then
+                        item.attempts += 1
+                        if clickBinding(kind, true) then
+                            task.wait(0.16)
+                            local _, _, currentObject = bindingPoint(kind, false)
+                            local after = controlState(kind, currentObject or object)
                             if after == true or after == nil then
-                                log("autoSkip: включено без задержки таймлайна")
-                                return
+                                log(kind .. ": включено")
+                                pending[kind] = nil
+                            elseif item.attempts >= item.maxAttempts then
+                                log(kind .. ": кнопка отвечает, состояние не включилось", true)
+                                pending[kind] = nil
                             end
                         end
                     end
                 end
-                task.wait(0.12)
             end
-            if runId == state.controlRunId then
-                log("autoSkip: кнопка не появилась/не включилась", true)
-            end
-        end)
-    end
-
-    -- Speed is independent and must never hold AUTO SKIP hostage.
-    if state.config.settings.x2 then
-        task.spawn(function()
-            setMaximumGameSpeed(runId)
-        end)
-    end
+            if next(pending) then task.wait(0.35) end
+        end
+        if runId == state.controlRunId then
+            for kind in pairs(pending) do log(kind .. ": кнопка не появилась", true) end
+        end
+    end)
 end
+
 local endWords = {
     "victory", "defeat", "completed", "you win", "you lost", "game over", "loss",
     "retry", "try again", "победа", "поражение", "проигрыш",
@@ -3386,12 +3379,9 @@ local function prepareAutoRun(immediate, preparedFingerprint, autoRunToken)
     if not remoteMacro then restoreCamera(macro.camera or (macro.fingerprint and macro.fingerprint.camera)) end
     if immediate then task.wait() else task.wait(0.35) end
     if autoRunToken ~= state.autoRunToken or not state.config.settings.auto then return end
-    -- Controls are pre-armed in WAIT_MATCH so AUTO SKIP / speed are already
-    -- active before StartedAt begins the authoritative match timeline.
-    if not state.controlsPrearmed then
-        state.controlsPrearmed = true
-        armMatchControls()
-    end
+    -- Current switches are authoritative. Old macros used to permanently block
+    -- x2/auto-skip when they were disabled during the original recording.
+    armMatchControls()
     if not immediate then task.wait(math.max(0, tonumber(state.config.settings.initialDelay) or 1.2)) end
     if autoRunToken == state.autoRunToken and state.config.settings.auto then
         if state.playing then
@@ -3431,11 +3421,6 @@ keep(RunService.Heartbeat:Connect(function(delta)
         if not workspace.CurrentCamera or not rootPart() then
             state.stableKey = nil
             return
-        end
-
-        if not state.controlsPrearmed then
-            state.controlsPrearmed = true
-            armMatchControls()
         end
 
         -- Script startup time is irrelevant. AUTO may attach before the match
@@ -3918,10 +3903,7 @@ makeToggle(autoPage, "МАКС. СКОРОСТЬ", UDim2.fromOffset(0, 73), func
 end)
 makeToggle(autoPage, "АВТОПРОПУСК ВОЛН", UDim2.new(0.5, 8, 0, 73), function() return state.config.settings.autoSkip end, function(value)
     state.config.settings.autoSkip = value
-    if value and (state.playing or state.config.settings.auto) then
-        state.controlsPrearmed = true
-        task.defer(armMatchControls)
-    end
+    if value and (state.playing or state.config.settings.auto) then task.defer(armMatchControls) end
 end)
 makeToggle(autoPage, "ИГРАТЬ СНОВА", UDim2.fromOffset(0, 119), function() return state.config.settings.autoPlayAgain end, function(value) state.config.settings.autoPlayAgain = value end)
 makeToggle(autoPage, "СЕРВЕРНЫЙ РЕЖИМ", UDim2.new(0.5, 8, 0, 119), function() return state.config.settings.remoteMode end, function(value) state.config.settings.remoteMode = value end)
