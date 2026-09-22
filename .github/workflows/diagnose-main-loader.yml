@@ -14,31 +14,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Fetch bootstrap and protected core
+      - name: Fetch direct protected MAIN core
         shell: bash
         run: |
           set -euo pipefail
-          BASE='https://szfjrpkdbccsveklkwyy.supabase.co/functions/v1/rb-bootstrap?r=b84fd76c51a903e2c4175a60'
-          curl -fsS -D /tmp/bootstrap.headers "$BASE&cb=$(date +%s)" -o /tmp/bootstrap.lua
-          echo "bootstrap_bytes=$(wc -c </tmp/bootstrap.lua)"
-          grep -q -- '-- RockBugHub core startup contract: 1' /tmp/bootstrap.lua
-          python3 - <<'PY'
-          import re, pathlib
-          s=pathlib.Path('/tmp/bootstrap.lua').read_text()
-          m=re.search(r'local _url=(["\'])(.+?)\1',s)
-          if not m:
-              raise SystemExit('core URL not found in bootstrap')
-          pathlib.Path('/tmp/core_url.txt').write_text(m.group(2))
-          print('bootstrap_has_core_url=yes')
-          print('bootstrap_has_length_check=' + ('yes' if 'incomplete core' in s else 'no'))
-          PY
-          CORE_URL="$(cat /tmp/core_url.txt)"
-          echo "core_url=$CORE_URL"
-          code="$(curl -sS -D /tmp/core.headers -o /tmp/core.lua -w '%{http_code}' "$CORE_URL&cb=$(date +%s)-123456")"
+          URL='https://szfjrpkdbccsveklkwyy.supabase.co/functions/v1/rb-main-core'
+          code="$(curl -sS -D /tmp/core.headers -o /tmp/core.lua -w '%{http_code}' "$URL?cb=$(date +%s)")"
           echo "core_http=$code"
-          echo "core_headers:"
-          grep -E '^(HTTP/|x-rb-|content-type|cache-control)' /tmp/core.headers || true
           echo "core_bytes=$(wc -c </tmp/core.lua)"
+          grep -E '^(HTTP/|x-rb-|content-type|cache-control)' /tmp/core.headers || true
           if [ "$code" != "200" ]; then
             echo -n "core_error_body="
             head -c 200 /tmp/core.lua || true
@@ -48,13 +32,11 @@ jobs:
           grep -q 'Custom bytecode VM' /tmp/core.lua
           echo "core_vm_marker=yes"
 
-      - name: Syntax check fetched Lua
+      - name: Syntax check protected core
         shell: bash
         run: |
           set -euo pipefail
           sudo apt-get update -qq
           sudo apt-get install -y -qq lua5.4
-          lua5.4 -e 'assert(loadfile("/tmp/bootstrap.lua"))'
-          echo "bootstrap_parse=ok"
           lua5.4 -e 'assert(loadfile("/tmp/core.lua"))'
           echo "core_parse=ok"
