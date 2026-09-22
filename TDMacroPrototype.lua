@@ -2,7 +2,7 @@
 -- Records tower actions and replays the same server remotes without moving the camera.
 
 local VERSION = 2
-local SCRIPT_VERSION = "1.4.20"
+local SCRIPT_VERSION = "1.4.21"
 local REMOTE_BUS_VERSION = 5
 local ROOT_FOLDER = "TDMacroLab"
 local CONFIG_FILE = ROOT_FOLDER .. "/config.json"
@@ -2155,11 +2155,19 @@ local function waitForRecordedMoment(event, clockConfig, timing, token, playback
     local eventWave = tonumber(event.wave)
     local eventWaveTime = tonumber(event.waveTime)
     local eventGameClock = tonumber(event.gameClock)
+    local nextDiagnostic = os.clock() + 5
     while token == state.playToken and state.playing and not state.destroyed do
         while state.paused and token == state.playToken do task.wait(0.05) end
         if token ~= state.playToken or not state.playing or state.destroyed or isMatchOver() then return false end
         local current = detectGameClock()
         observePlaybackClock(timing, current, clockConfig)
+        if os.clock() >= nextDiagnostic then
+            log("Ожидание · wave " .. tostring(current and current.wave) .. " → " .. tostring(eventWave)
+                .. " · clock " .. tostring(current and current.time) .. " → " .. tostring(eventGameClock)
+                .. " · waveTime " .. tostring(eventWaveTime)
+                .. " · старт боя " .. tostring(timing.combatStarted))
+            nextDiagnostic = os.clock() + 15
+        end
         if timing.strictFirstWave and not timing.combatStarted and current then
             task.wait(0.04)
             continue
@@ -2376,6 +2384,8 @@ local function playMacro(macro, force, fromAuto, expectedFingerprint)
     end
 
     task.spawn(function()
+        local stage = "инициализация"
+        local ok, failure = xpcall(function()
         local tolerance = math.max(0.05, tonumber(state.config.settings.lateTolerance) or 0.35)
         local lastSent = 0
         local waveTiming = {
@@ -2423,12 +2433,16 @@ local function playMacro(macro, force, fromAuto, expectedFingerprint)
                     task.wait(0.04)
                 end
                 if token ~= state.playToken or not state.playing or state.destroyed then return end
+                stage = "старт · cash · " .. tostring(event.unitName or event.remoteName)
+                log(stage)
                 if not waitForRecordedCash(event, token, true) then
                     if token == state.playToken then stopCurrentMacro("Старт прерван: cash не подтверждён") end
                     return
                 end
                 while state.paused and token == state.playToken do task.wait(0.05) end
                 if token ~= state.playToken or not state.playing or state.destroyed then return end
+                stage = "старт · запрос установки · " .. tostring(event.unitName or event.remoteName)
+                log(stage)
                 local accepted, failure = replayRemoteEvent(event, token)
                 local retryUntil = os.clock() + 30
                 while not accepted and failure == "rejected" and os.clock() < retryUntil
@@ -2449,7 +2463,9 @@ local function playMacro(macro, force, fromAuto, expectedFingerprint)
             if confirmedOpening > 0 then log("Стартовые действия подтверждены · " .. tostring(confirmedOpening)) end
         end
 
-        for _, event in ipairs(macro.events) do
+        for eventIndex, event in ipairs(macro.events) do
+            stage = "событие " .. tostring(eventIndex) .. "/" .. tostring(#macro.events)
+                .. " · " .. tostring(event.action or event.kind)
             if token ~= state.playToken or state.destroyed then break end
             if openingSent[event] then continue end
             if event.kind == "remote" then
@@ -2474,7 +2490,11 @@ local function playMacro(macro, force, fromAuto, expectedFingerprint)
             local elapsed = (os.clock() - playbackStarted - state.pauseAccum) * speed
             local late = elapsed - (tonumber(event.t) or 0)
             if event.kind == "remote" then
-                replayRemoteEvent(event)
+                log(stage .. " · отправка")
+                if not replayRemoteEvent(event) then
+                    if token == state.playToken then stopCurrentMacro(stage .. " · запрос не выполнен, см. журнал") end
+                    return
+                end
                 lastSent = os.clock()
             elseif late > tolerance and event.kind == "mouse_wheel" then
                 -- Wheel bursts are disposable; clicks and releases are never dropped.
@@ -2503,6 +2523,13 @@ local function playMacro(macro, force, fromAuto, expectedFingerprint)
                 transition("IDLE")
             end
             refreshAll()
+        end
+        end, function(err)
+            return debug.traceback(tostring(err), 2)
+        end)
+        if not ok then
+            log("ОШИБКА · " .. stage .. " · " .. tostring(failure), true)
+            if token == state.playToken then stopCurrentMacro("Ошибка воспроизведения · " .. stage .. " · см. ЖУРНАЛ") end
         end
     end)
     return true
