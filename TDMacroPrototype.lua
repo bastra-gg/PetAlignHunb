@@ -2,7 +2,7 @@
 -- Records tower actions and replays the same server remotes without moving the camera.
 
 local VERSION = 2
-local SCRIPT_VERSION = "1.4.15"
+local SCRIPT_VERSION = "1.4.16"
 local REMOTE_BUS_VERSION = 5
 local ROOT_FOLDER = "TDMacroLab"
 local CONFIG_FILE = ROOT_FOLDER .. "/config.json"
@@ -1185,14 +1185,21 @@ local function requestCashDiscovery(force)
     end)
 end
 
-local function waitForRecordedCash(event, token)
+local function waitForRecordedCash(event, token, opening)
     local required = tonumber(event and event.cashBefore)
     if not required then return true end
 
     local warned = false
     local unseenSince = os.clock()
+    local startedAt = os.clock()
+    local pauseOrigin = state.pauseAccum or 0
     while token == state.playToken and state.playing and not state.destroyed do
         while state.paused and token == state.playToken do task.wait(0.05) end
+        if token ~= state.playToken or not state.playing or state.destroyed then return false end
+        if opening and os.clock() - startedAt - ((state.pauseAccum or 0) - pauseOrigin) >= 30 then
+            log("Старт остановлен: не удалось дождаться записанного cash", true)
+            return false
+        end
         local current = detectMatchCash(false)
         if current ~= nil then
             unseenSince = os.clock()
@@ -1203,7 +1210,7 @@ local function waitForRecordedCash(event, token)
             end
         else
             requestCashDiscovery(false)
-            if os.clock() - unseenSince >= 2.0 then
+            if not opening and os.clock() - unseenSince >= 2.0 then
                 -- Money sync is a safety guard, not permission to freeze the macro.
                 return true
             end
@@ -1919,12 +1926,13 @@ local function nearbyUnitCandidates(position)
     return output
 end
 
-local function resolvePlacedUnit(event, before)
-    if not event.unitId or type(event.position) ~= "table" then return end
+local function resolvePlacedUnit(event, before, token)
+    if not event.unitId or type(event.position) ~= "table" then return false end
     local position = Vector3.new(event.position.x or 0, event.position.y or 0, event.position.z or 0)
     local deadline = os.clock() + 2.5
     local best, bestDistance = nil, math.huge
     repeat
+        if token and (token ~= state.playToken or not state.playing or state.destroyed) then return false end
         for candidate in pairs(nearbyUnitCandidates(position)) do
             if not before[candidate] and candidate:IsDescendantOf(workspace) then
                 local candidatePosition = instancePosition(candidate)
@@ -1934,10 +1942,11 @@ local function resolvePlacedUnit(event, before)
         end
         if best then
             state.replayUnits[event.unitId] = best
-            return
+            return true
         end
         task.wait(0.1)
     until not state.playing or os.clock() >= deadline
+    return false
 end
 
 local function returnedInstance(value, depth)
@@ -1953,7 +1962,7 @@ local function returnedInstance(value, depth)
     return nil
 end
 
-local function replayRemoteEvent(event)
+local function replayRemoteEvent(event, openingToken)
     local remote = resolveInstancePath(event.remotePath)
     if not remote or (not remote:IsA("RemoteEvent") and not remote:IsA("RemoteFunction")) then
         log("Remote не найден: " .. tostring(event.remoteName), true)
@@ -1963,6 +1972,7 @@ local function replayRemoteEvent(event)
     for index = 1, tonumber(event.argCount) or #(event.args or {}) do
         arguments[index] = deserializeValue(event.args and event.args[index], 0)
     end
+    if openingToken and (openingToken ~= state.playToken or not state.playing or state.destroyed) then return false end
     local position = type(event.position) == "table"
         and Vector3.new(event.position.x or 0, event.position.y or 0, event.position.z or 0) or nil
     local before = event.action == "place" and nearbyUnitCandidates(position) or {}
@@ -1977,12 +1987,22 @@ local function replayRemoteEvent(event)
         log("Remote ошибка " .. tostring(event.action) .. ": " .. tostring(result), true)
         return false
     end
+    if result == false then
+        log("Сервер отклонил " .. tostring(event.action) .. " · " .. tostring(event.unitName or event.remoteName), true)
+        return false
+    end
+    if openingToken and (openingToken ~= state.playToken or not state.playing or state.destroyed) then return false end
     if event.action == "place" and event.unitId then
         local created = returnedInstance(result, 0)
-        if created then
+        if created and created:IsDescendantOf(workspace) then
             state.replayUnits[event.unitId] = created
+        elseif openingToken then
+            if not resolvePlacedUnit(event, before, openingToken) then
+                log("Установка не подтверждена: " .. tostring(event.unitName or event.remoteName), true)
+                return false
+            end
         else
-            task.spawn(resolvePlacedUnit, event, before)
+            task.spawn(resolvePlacedUnit, event, before, state.playToken)
         end
     end
     log(string.format("%s · %s%s", tostring(event.action), tostring(event.unitName or event.remoteName),
@@ -2032,6 +2052,49 @@ local function collectOpeningPlacements(events)
     return opening, false
 end
 
+-- Observe from launch, including while opening actions wait for cash/server.
+-- If attached after the boundary, a moving combat clock must still unlock wave 1.
+local function observePlaybackClock(timing, current, clockConfig)
+    if not current then return end
+    local direction = clockConfig and clockConfig.direction or "up"
+    local previousWave, previousClock = timing.wave, timing.lastClock
+    local changedWave = current.wave ~= nil and current.wave ~= previousWave
+    local changedClock = current.time ~= nil and previousClock ~= nil and current.time ~= previousClock
+    local observedDirection = changedClock and (current.time > previousClock and "up" or "down") or nil
+    local jump = changedClock and math.abs(current.time - previousClock) > 3
+    local anchorClock = current.time
+    local anchored = false
+
+    if timing.strictFirstWave and not timing.combatStarted then
+        local waveStarted = current.wave ~= nil and (current.wave > 1
+            or (previousWave ~= nil and previousWave < 1 and current.wave >= 1))
+        local waveWithoutTimer = current.wave ~= nil and current.wave >= 1 and current.time == nil
+        local boundary = changedClock and (jump
+            or (timing.preCombatDirection ~= nil and observedDirection ~= timing.preCombatDirection)
+            or (observedDirection == "up" and previousClock <= 1.5)
+            or (observedDirection == "down" and previousClock >= 15))
+        local activeWave = current.wave == nil or current.wave >= 1
+        local missedBoundary = activeWave and changedClock and observedDirection == direction
+        if waveStarted or waveWithoutTimer or (activeWave and boundary) or missedBoundary then
+            timing.combatStarted = true
+            anchored = true
+            timing.useAbsoluteClock = missedBoundary and not waveStarted and not jump
+                and not (timing.preCombatDirection ~= nil and observedDirection ~= timing.preCombatDirection)
+            if changedClock and not jump and not waveStarted then anchorClock = previousClock end
+        end
+        if observedDirection then timing.preCombatDirection = observedDirection end
+    elseif changedWave or jump then
+        anchored = true
+        timing.useAbsoluteClock = false
+    end
+    if anchored then
+        timing.waveStartClock = anchorClock
+        timing.waveStartedAt = os.clock()
+    end
+    if current.wave ~= nil then timing.wave = current.wave end
+    if current.time ~= nil then timing.lastClock = current.time end
+end
+
 local function waitForRecordedMoment(event, clockConfig, timing, token, playbackStarted)
     local direction = clockConfig and clockConfig.direction or "up"
     local eventWave = tonumber(event.wave)
@@ -2040,74 +2103,12 @@ local function waitForRecordedMoment(event, clockConfig, timing, token, playback
     while token == state.playToken and state.playing and not state.destroyed do
         while state.paused and token == state.playToken do task.wait(0.05) end
         local current = detectGameClock()
-        local justAnchoredCombat = false
-
-        -- New recordings have an explicit OPENING phase. While it is active,
-        -- wave 1 shown by the lobby is not enough to unlock later actions.
-        -- We wait for the real combat timer: wave transition, timer reset /
-        -- direction flip, or movement from a plausible wave boundary.
+        observePlaybackClock(timing, current, clockConfig)
         if timing.strictFirstWave and not timing.combatStarted and current then
-            local previousWave = timing.wave
-            local previousClock = timing.lastClock
-            local startCombat = false
-            local anchorClock = current.time
-
-            if current.wave ~= nil and current.wave > 1 then
-                startCombat = true
-            elseif previousWave ~= nil and previousWave < 1
-                and current.wave ~= nil and current.wave >= 1 then
-                startCombat = true
-            elseif current.wave == 1 and current.time ~= nil and previousClock ~= nil
-                and current.time ~= previousClock then
-                local observedDirection = current.time > previousClock and "up" or "down"
-                local clockJump = math.abs(current.time - previousClock)
-                local directionFlip = timing.preCombatDirection ~= nil
-                    and observedDirection ~= timing.preCombatDirection
-                local boundaryStart = timing.preCombatDirection == nil and (
-                    (observedDirection == "up" and previousClock <= 1.5)
-                    or (observedDirection == "down" and previousClock >= 15)
-                )
-
-                if clockJump > 3 or directionFlip or boundaryStart then
-                    startCombat = true
-                    if boundaryStart and clockJump <= 3 then anchorClock = previousClock end
-                end
-                timing.preCombatDirection = observedDirection
-            end
-
-            if startCombat then
-                timing.combatStarted = true
-                timing.wave = current.wave
-                timing.waveStartClock = anchorClock
-                timing.waveStartedAt = os.clock()
-                timing.lastClock = current.time
-                justAnchoredCombat = true
-            else
-                if current.wave ~= nil then timing.wave = current.wave end
-                if current.time ~= nil then timing.lastClock = current.time end
-                task.wait(0.04)
-                continue
-            end
+            task.wait(0.04)
+            continue
         end
 
-        if not justAnchoredCombat then
-            if current and current.wave ~= nil and current.wave ~= timing.wave then
-                timing.wave = current.wave
-                timing.waveStartClock = current.time
-                timing.waveStartedAt = os.clock()
-                timing.lastClock = current.time
-            elseif current and current.time ~= nil and timing.lastClock ~= nil and current.time ~= timing.lastClock then
-                local observedDirection = current.time > timing.lastClock and "up" or "down"
-                if math.abs(current.time - timing.lastClock) > 3 or observedDirection ~= direction then
-                    -- Same wave label can survive the lobby -> combat timer reset.
-                    timing.waveStartClock = current.time
-                    timing.waveStartedAt = os.clock()
-                end
-                timing.lastClock = current.time
-            elseif current and current.time ~= nil then
-                timing.lastClock = current.time
-            end
-        end
         local hasWaveClock = current and eventWave ~= nil and current.wave ~= nil
         if hasWaveClock then
             if current.wave > eventWave then return true end
@@ -2116,7 +2117,8 @@ local function waitForRecordedMoment(event, clockConfig, timing, token, playback
                 continue
             end
         end
-        if current and eventWaveTime ~= nil and current.wave == eventWave then
+        if current and eventWaveTime ~= nil and current.wave == eventWave
+            and not (timing.useAbsoluteClock and eventGameClock ~= nil and current.time ~= nil) then
             local waveElapsed
             if current.time ~= nil and timing.waveStartClock ~= nil then
                 waveElapsed = math.abs(current.time - timing.waveStartClock)
@@ -2322,8 +2324,7 @@ local function playMacro(macro, force, fromAuto, expectedFingerprint)
                     break
                 end
             end
-            -- Per-event wave/game-clock checks below are the only gate. A separate
-            -- first-wave detector caused valid macros to remain armed for many waves.
+            -- Keep the match clock running while opening actions are being confirmed.
             playbackStarted = os.clock()
             state.pauseAccum = 0
             log("Макрос активен · синхронизация по событиям")
@@ -2331,16 +2332,40 @@ local function playMacro(macro, force, fromAuto, expectedFingerprint)
             local opening, explicitOpeningPhase = collectOpeningPlacements(macro.events)
             waveTiming.strictFirstWave = explicitOpeningPhase
             waveTiming.combatStarted = not explicitOpeningPhase
+            observePlaybackClock(waveTiming, detectGameClock(), macro.clock)
+            task.spawn(function()
+                while token == state.playToken and state.playing and not state.destroyed do
+                    observePlaybackClock(waveTiming, detectGameClock(), macro.clock)
+                    task.wait(0.04)
+                end
+            end)
+            local openingOrigin = opening[1] and (tonumber(opening[1].t) or 0) or 0
+            local openingStarted = os.clock()
+            local openingPauseOrigin = state.pauseAccum
+            local confirmedOpening = 0
             for _, event in ipairs(opening) do
-                if token ~= state.playToken or state.destroyed then break end
+                local target = math.max(0, (tonumber(event.t) or 0) - openingOrigin) / speed
+                while token == state.playToken and state.playing and not state.destroyed do
+                    local elapsed = os.clock() - openingStarted - (state.pauseAccum - openingPauseOrigin)
+                    if not state.paused and elapsed >= target then break end
+                    task.wait(0.04)
+                end
+                if token ~= state.playToken or not state.playing or state.destroyed then return end
+                if not waitForRecordedCash(event, token, true) then
+                    if token == state.playToken then stopCurrentMacro("Старт прерван: cash не подтверждён") end
+                    return
+                end
                 while state.paused and token == state.playToken do task.wait(0.05) end
-                -- Before wave 1 we reproduce exactly the recorded opening with
-                -- the starting money. Cash adaptation begins only in combat.
-                if replayRemoteEvent(event) then openingSent[event] = true end
+                if token ~= state.playToken or not state.playing or state.destroyed then return end
+                if not replayRemoteEvent(event, token) then
+                    if token == state.playToken then stopCurrentMacro("Старт прерван: действие не подтверждено") end
+                    return
+                end
+                openingSent[event] = true
+                confirmedOpening += 1
                 lastSent = os.clock()
-                task.wait(0.08)
             end
-            if #opening > 0 then log("Стартовые юниты выставлены · " .. tostring(#opening)) end
+            if confirmedOpening > 0 then log("Стартовые действия подтверждены · " .. tostring(confirmedOpening)) end
         end
 
         for _, event in ipairs(macro.events) do
