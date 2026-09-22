@@ -2,7 +2,7 @@
 -- Records tower actions and replays the same server remotes without moving the camera.
 
 local VERSION = 2
-local SCRIPT_VERSION = "1.4.17"
+local SCRIPT_VERSION = "1.4.18"
 local REMOTE_BUS_VERSION = 5
 local ROOT_FOLDER = "TDMacroLab"
 local CONFIG_FILE = ROOT_FOLDER .. "/config.json"
@@ -233,12 +233,11 @@ function Core.normalizeMacro(source, fallbackName)
 end
 
 function Core.chooseMacro(macros, currentFingerprint, manualMatches, mapMatches)
-    local key = Core.fingerprintKey(currentFingerprint)
     local boundId = Core.boundMacroId(currentFingerprint, manualMatches, mapMatches)
     local candidates = {}
+    if not boundId then return nil, candidates end
     for _, macro in ipairs(type(macros) == "table" and macros or {}) do
-        local macroKey = tostring(macro.fingerprintKey or Core.fingerprintKey(macro.fingerprint))
-        if (boundId and macro.id == boundId) or (not boundId and macroKey == key) then
+        if macro.id == boundId and tonumber(macro.placeId) == tonumber(currentFingerprint.placeId) then
             candidates[#candidates + 1] = macro
         end
     end
@@ -252,6 +251,26 @@ function Core.chooseMacro(macros, currentFingerprint, manualMatches, mapMatches)
     return candidates[1], candidates
 end
 
+function Core.observeAutoContext(context, key, jobId, wave, resultsVisible)
+    context = type(context) == "table" and context or {}
+    local newMap = context.key ~= key or context.jobId ~= jobId
+    local newRound = not newMap and not resultsVisible and wave ~= nil and wave <= 1
+        and ((tonumber(context.wave) or 0) > 1 or context.sawResults == true)
+    if newMap or newRound then
+        context = {key = key, jobId = jobId, consumed = false, sawResults = false}
+    end
+    if wave ~= nil then context.wave = wave end
+    if resultsVisible then context.sawResults = true end
+    return context, newMap or newRound
+end
+
+function Core.newestConfig(primary, fallback)
+    if not primary then return fallback end
+    if not fallback then return primary end
+    if (tonumber(fallback.saveRevision) or 0) > (tonumber(primary.saveRevision) or 0) then return fallback end
+    return primary
+end
+
 local aliases = {
     -- The live Alliance TD HUD shows the *current* speed, so the same control
     -- can be captioned 1x/1.5x before it ever reaches 2x.
@@ -261,7 +280,7 @@ local aliases = {
         "wave skip", "skip waves", "skip wave", "авто пропуск", "автопропуск",
     },
     playAgain = {
-        "play again", "playagain", "replay", "retry", "again", "return match",
+        "play again", "playagain", "replay", "retry", "try again", "restart match", "again", "return match",
         "играть снова", "сыграть снова", "повторить", "заново",
     },
 }
@@ -489,6 +508,8 @@ local function readJson(path)
 end
 
 local function saveDisk()
+    state.config.saveRevision = math.max((tonumber(state.config.saveRevision) or 0) + 1, os.time() * 1000)
+    env.TDMacroSavedConfig = copyTable(state.config)
     if not canFile() then
         state.memoryOnly = true
         return false
@@ -504,7 +525,8 @@ local function saveDisk()
 end
 
 local function loadConfig()
-    local loaded = readJson(CONFIG_FILE) or readJson(FALLBACK_FILE)
+    local loaded = Core.newestConfig(readJson(CONFIG_FILE), readJson(FALLBACK_FILE))
+    loaded = Core.newestConfig(loaded, env.TDMacroSavedConfig)
     local savedAutoPreference = loaded and loaded.settings and loaded.settings.autoPreference
     local savedAuto = loaded and loaded.settings and loaded.settings.auto
 
@@ -716,6 +738,7 @@ local refreshMacros = function() end
 local refreshBindings = function() end
 local activateRecordingTimeline = function() end
 local armMatchControls = function() end
+local isMatchOver = function() return false end
 
 local function isOwnPoint(x, y)
     if not state.gui then return false end
@@ -1195,6 +1218,7 @@ local function waitForRecordedCash(event, token, opening)
     local pauseOrigin = state.pauseAccum or 0
     while token == state.playToken and state.playing and not state.destroyed do
         while state.paused and token == state.playToken do task.wait(0.05) end
+        if isMatchOver() then return false end
         if token ~= state.playToken or not state.playing or state.destroyed then return false end
         if opening and os.clock() - startedAt - ((state.pauseAccum or 0) - pauseOrigin) >= 30 then
             log("Старт остановлен: не удалось дождаться записанного cash", true)
@@ -1854,6 +1878,7 @@ local function stopPlayback(reason, emergency)
     releaseCameraControl()
     if emergency then
         state.config.settings.auto = false
+        state.config.settings.autoPreference = false
         resetMatchTracking(0)
         transition("IDLE", reason or "Emergency stop")
         saveDisk()
@@ -1964,6 +1989,12 @@ local function returnedInstance(value, depth)
 end
 
 local function replayRemoteEvent(event, openingToken)
+    local sendToken = openingToken or state.playToken
+    if not state.playing or state.destroyed then return false end
+    if isMatchOver(true) then
+        log("Действие отменено: матч уже завершён")
+        return false
+    end
     local remote = resolveInstancePath(event.remotePath)
     if not remote or (not remote:IsA("RemoteEvent") and not remote:IsA("RemoteFunction")) then
         log("Remote не найден: " .. tostring(event.remoteName), true)
@@ -1973,10 +2004,11 @@ local function replayRemoteEvent(event, openingToken)
     for index = 1, tonumber(event.argCount) or #(event.args or {}) do
         arguments[index] = deserializeValue(event.args and event.args[index], 0)
     end
-    if openingToken and (openingToken ~= state.playToken or not state.playing or state.destroyed) then return false end
+    if sendToken ~= state.playToken or not state.playing or state.destroyed then return false end
     local position = type(event.position) == "table"
         and Vector3.new(event.position.x or 0, event.position.y or 0, event.position.z or 0) or nil
     local before = event.action == "place" and nearbyUnitCandidates(position) or {}
+    if isMatchOver(true) then return false end
     local ok, result = pcall(function()
         if event.method == "InvokeServer" and remote:IsA("RemoteFunction") then
             return remote:InvokeServer(table.unpack(arguments, 1, tonumber(event.argCount) or #arguments))
@@ -1992,7 +2024,7 @@ local function replayRemoteEvent(event, openingToken)
         log("Сервер отклонил " .. tostring(event.action) .. " · " .. tostring(event.unitName or event.remoteName), true)
         return false
     end
-    if openingToken and (openingToken ~= state.playToken or not state.playing or state.destroyed) then return false end
+    if sendToken ~= state.playToken or not state.playing or state.destroyed then return false end
     if event.action == "place" and event.unitId then
         local created = returnedInstance(result, 0)
         if created and created:IsDescendantOf(workspace) then
@@ -2103,6 +2135,7 @@ local function waitForRecordedMoment(event, clockConfig, timing, token, playback
     local eventGameClock = tonumber(event.gameClock)
     while token == state.playToken and state.playing and not state.destroyed do
         while state.paused and token == state.playToken do task.wait(0.05) end
+        if token ~= state.playToken or not state.playing or state.destroyed or isMatchOver() then return false end
         local current = detectGameClock()
         observePlaybackClock(timing, current, clockConfig)
         if timing.strictFirstWave and not timing.combatStarted and current then
@@ -2151,6 +2184,7 @@ local function waitForRecordedMoment(event, clockConfig, timing, token, playback
 end
 
 local function sendEvent(event, recordedViewport)
+    if isMatchOver(true) then return end
     local size = viewport()
     state.generatedInput = true
     local ok, err = pcall(function()
@@ -2206,6 +2240,7 @@ end
 
 local function playMacro(macro, force, fromAuto, expectedFingerprint)
     if state.recording then log("Сначала останови запись") return false end
+    if isMatchOver(true) then log("Запуск отменён: матч уже завершён") return false end
     if state.playing then
         if fromAuto then
             log("Автозапуск пропущен · макрос уже идёт")
@@ -2225,7 +2260,18 @@ local function playMacro(macro, force, fromAuto, expectedFingerprint)
         log("Камера или персонаж ещё не готовы", true)
         return false
     end
-    local currentFingerprint = expectedFingerprint or fingerprint()
+    if fromAuto then state.mapCacheAt = 0 end
+    local currentFingerprint = fromAuto and fingerprint(state.matchSpawnPosition) or (expectedFingerprint or fingerprint())
+    if fromAuto then
+        local bound = Core.boundMacroId(currentFingerprint, state.config.manualMatches, state.config.mapMatches)
+        if bound ~= macro.id or (expectedFingerprint
+            and Core.mapBindingKey(expectedFingerprint) ~= Core.mapBindingKey(currentFingerprint))
+            or (state.config.autoContext and state.config.autoContext.consumed
+                and state.config.autoContext.key == Core.mapBindingKey(currentFingerprint)) then
+            log("Автозапуск отменён: привязка/карта изменилась или матч уже занят")
+            return false
+        end
+    end
     if not force and not macroMatches(macro, currentFingerprint) then
         log("Карта/спавн не совпадают. Автозапуск запрещён", true)
         return false
@@ -2246,6 +2292,9 @@ local function playMacro(macro, force, fromAuto, expectedFingerprint)
     state.pauseAccum = 0
     state.playbackFinishedAt = 0
     state.replayUnits = {}
+    local liveClock = detectGameClock()
+    state.config.autoContext = {key = Core.mapBindingKey(currentFingerprint), jobId = game.JobId,
+        wave = liveClock and tonumber(liveClock.wave), consumed = true, sawResults = false}
     state.selectedId = macro.id
     macro.lastUsed = os.time()
     saveDisk()
@@ -2269,7 +2318,7 @@ local function playMacro(macro, force, fromAuto, expectedFingerprint)
     end
     log((force and "Force Play: " or "Запуск: ") .. macro.name .. " · " .. #macro.events .. " событий")
     refreshAll()
-    if not fromAuto then armMatchControls() end
+    armMatchControls()
 
     if not hasRemoteEvents and state.config.settings.lockCamera and lockedCamera then
         task.spawn(function()
@@ -2575,7 +2624,10 @@ end))
 local function startRecording()
     if state.playing then stopPlayback("Воспроизведение остановлено перед записью") end
     if state.recording then return end
-    state.config.settings.auto = false
+    -- Recording temporarily pauses the controller without changing AUTOSTART.
+    state.autoRunToken += 1
+    state.controlRunId += 1
+    state.replayCheck = nil
     transition(state.config.settings.remoteMode and "WAIT_WAVE" or "IDLE")
     state.recordedEvents = {}
     state.recordingViewport = viewport()
@@ -2593,6 +2645,9 @@ local function startRecording()
     -- One discovery before recording becomes active, then recording itself
     -- performs only O(1) reads from the discovered timer/wave objects.
     state.recordingClock = detectGameClock()
+    state.config.autoContext = {key = Core.mapBindingKey(state.recordingFingerprint), jobId = game.JobId,
+        wave = state.recordingClock and tonumber(state.recordingClock.wave), consumed = true, sawResults = false}
+    saveDisk()
     state.recordingClockInitial = state.recordingClock
     state.recordingClockChanges = 0
     state.recordingClockFirstChangeAt = nil
@@ -2641,6 +2696,7 @@ local function stopAndSave(name)
     if not state.config.settings.remoteMode then recordCameraFrame(true) end
     state.recording = false
     state.recordingLive = false
+    transition(state.config.settings.auto and "WAIT_END" or "IDLE", "запись завершена")
     local events = Core.normalizeEvents(state.recordedEvents, state.recordingViewport)
     if #events == 0 then log("Пустая запись не сохранена", true) refreshAll() return nil end
     local macro = Core.normalizeMacro({
@@ -3079,7 +3135,7 @@ armMatchControls = function()
 end
 
 local endWords = {
-    "victory", "defeat", "completed", "you win", "you lost", "победа", "поражение",
+    "victory", "defeat", "defeated", "completed", "you win", "you lost", "you lose", "game over", "победа", "поражение",
     "завершено", "матч окончен", "играть снова", "сыграть снова",
 }
 
@@ -3119,6 +3175,15 @@ local function endDetected(visibleOnly)
         return true, "таймаут"
     end
     return false
+end
+
+isMatchOver = function(force)
+    if not force and state.matchOverCacheAt and os.clock() - state.matchOverCacheAt < 0.15 then
+        return state.matchOverCache == true
+    end
+    state.matchOverCache = endDetected(true) == true
+    state.matchOverCacheAt = os.clock()
+    return state.matchOverCache
 end
 
 local function waitForReplayTransition(autoRunToken)
@@ -3161,7 +3226,7 @@ local function waitForReplayTransition(autoRunToken)
                 return true
             end
         end
-        if state.config.settings.autoPlayAgain and os.clock() >= nextAttempt then
+        if state.config.settings.autoPlayAgain and state.config.settings.autoLoop ~= false and os.clock() >= nextAttempt then
             -- Reacquire rebuilt/late result controls. Never tap old saved coordinates.
             state.bindingScanAt = 0
             local x, _, object = bindingPoint("playAgain", true)
@@ -3184,55 +3249,33 @@ local function waitForReplayTransition(autoRunToken)
 end
 
 local function prepareAutoRun(immediate, preparedFingerprint, autoRunToken)
-    if autoRunToken ~= state.autoRunToken or not state.config.settings.auto or state.destroyed then return end
-    if state.playing then
-        transition("PLAYING", "автозапуск пропущен · макрос уже идёт")
+    if autoRunToken ~= state.autoRunToken or not state.config.settings.auto
+        or state.destroyed or state.recording or state.playing then return end
+    state.mapCacheAt = 0
+    local current = fingerprint(state.matchSpawnPosition)
+    if preparedFingerprint and Core.mapBindingKey(preparedFingerprint) ~= Core.mapBindingKey(current) then
+        resetMatchTracking(0)
+        transition("WAIT_MATCH", "карта изменилась · проверяю новую привязку")
         return
     end
-    transition("PREPARE", immediate and "привязка карты найдена" or nil)
-    local currentFingerprint = preparedFingerprint or fingerprint(state.matchSpawnPosition)
-    state.lastFingerprint = currentFingerprint
-    log("Карта: " .. currentFingerprint.mapKey .. " · спавн " .. currentFingerprint.spawnKey)
-    local macro, choices = Core.chooseMacro(
-        state.config.macros,
-        currentFingerprint,
-        state.config.manualMatches,
-        state.config.mapMatches
-    )
+    local macro = Core.chooseMacro(state.config.macros, current, state.config.manualMatches, state.config.mapMatches)
     if not macro then
-        -- Keep AUTOSTART armed. A lobby/unbound map is not a reason to erase
-        -- the user's persistent preference; just keep waiting for a bound map.
-        resetMatchTracking(2)
-        transition("WAIT_MATCH", "Нет макроса для этой карты/спавна · автозапуск остаётся включён")
-        refreshAll()
+        resetMatchTracking(1)
+        transition("WAIT_MATCH", "Для этой карты нет действующей привязки")
         return
     end
-    state.selectedId = macro.id
-    if #choices > 1 then log("Совпадений: " .. #choices .. ", выбран " .. macro.name) else log("Выбран: " .. macro.name) end
-    local remoteMacro = macro.recordMode == "remote"
-    if not remoteMacro then
-        for _, event in ipairs(macro.events) do
-            if event.kind == "remote" then remoteMacro = true break end
-        end
-    end
-    if not remoteMacro then restoreCamera(macro.camera or (macro.fingerprint and macro.fingerprint.camera)) end
-    if immediate then task.wait() else task.wait(0.35) end
-    if autoRunToken ~= state.autoRunToken or not state.config.settings.auto then return end
-    -- Current switches are authoritative. Old macros used to permanently block
-    -- x2/auto-skip when they were disabled during the original recording.
-    armMatchControls()
+    state.lastFingerprint = current
+    log("Авто: " .. macro.name .. " · карта " .. current.mapKey)
     if not immediate then task.wait(math.max(0, tonumber(state.config.settings.initialDelay) or 1.2)) end
-    if autoRunToken == state.autoRunToken and state.config.settings.auto then
-        if state.playing then
-            transition("PLAYING", "автозапуск пропущен · макрос уже идёт")
-            refreshAll()
-            return
-        end
-        if not playMacro(macro, false, true, currentFingerprint) then
-            -- A transient launch failure must not clear persistent AUTOSTART.
-            resetMatchTracking(2)
-            transition("WAIT_MATCH", "Запуск макроса не удался · автозапуск остаётся включён")
-        end
+    if autoRunToken ~= state.autoRunToken or not state.config.settings.auto
+        or state.destroyed or state.recording or state.playing then return end
+    if isMatchOver() then
+        transition("WAIT_END", "матч завершён до запуска")
+        return
+    end
+    if not playMacro(macro, false, true, current) then
+        resetMatchTracking(1)
+        transition("WAIT_MATCH", "проверяю карту и привязку повторно")
     end
     refreshAll()
 end
@@ -3244,56 +3287,79 @@ keep(RunService.Heartbeat:Connect(function(delta)
     local controllerInterval = state.controllerState == "WAIT_MATCH" and 0.15 or 0.5
     if controllerAccumulator < controllerInterval then return end
     controllerAccumulator = 0
-    if not state.config or not state.config.settings.auto or state.recording then return end
+    if not state.config or state.recording then return end
+    -- A defeat can arrive while playback is waiting for money or a later wave.
+    local resultsVisible, resultReason = endDetected(true)
+    state.matchOverCache, state.matchOverCacheAt = resultsVisible, os.clock()
+    if resultsVisible then
+        if state.config.autoContext then state.config.autoContext.sawResults = true end
+        if state.playing then
+            stopPlayback("Матч завершён · оставшиеся действия отменены", false)
+            state.controlRunId += 1
+            state.playbackFinishedAt = os.clock()
+        end
+        if state.config.settings.auto and state.controllerState ~= "REPLAY" then
+            transition("WAIT_END", resultReason)
+        end
+    end
+    if not state.config.settings.auto then return end
+
+    local current = fingerprint(state.matchSpawnPosition)
+    local mapKey = Core.mapBindingKey(current)
+    if state.autoCandidateKey ~= mapKey then
+        state.autoCandidateKey = mapKey
+        state.autoCandidateSince = os.clock()
+    end
+    local mapStable = os.clock() - (state.autoCandidateSince or 0) >= 0.5
+    local liveClock = detectGameClock()
+    local liveWave = liveClock and tonumber(liveClock.wave) or nil
+    if mapStable then
+        local previous = state.config.autoContext
+        local context, fresh = Core.observeAutoContext(previous, mapKey, game.JobId, liveWave, resultsVisible)
+        state.config.autoContext = context
+        if fresh and not resultsVisible then
+            if state.playing and previous then
+                stopPlayback("Началась новая карта/катка · старый макрос остановлен", false)
+            end
+            if not state.playing then
+                resetMatchTracking(0)
+                transition("WAIT_MATCH", "новая карта/катка · проверяю привязку")
+            end
+        end
+    end
     if state.playing then
-        if state.controllerState ~= "PLAYING" then transition("PLAYING", "макрос уже запущен") end
+        if state.controllerState ~= "PLAYING" then transition("PLAYING", "текущий макрос уже идёт") end
         return
     end
     if os.clock() < state.controllerNotBefore then return end
 
     if state.controllerState == "IDLE" then
         transition("WAIT_MATCH")
-        state.stableKey = nil
-        state.stableSince = os.clock()
-        state.matchSpawnPosition = nil
     elseif state.controllerState == "WAIT_MATCH" then
-        if not workspace.CurrentCamera or not rootPart() then
-            state.stableKey = nil
+        if not mapStable or not workspace.CurrentCamera or not rootPart() then return end
+        local context = state.config.autoContext
+        if context and context.consumed then
+            transition("WAIT_END", "этот матч уже запускался · жду следующую катку")
             return
         end
-        local liveClock = detectGameClock()
-        local liveWave = liveClock and tonumber(liveClock.wave) or nil
         if liveWave and liveWave > 1 then
-            if not state.waitFreshMatch then
-                state.waitFreshMatch = true
-                log("Автозапуск: текущий матч уже идёт · жду следующую волну 1")
+            if context then context.consumed = true end
+            transition("WAIT_END", "матч уже идёт · автозапуск со следующей катки")
+            return
+        end
+        local macro = Core.chooseMacro(state.config.macros, current, state.config.manualMatches, state.config.mapMatches)
+        if not macro then
+            if state.unboundMapLogged ~= mapKey then
+                state.unboundMapLogged = mapKey
+                log("Автозапуск: для этой карты нет привязанного макроса · " .. current.mapKey)
             end
             return
-        elseif state.waitFreshMatch then
-            if liveWave == nil then return end
-            state.waitFreshMatch = false
-            state.stableKey = nil
-            state.stableSince = os.clock()
-            state.matchSpawnPosition = nil
-            log("Автозапуск: новый матч обнаружен")
         end
-        if not state.matchSpawnPosition then state.matchSpawnPosition = rootPart().Position end
-        local current = fingerprint(state.matchSpawnPosition)
-        local boundId = Core.boundMacroId(current, state.config.manualMatches, state.config.mapMatches)
-        if boundId then
-            transition("PREPARE")
-            local autoRunToken = state.autoRunToken
-            task.spawn(function() prepareAutoRun(true, current, autoRunToken) end)
-            return
-        end
-        if current.key ~= state.stableKey then
-            state.stableKey = current.key
-            state.stableSince = os.clock()
-        elseif os.clock() - state.stableSince >= 2 then
-            transition("PREPARE")
-            local autoRunToken = state.autoRunToken
-            task.spawn(function() prepareAutoRun(false, current, autoRunToken) end)
-        end
+        state.unboundMapLogged = nil
+        state.matchSpawnPosition = rootPart().Position
+        transition("PREPARE", "найден привязанный макрос · " .. macro.name)
+        local autoRunToken = state.autoRunToken
+        task.spawn(function() prepareAutoRun(true, current, autoRunToken) end)
     elseif state.controllerState == "WAIT_END" then
         local ended, reason = endDetected()
         if state.replayCheck and state.replayCheck.token == state.autoRunToken then
@@ -3316,14 +3382,13 @@ keep(RunService.Heartbeat:Connect(function(delta)
                     refreshAll()
                     return
                 end
-                if not state.config.settings.autoLoop then
-                    state.config.settings.auto = false
-                    resetMatchTracking(0)
-                    transition("IDLE", "цикл выключен")
-                else
-                    resetMatchTracking(0)
-                    transition("WAIT_MATCH", "жду новую карту")
+                if state.config.autoContext then
+                    state.config.autoContext.consumed = false
+                    state.config.autoContext.sawResults = false
+                    state.config.autoContext.wave = nil
                 end
+                resetMatchTracking(0)
+                transition("WAIT_MATCH", "новая катка · проверяю привязку")
                 saveDisk()
                 refreshAll()
             end)
@@ -3719,22 +3784,32 @@ button(macrosPage, "СТОП МАКРОСА", UDim2.new(0.73, 4, 1, -41), UDim2.
 end, palette.danger)
 
 label(autoPage, "АВТОМАТИКА МАТЧА", UDim2.fromOffset(2, 0), UDim2.new(1, -4, 0, 22), 10, palette.muted)
-makeToggle(autoPage, "АВТОЗАПУСК", UDim2.fromOffset(0, 27), function() return state.config.settings.auto end, function(value)
+makeToggle(autoPage, "АВТОЗАПУСК", UDim2.fromOffset(0, 27), function() return state.config.settings.autoPreference end, function(value)
     state.config.settings.auto = value
     state.config.settings.autoPreference = value
+    -- Invalidate queued automatic work without cancelling manual controls/timers.
+    state.autoRunToken += 1
+    state.replayCheck = nil
+    state.controllerNotBefore = 0
     saveDisk()
-    resetMatchTracking(0)
-    if value and state.playing then
-        transition("PLAYING", "автозапуск включён · текущий макрос уже идёт")
+    if state.playing or state.recording then
+        if state.playing then transition("PLAYING", "текущий запуск сохранён · авто для следующих каток") end
         return
     end
-    if value then
-        local liveClock = detectGameClock(true)
-        state.waitFreshMatch = liveClock and tonumber(liveClock.wave) and tonumber(liveClock.wave) > 1 or false
-    else
-        state.waitFreshMatch = false
+    if not value then
+        state.controlRunId += 1
+        transition("IDLE", "автозапуск выключен")
+        return
     end
-    transition(value and "WAIT_MATCH" or "IDLE", value and "автоматизация включена" or "автоматизация выключена")
+    local clock = detectGameClock()
+    local wave = clock and tonumber(clock.wave)
+    if wave and wave > 1 then
+        local current = fingerprint()
+        state.config.autoContext = {key = Core.mapBindingKey(current), jobId = game.JobId,
+            wave = wave, consumed = true, sawResults = false}
+        saveDisk()
+    end
+    transition("WAIT_MATCH", "автозапуск включён · проверяю текущую катку")
 end)
 makeToggle(autoPage, "ПОВТОР МАТЧЕЙ", UDim2.new(0.5, 8, 0, 27), function() return state.config.settings.autoLoop end, function(value) state.config.settings.autoLoop = value end)
 makeToggle(autoPage, "МАКС. СКОРОСТЬ", UDim2.fromOffset(0, 73), function() return state.config.settings.x2 end, function(value)
