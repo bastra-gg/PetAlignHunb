@@ -1,7 +1,8 @@
 -- RockBugHub MAIN protected launcher
--- Same simple startup path as TEST; the protected MAIN code still comes from rb-bootstrap.
+-- TEST-style startup: one HttpGet -> loadstring -> run.
+-- The downloaded payload is still the protected MAIN VM bundle.
 local VERSION="4.25.2"
-local CORE_URL="https://szfjrpkdbccsveklkwyy.supabase.co/functions/v1/rb-bootstrap?r=b84fd76c51a903e2c4175a60"
+local CORE_URL="https://szfjrpkdbccsveklkwyy.supabase.co/functions/v1/rb-main-core"
 
 local env=_G
 if type(getgenv)=="function"then
@@ -14,20 +15,17 @@ if type(compiler)~="function"then
     error("RockBugHub MAIN "..VERSION..": executor has no loadstring",0)
 end
 
-local function run(url,label)
-    local stamp="&v=main-"..VERSION.."-"..tostring(os.time()).."-"..tostring(math.random(100000,999999))
-    local ok,source=pcall(function()
-        return game:HttpGet(url..stamp,true)
-    end)
-    if not ok or type(source)~="string"then
-        error("RockBugHub MAIN "..VERSION..": failed to load "..label.." • "..tostring(source),0)
-    end
-
-    local chunk,problem=compiler(source)
-    if type(chunk)~="function"then
-        error("RockBugHub MAIN "..VERSION..": compile "..label.." • "..tostring(problem),0)
-    end
-    return chunk()
+local stamp="?cb="..tostring(os.time()).."-"..tostring(math.random(100000,999999))
+local ok,source=pcall(function()
+    return game:HttpGet(CORE_URL..stamp,true)
+end)
+if not ok or type(source)~="string"then
+    error("RockBugHub MAIN "..VERSION..": failed to load protected core • "..tostring(source),0)
 end
 
-return run(CORE_URL,"protected core")
+local chunk,problem=compiler(source)
+if type(chunk)~="function"then
+    error("RockBugHub MAIN "..VERSION..": compile protected core • "..tostring(problem),0)
+end
+
+return chunk()
