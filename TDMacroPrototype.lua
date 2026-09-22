@@ -2,7 +2,7 @@
 -- Records tower actions and replays the same server remotes without moving the camera.
 
 local VERSION = 2
-local SCRIPT_VERSION = "1.4.20"
+local SCRIPT_VERSION = "1.4.21"
 local REMOTE_BUS_VERSION = 5
 local ROOT_FOLDER = "TDMacroLab"
 local CONFIG_FILE = ROOT_FOLDER .. "/config.json"
@@ -69,19 +69,16 @@ function Core.mapBindingKey(fingerprint)
 end
 
 function Core.boundMacroId(currentFingerprint, manualMatches, mapMatches)
-    -- Exact map+spawn bindings must win over broad map bindings. Some TD maps
-    -- expose the same generic workspace map name, so map-only keys can collide.
-    local exactKey = Core.fingerprintKey(currentFingerprint)
-    if type(manualMatches) == "table" and manualMatches[exactKey] then
-        return manualMatches[exactKey], "exact"
-    end
+    -- Autoplay is bound to the MAP only. Spawn position is intentionally not
+    -- part of selection because Alliance TD can spawn the player at a different
+    -- point every run.
     local mapKey = Core.mapBindingKey(currentFingerprint)
     if type(mapMatches) == "table" and mapMatches[mapKey] then
         return mapMatches[mapKey], "map"
     end
-    -- Before v1.3.0 the button called "bind to map" actually saved a full
-    -- map+spawn fingerprint. Treat every old entry from this map as a map
-    -- binding so existing configs start working without rebinding.
+
+    -- Backward compatibility for configs created by older versions which saved
+    -- map+spawn keys. We use the map prefix and ignore the spawn suffix.
     if type(manualMatches) == "table" then
         local prefix = mapKey .. "::"
         for oldKey, macroId in pairs(manualMatches) do
@@ -556,13 +553,11 @@ local function loadConfig()
     end
     state.config.macros = normalized
 
-    -- 1.4.19: recordings are map-specific by design. Older builds saved the
-    -- fingerprint inside the macro but did not always create the lookup entry,
-    -- so AUTO could only find the first/explicitly bound map. Repair missing
-    -- exact and map bindings without overwriting anything the user bound.
+    -- 1.4.21: autoplay is map-only. Spawn points are not stable, so repair
+    -- only the map lookup and leave old exact entries as legacy fallback.
     state.config.manualMatches = type(state.config.manualMatches) == "table" and state.config.manualMatches or {}
     state.config.mapMatches = type(state.config.mapMatches) == "table" and state.config.mapMatches or {}
-    local exactWinners, mapWinners = {}, {}
+    local mapWinners = {}
     local function betterBindingMacro(candidate, current)
         if not current then return true end
         if (candidate.isDefault == true) ~= (current.isDefault == true) then return candidate.isDefault == true end
@@ -571,16 +566,11 @@ local function loadConfig()
         return (tonumber(candidate.savedAt) or 0) > (tonumber(current.savedAt) or 0)
     end
     for _, macro in ipairs(state.config.macros) do
-        local exactKey = tostring(macro.fingerprintKey or Core.fingerprintKey(macro.fingerprint))
-        if not state.config.manualMatches[exactKey] and betterBindingMacro(macro, exactWinners[exactKey]) then
-            exactWinners[exactKey] = macro
-        end
         local mapKey = Core.mapBindingKey(macro.fingerprint)
         if not state.config.mapMatches[mapKey] and betterBindingMacro(macro, mapWinners[mapKey]) then
             mapWinners[mapKey] = macro
         end
     end
-    for key, macro in pairs(exactWinners) do state.config.manualMatches[key] = macro.id end
     for key, macro in pairs(mapWinners) do state.config.mapMatches[key] = macro.id end
 
     local legacy = readJson(LEGACY_FILE)
@@ -2796,12 +2786,9 @@ local function stopAndSave(name)
     state.config.macros[#state.config.macros + 1] = macro
     state.selectedId = macro.id
 
-    -- Every freshly recorded macro belongs to the map/spawn it was recorded on.
-    -- Save both the exact binding and a map fallback immediately, so AUTO works
-    -- on the second/third map without requiring a separate "bind" click.
-    local exactBindingKey = tostring(macro.fingerprintKey or Core.fingerprintKey(macro.fingerprint))
+    -- Every freshly recorded macro belongs to its map. Never bind by spawn:
+    -- player spawn is random and would make the same map miss on the next run.
     local mapBindingKey = Core.mapBindingKey(macro.fingerprint)
-    state.config.manualMatches[exactBindingKey] = macro.id
     state.config.mapMatches[mapBindingKey] = macro.id
 
     saveDisk()
@@ -3849,8 +3836,9 @@ renameButton.TextSize = 10
 button(macrosPage, "ОСНОВНЫМ", UDim2.new(0.61, 4, 1, -84), UDim2.new(0.2, -4, 0, 35), function()
     local macro = selectedMacro()
     if not macro then return end
+    local selectedMapKey = Core.mapBindingKey(macro.fingerprint)
     for _, other in ipairs(state.config.macros) do
-        if other.fingerprintKey == macro.fingerprintKey then other.isDefault = false end
+        if Core.mapBindingKey(other.fingerprint) == selectedMapKey then other.isDefault = false end
     end
     macro.isDefault = true
     saveDisk()
@@ -3875,8 +3863,6 @@ button(macrosPage, "ПРИВЯЗАТЬ К КАРТЕ", UDim2.new(0.34, 4, 1, -41
     if not macro then log("Выбери макрос") return end
     local current = fingerprint()
     state.config.mapMatches[Core.mapBindingKey(current)] = macro.id
-    -- Keep the exact entry for backward compatibility with old configs/tools.
-    state.config.manualMatches[current.key] = macro.id
     saveDisk()
     log("Карта привязана к " .. macro.name .. " · автозапуск будет сразу")
 end)
@@ -4073,7 +4059,7 @@ refreshMacros = function()
         local marker = macro.isDefault and "★ " or ""
         local text = string.format("%s%s  [%s]\n%s · %s · %.1f сек · %d событий", marker, macro.name,
             macro.recordMode == "remote" and "СЕРВЕР" or "СТАРЫЙ",
-            tostring(macro.fingerprint.mapKey), tostring(macro.fingerprint.spawnKey), duration, #macro.events)
+            tostring(macro.fingerprint.mapKey), "карта", duration, #macro.events)
         local row = button(list, text, UDim2.new(), UDim2.new(1, 0, 0, 51), function()
             state.selectedId = macro.id
             state.labels.renameBox.Text = macro.name
@@ -4147,7 +4133,7 @@ refreshAll = function()
         state.labels.playSelectedButton.Text = macro and ("ЗАПУСТИТЬ: " .. macro.name) or "СНАЧАЛА СОЗДАЙ МАКРОС"
     end
     local current = fingerprint()
-    if state.labels.fingerprint then state.labels.fingerprint.Text = current.mapKey .. " · " .. current.spawnKey end
+    if state.labels.fingerprint then state.labels.fingerprint.Text = current.mapKey .. " · ПРИВЯЗКА ПО КАРТЕ" end
     if state.labels.storage then
         local hook = state.remoteHookReady and "СЕРВЕРНЫЙ РЕЖИМ ГОТОВ" or "ОШИБКА СЕРВЕРНОГО РЕЖИМА"
         state.labels.storage.Text = state.memoryOnly and "MEMORY ONLY · записи пропадут после перезапуска"
