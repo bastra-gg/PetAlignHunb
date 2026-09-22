@@ -2,7 +2,7 @@
 -- Records tower actions and replays the same server remotes without moving the camera.
 
 local VERSION = 2
-local SCRIPT_VERSION = "1.4.19"
+local SCRIPT_VERSION = "1.4.20"
 local REMOTE_BUS_VERSION = 5
 local ROOT_FOLDER = "TDMacroLab"
 local CONFIG_FILE = ROOT_FOLDER .. "/config.json"
@@ -3023,17 +3023,18 @@ local function clickBinding(kind, quiet, physicalOnly, requireLive)
         return true
     end
 
-    -- During server-macro playback on mobile, never synthesize a touch
-    -- as a fallback for HUD automation. Direct GuiButton activation above is
-    -- safe; an ambiguous synthetic tap can interfere with the real thumbstick.
-    if UIS.TouchEnabled and state.playing and state.playbackUsesRemote then
-        if not quiet then log(kind .. ": mobile touch fallback пропущен") end
+    -- Use mouse input for a live HUD button on mobile, without synthesizing
+    -- a touch that can capture the thumbstick. Never use stale coordinates here.
+    local mouseForHud = UIS.TouchEnabled and object and object:IsA("GuiButton")
+        and instanceVisible(object)
+    if UIS.TouchEnabled and state.playing and state.playbackUsesRemote and not mouseForHud then
+        if not quiet then log(kind .. ": нужна видимая кнопка HUD", true) end
         return false
     end
 
     state.generatedInput = true
     local ok = true
-    if UIS.TouchEnabled then
+    if UIS.TouchEnabled and not mouseForHud then
         state.syntheticTouchId += 1
         local touchId = state.syntheticTouchId
         local downOk = pcall(function() VIM:SendTouchEvent(touchId, 0, x, y) end)
@@ -3142,12 +3143,18 @@ armMatchControls = function()
                         pending[kind] = nil
                     elseif item.attempts < item.maxAttempts then
                         item.attempts += 1
-                        if clickBinding(kind, true) then
+                        if clickBinding(kind, true, item.attempts > 1, true) then
                             task.wait(0.16)
                             local _, _, currentObject = bindingPoint(kind, false)
                             local after = controlState(kind, currentObject or object)
-                            if after == true or after == nil then
-                                log(kind .. ": включено")
+                            if runId ~= state.controlRunId or state.destroyed then return end
+                            if after == true then
+                                log(kind .. ": включено · подтверждено HUD")
+                                pending[kind] = nil
+                            elseif after == nil then
+                                -- Unknown toggle state is not success; another click
+                                -- could turn it off, so do not blindly toggle again.
+                                log(kind .. ": нажатие отправлено, состояние HUD не распознано", true)
                                 pending[kind] = nil
                             elseif item.attempts >= item.maxAttempts then
                                 log(kind .. ": кнопка отвечает, состояние не включилось", true)
@@ -3165,38 +3172,38 @@ armMatchControls = function()
     end)
 end
 
-local endWords = {
-    "victory", "defeat", "defeated", "completed", "you win", "you lost", "you lose", "game over", "победа", "поражение",
-    "завершено", "матч окончен", "играть снова", "сыграть снова",
-}
-
+-- Detection must not use the fuzzy button finder: a Retry/Again match in
+-- another menu is not evidence that the battle ended.
 local function endDetected(visibleOnly)
-    local x = bindingPoint("playAgain", true)
-    if x then return true, "Play Again видна" end
+    local strong = {victory=true, defeat=true, defeated=true,
+        ["you win"]=true, ["you lost"]=true, ["you lose"]=true,
+        ["game over"]=true, ["победа"]=true, ["поражение"]=true,
+        ["матч окончен"]=true}
+    local replay = {["play again"]=true, ["играть снова"]=true, ["сыграть снова"]=true}
     local playerGui = player:FindFirstChildOfClass("PlayerGui")
     if playerGui then
         for _, object in ipairs(playerGui:GetDescendants()) do
-            if (object:IsA("TextLabel") or object:IsA("TextButton")) and instanceVisible(object) then
+            if (object:IsA("TextLabel") or object:IsA("TextButton")) and instanceVisible(object)
+                and not (state.gui and object:IsDescendantOf(state.gui)) then
                 local text = Core.cleanText(object.Text)
-                for _, word in ipairs(endWords) do
-                    local target = Core.cleanText(word)
-                    if text:find(target, 1, true) then
-                        local score = text == target and 80 or 40
-                        if object.AbsoluteSize.X >= 150 then score += 8 end
-                        local parent = object.Parent
-                        for _ = 1, 4 do
-                            if not parent then break end
-                            local name = Core.cleanText(parent.Name)
-                            if name:find("result", 1, true) or name:find("victory", 1, true)
-                                or name:find("defeat", 1, true) or name:find("gameover", 1, true)
-                                or name:find("finish", 1, true) or name:find("end", 1, true) then
-                                score += 35
-                                break
-                            end
-                            parent = parent.Parent
-                        end
-                        if score >= 70 then return true, object.Text end
+                local resultPanel, unrelated = false, false
+                local parent = object.Parent
+                while parent and parent ~= playerGui do
+                    local name = string.lower(tostring(parent.Name)):gsub("[%s_%-]", "")
+                    if name:find("quest", 1, true) or name:find("achievement", 1, true)
+                        or name:find("collection", 1, true) then unrelated = true end
+                    if name == "results" or name == "result" or name == "endscreen"
+                        or name:find("matchresult", 1, true) or name:find("gameover", 1, true)
+                        or name:find("victory", 1, true) or name:find("defeat", 1, true)
+                        or name:find("resultframe", 1, true) or name:find("resultscreen", 1, true) then
+                        resultPanel = true
                     end
+                    parent = parent.Parent
+                end
+                if not unrelated and (strong[text] or replay[text]
+                    or (resultPanel and (text == "completed" or text == "завершено"
+                        or text == "retry" or text == "restart"))) then
+                    return true, object.Text
                 end
             end
         end
@@ -3334,6 +3341,12 @@ keep(RunService.Heartbeat:Connect(function(delta)
         end
     end
     if not state.config.settings.auto then return end
+    -- A live run owns its context. HUD wave guesses and changing workspace
+    -- children must never cancel it or create a second launch opportunity.
+    if state.playing then
+        if state.controllerState ~= "PLAYING" then transition("PLAYING", "текущий макрос уже идёт") end
+        return
+    end
 
     local current = fingerprint(state.matchSpawnPosition)
     local mapKey = Core.mapBindingKey(current)
@@ -3349,9 +3362,6 @@ keep(RunService.Heartbeat:Connect(function(delta)
         local context, fresh = Core.observeAutoContext(previous, mapKey, game.JobId, liveWave, resultsVisible)
         state.config.autoContext = context
         if fresh and not resultsVisible then
-            if state.playing and previous then
-                stopPlayback("Началась новая карта/катка · старый макрос остановлен", false)
-            end
             if not state.playing then
                 resetMatchTracking(0)
                 transition("WAIT_MATCH", "новая карта/катка · проверяю привязку")
@@ -4170,3 +4180,4 @@ showPage("RECORD")
 refreshMacros()
 refreshAll()
 log("TD Macro Lab v" .. SCRIPT_VERSION .. " загружен" .. (state.memoryOnly and " · MEMORY ONLY" or ""))
+
