@@ -33,8 +33,18 @@ jobs:
           print('bootstrap_has_length_check=' + ('yes' if 'incomplete core' in s else 'no'))
           PY
           CORE_URL="$(cat /tmp/core_url.txt)"
-          curl -fsS -D /tmp/core.headers "$CORE_URL&cb=$(date +%s)-123456" -o /tmp/core.lua
+          echo "core_url=$CORE_URL"
+          code="$(curl -sS -D /tmp/core.headers -o /tmp/core.lua -w '%{http_code}' "$CORE_URL&cb=$(date +%s)-123456")"
+          echo "core_http=$code"
+          echo "core_headers:"
+          grep -E '^(HTTP/|x-rb-|content-type|cache-control)' /tmp/core.headers || true
           echo "core_bytes=$(wc -c </tmp/core.lua)"
+          if [ "$code" != "200" ]; then
+            echo -n "core_error_body="
+            head -c 200 /tmp/core.lua || true
+            echo
+            exit 1
+          fi
           grep -q 'Custom bytecode VM' /tmp/core.lua
           echo "core_vm_marker=yes"
 
