@@ -3,7 +3,7 @@
 -- 1.5.0: autonomous macros + server StartedAt timeline + late-start catch-up.
 
 local VERSION = 2
-local SCRIPT_VERSION = "1.5.6"
+local SCRIPT_VERSION = "1.5.7"
 local REMOTE_BUS_VERSION = 5
 local ROOT_FOLDER = "TDMacroLab"
 local CONFIG_FILE = ROOT_FOLDER .. "/config.json"
@@ -435,6 +435,9 @@ local state = {
     waitFreshMatch = false,
     lastAutoStartedAt = nil,
     replayCheck = nil,
+    matchReadySince = 0,
+    resultObject = nil,
+    resultSignal = nil,
     cashCacheAt = 0,
     cashCache = nil,
     cashSource = nil,
@@ -2006,6 +2009,9 @@ local function resetMatchTracking(delay)
     state.bindingScanAt = 0
     state.bindingScan = {}
     state.replayCheck = nil
+    state.matchReadySince = 0
+    state.resultObject = nil
+    state.resultSignal = nil
     resetWaveSync()
 end
 
@@ -3401,7 +3407,68 @@ local function resultContext(object)
     return false
 end
 
+local function markResultObject(object)
+    if not object or not object:IsA("GuiObject") then return end
+
+    local name = Core.cleanText(object.Name)
+    local text = ""
+    if object:IsA("TextLabel") or object:IsA("TextButton") then
+        text = Core.cleanText(object.Text)
+    end
+
+    local strongName = name:find("gameend", 1, true)
+        or name:find("game end", 1, true)
+        or name:find("gameover", 1, true)
+        or name:find("game over", 1, true)
+        or name:find("defeat", 1, true)
+        or name:find("victory", 1, true)
+        or name:find("result", 1, true)
+
+    local strongText = text == "defeat" or text == "victory"
+        or text == "you lost" or text == "you win"
+        or text == "поражение" or text == "победа"
+
+    if strongName or strongText then
+        state.resultObject = object
+        state.resultSignal = strongText and text or name
+    end
+end
+
+local function installResultWatcher()
+    local playerGui = player:FindFirstChildOfClass("PlayerGui") or player:WaitForChild("PlayerGui", 10)
+    if not playerGui then return end
+
+    -- One lightweight top-level pass at install; after that result detection is
+    -- event-driven instead of rescanning the whole PlayerGui every 0.5 seconds.
+    for _, child in ipairs(playerGui:GetChildren()) do
+        if child:IsA("GuiObject") then markResultObject(child) end
+    end
+
+    keep(playerGui.DescendantAdded:Connect(function(object)
+        if state.destroyed then return end
+        markResultObject(object)
+    end))
+end
+
+local function liveResultSignal()
+    local object = state.resultObject
+    if not object or not object:IsDescendantOf(game) then
+        state.resultObject = nil
+        state.resultSignal = nil
+        return false, nil
+    end
+
+    if instanceVisible(object) or resultContext(object) then
+        return true, state.resultSignal or object.Name
+    end
+    return false, nil
+end
+
 local function endDetected(visibleOnly)
+    local signaled, signal = liveResultSignal()
+    if signaled then return true, signal end
+    if visibleOnly then return false end
+
     local x, _, playAgainObject = bindingPoint("playAgain", true, true)
     if x and playAgainObject and resultContext(playAgainObject) then
         return true, "Play Again видна"
@@ -3613,7 +3680,25 @@ keep(RunService.Heartbeat:Connect(function(delta)
     elseif state.controllerState == "WAIT_MATCH" then
         if not workspace.CurrentCamera or not rootPart() then
             state.stableKey = nil
+            state.matchReadySince = 0
             return
+        end
+
+        local waveState = ReplicatedStorage:FindFirstChild("WaveState")
+        if waveState then
+            local liveWave = tonumber(waveState:GetAttribute("CurrentWave"))
+            if not liveWave or liveWave <= 0 then
+                state.stableKey = nil
+                state.matchReadySince = 0
+                transition("WAIT_MATCH", "карта загружается · жду WaveState")
+                return
+            end
+
+            if state.matchReadySince <= 0 then
+                state.matchReadySince = os.clock()
+                return
+            end
+            if os.clock() - state.matchReadySince < 0.35 then return end
         end
 
         -- Script startup time is irrelevant. AUTO may attach before the match
@@ -3686,6 +3771,7 @@ end))
 
 loadConfig()
 installRemoteHook()
+installResultWatcher()
 if #state.config.macros > 0 then state.selectedId = state.config.macros[1].id end
 
 local palette = {
