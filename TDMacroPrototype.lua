@@ -2,7 +2,7 @@
 -- Records tower actions and replays the same server remotes without moving the camera.
 
 local VERSION = 2
-local SCRIPT_VERSION = "1.4.21"
+local SCRIPT_VERSION = "1.4.22"
 local REMOTE_BUS_VERSION = 5
 local ROOT_FOLDER = "TDMacroLab"
 local CONFIG_FILE = ROOT_FOLDER .. "/config.json"
@@ -2355,7 +2355,9 @@ local function playMacro(macro, force, fromAuto, expectedFingerprint)
         wave = liveClock and tonumber(liveClock.wave), consumed = true, sawResults = false}
     state.selectedId = macro.id
     macro.lastUsed = os.time()
-    saveDisk()
+    -- Do not synchronously JSON-encode/write the whole macro library at the
+    -- instant playback starts. That was the remaining launch freeze.
+    env.TDMacroSavedConfig = state.config
     if fromAuto then transition("PLAYING", macro.name) end
     if not hasRemoteEvents then restoreCamera(macro.camera or (macro.fingerprint and macro.fingerprint.camera)) end
     local lockedCamera = cameraSnapshot()
@@ -3217,9 +3219,10 @@ local function endDetected(visibleOnly)
     end
     state.endScanAt = now
 
-    -- Reuse binding discovery cache instead of force-scanning PlayerGui on
-    -- every controller tick.
-    local x = bindingPoint("playAgain", false)
+    -- Detection must only accept a LIVE Play Again control. Using the saved
+    -- fallback coordinates here makes every match look finished and blocks
+    -- playback completely.
+    local x = bindingPoint("playAgain", true)
     if x then
         state.endScanVisible, state.endScanReason = true, "Play Again видна"
         return true, state.endScanReason
