@@ -2,7 +2,7 @@
 -- Records tower actions and replays the same server remotes without moving the camera.
 
 local VERSION = 2
-local SCRIPT_VERSION = "1.4.19"
+local SCRIPT_VERSION = "1.4.20"
 local REMOTE_BUS_VERSION = 5
 local ROOT_FOLDER = "TDMacroLab"
 local CONFIG_FILE = ROOT_FOLDER .. "/config.json"
@@ -418,6 +418,9 @@ local state = {
     bindingCapture = nil,
     bindingScanAt = 0,
     bindingScan = {},
+    endScanAt = 0,
+    endScanVisible = false,
+    endScanReason = nil,
     controlRunId = 0,
     autoRunToken = 0,
     playbackSource = nil,
@@ -511,7 +514,9 @@ end
 
 local function saveDisk()
     state.config.saveRevision = math.max((tonumber(state.config.saveRevision) or 0) + 1, os.time() * 1000)
-    env.TDMacroSavedConfig = copyTable(state.config)
+    -- Keep the live config by reference. Deep-copying every recorded event on
+    -- each save caused a visible hitch on large macro libraries.
+    env.TDMacroSavedConfig = state.config
     if not canFile() then
         state.memoryOnly = true
         return false
@@ -600,7 +605,9 @@ local function loadConfig()
         if imported > 0 then log("Импортировано старых макросов: " .. imported) end
     end
     state.memoryOnly = not canFile()
-    saveDisk()
+    -- Do not re-encode/rewrite the full macro library just because the script
+    -- was loaded. User changes and actual macro runs still call saveDisk().
+    env.TDMacroSavedConfig = state.config
 end
 
 local function rootPart()
@@ -1005,9 +1012,38 @@ local function parseClockText(text)
 end
 
 local function detectGameClock()
-    if os.clock() - state.clockCacheAt < 0.12 then
+    local now = os.clock()
+
+    -- Fast path: once timer/wave widgets are discovered, read only those two
+    -- objects. Older builds rescanned the entire PlayerGui several times/sec.
+    local timerSource = state.clockTimerSource
+    local waveSource = state.clockWaveSource
+    local fastTime, fastText, fastPath, fastWave = nil, nil, nil, nil
+
+    if timerSource and timerSource:IsDescendantOf(game) and instanceVisible(timerSource)
+        and (timerSource:IsA("TextLabel") or timerSource:IsA("TextButton") or timerSource:IsA("TextBox")) then
+        fastText = tostring(timerSource.Text or "")
+        fastTime = parseClockText(fastText)
+        if fastTime ~= nil then fastPath = guiPath(timerSource) end
+    end
+    if waveSource and waveSource:IsDescendantOf(game) and instanceVisible(waveSource)
+        and (waveSource:IsA("TextLabel") or waveSource:IsA("TextButton") or waveSource:IsA("TextBox")) then
+        fastWave = tonumber(tostring(waveSource.Text or ""):match("(%d+)"))
+    end
+
+    if fastTime ~= nil or fastWave ~= nil then
+        local result = {wave = fastWave, time = fastTime, text = fastText, timerPath = fastPath}
+        state.clockCacheAt = now
+        state.clockCache = result
+        return result
+    end
+
+    -- A missing timer must not trigger a full GUI walk every Heartbeat.
+    local negativeDelay = state.clockCache == false and 1.0 or 0.35
+    if now - state.clockCacheAt < negativeDelay then
         return state.clockCache == false and nil or state.clockCache
     end
+
     local playerGui = player:FindFirstChildOfClass("PlayerGui")
     if not playerGui then return nil end
     local bestTimer, bestTimerScore = nil, 0
@@ -1062,7 +1098,7 @@ local function detectGameClock()
         end
     end
     if not bestTimer and not bestWave then
-        state.clockCacheAt = os.clock()
+        state.clockCacheAt = now
         state.clockCache = false
         return nil
     end
@@ -1073,7 +1109,7 @@ local function detectGameClock()
         timerPath = bestTimer and bestTimer.path or nil,
     }
     state.clockTimerSource = bestTimer and bestTimer.source or state.clockTimerSource
-    state.clockCacheAt = os.clock()
+    state.clockCacheAt = now
     state.clockCache = result
     return result
 end
@@ -1862,6 +1898,9 @@ local function resetMatchTracking(delay)
     state.mapCacheAt = 0
     state.bindingScanAt = 0
     state.bindingScan = {}
+    state.endScanAt = 0
+    state.endScanVisible = false
+    state.endScanReason = nil
 end
 
 local function releaseAll()
@@ -3178,8 +3217,27 @@ local endWords = {
 }
 
 local function endDetected(visibleOnly)
-    local x = bindingPoint("playAgain", true)
-    if x then return true, "Play Again видна" end
+    local now = os.clock()
+    local scanInterval = (state.playing or state.controllerState == "WAIT_END" or state.controllerState == "REPLAY") and 0.30 or 0.85
+    if now - (state.endScanAt or 0) < scanInterval then
+        if not visibleOnly and not state.endScanVisible then
+            local timeout = tonumber(state.config.settings.endTimeout) or 600
+            if state.playbackFinishedAt > 0 and now - state.playbackFinishedAt >= timeout then
+                return true, "таймаут"
+            end
+        end
+        return state.endScanVisible == true, state.endScanReason
+    end
+    state.endScanAt = now
+
+    -- Reuse binding discovery cache instead of force-scanning PlayerGui on
+    -- every controller tick.
+    local x = bindingPoint("playAgain", false)
+    if x then
+        state.endScanVisible, state.endScanReason = true, "Play Again видна"
+        return true, state.endScanReason
+    end
+
     local playerGui = player:FindFirstChildOfClass("PlayerGui")
     if playerGui then
         for _, object in ipairs(playerGui:GetDescendants()) do
@@ -3202,14 +3260,19 @@ local function endDetected(visibleOnly)
                             end
                             parent = parent.Parent
                         end
-                        if score >= 70 then return true, object.Text end
+                        if score >= 70 then
+                            state.endScanVisible, state.endScanReason = true, object.Text
+                            return true, object.Text
+                        end
                     end
                 end
             end
         end
     end
+
+    state.endScanVisible, state.endScanReason = false, nil
     local timeout = tonumber(state.config.settings.endTimeout) or 600
-    if not visibleOnly and state.playbackFinishedAt > 0 and os.clock() - state.playbackFinishedAt >= timeout then
+    if not visibleOnly and state.playbackFinishedAt > 0 and now - state.playbackFinishedAt >= timeout then
         return true, "таймаут"
     end
     return false
@@ -3322,7 +3385,7 @@ local controllerAccumulator = 0
 keep(RunService.Heartbeat:Connect(function(delta)
     if state.destroyed then return end
     controllerAccumulator += delta
-    local controllerInterval = state.controllerState == "WAIT_MATCH" and 0.15 or 0.5
+    local controllerInterval = state.controllerState == "WAIT_MATCH" and 0.25 or 0.5
     if controllerAccumulator < controllerInterval then return end
     controllerAccumulator = 0
     if not state.config or state.recording then return end
@@ -4097,9 +4160,8 @@ end
 
 function state:Destroy()
     if self.destroyed then return end
-    -- Flush the current switches before hot-reload/close. In particular,
-    -- AUTOSTART must survive the next script launch unchanged.
-    pcall(saveDisk)
+    -- saveDisk() is called at every user-visible setting/macro change. Rewriting
+    -- the entire macro library again during hot-reload caused a launch hitch.
     self.destroyed = true
     self.recording = false
     self.playToken += 1
