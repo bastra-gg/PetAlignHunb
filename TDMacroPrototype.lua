@@ -3,7 +3,7 @@
 -- 1.5.0: autonomous macros + server StartedAt timeline + late-start catch-up.
 
 local VERSION = 2
-local SCRIPT_VERSION = "1.5.4"
+local SCRIPT_VERSION = "1.5.3"
 local REMOTE_BUS_VERSION = 5
 local ROOT_FOLDER = "TDMacroLab"
 local CONFIG_FILE = ROOT_FOLDER .. "/config.json"
@@ -376,6 +376,13 @@ local state = {
     recordingWaveStartClock = nil,
     recordingWaveStartedAt = nil,
     recordingMatchStartedAt = nil,
+    waveSyncInitialized = false,
+    waveSyncStartedAt = nil,
+    waveSyncCurrent = nil,
+    waveSyncPending = nil,
+    waveSyncStartServer = nil,
+    waveSyncAnchorKnown = false,
+    waveSyncIntermission = nil,
     recordedPlacements = {},
     recordedUnitInstances = {},
     pendingPlacements = {},
@@ -1041,6 +1048,98 @@ local function waveStateSnapshot()
     }
 end
 
+local function resetWaveSync()
+    state.waveSyncInitialized = false
+    state.waveSyncStartedAt = nil
+    state.waveSyncCurrent = nil
+    state.waveSyncPending = nil
+    state.waveSyncStartServer = nil
+    state.waveSyncAnchorKnown = false
+    state.waveSyncIntermission = nil
+end
+
+local function updateWaveSync()
+    local waveState = ReplicatedStorage:FindFirstChild("WaveState")
+    local now = serverNow()
+    if not waveState or not now then return end
+
+    local startedAt = tonumber(waveState:GetAttribute("StartedAt"))
+    local wave = tonumber(waveState:GetAttribute("CurrentWave"))
+    local intermission = tonumber(waveState:GetAttribute("IntermissionRemaining"))
+
+    if startedAt and startedAt <= 0 then startedAt = nil end
+
+    -- A new StartedAt means a new match. Never carry a wave anchor across it.
+    if state.waveSyncInitialized and startedAt ~= state.waveSyncStartedAt then
+        resetWaveSync()
+    end
+
+    if not state.waveSyncInitialized then
+        state.waveSyncInitialized = true
+        state.waveSyncStartedAt = startedAt
+        state.waveSyncCurrent = wave
+        state.waveSyncIntermission = intermission
+        state.waveSyncAnchorKnown = false
+        state.waveSyncStartServer = nil
+
+        -- If we attached during an intermission we can still observe its exact
+        -- end. If we attached in the middle of combat, the current wave's true
+        -- start is unknown and playback must fall back for that wave only.
+        if wave and wave > 0 and intermission and intermission > 0 then
+            state.waveSyncPending = wave
+        end
+        return
+    end
+
+    if wave ~= state.waveSyncCurrent then
+        state.waveSyncCurrent = wave
+        state.waveSyncPending = wave
+        state.waveSyncAnchorKnown = false
+        state.waveSyncStartServer = nil
+    end
+
+    if state.waveSyncPending ~= nil and wave == state.waveSyncPending then
+        -- AUTO SKIP only shortens this intermission. The moment it reaches zero
+        -- is the stable zero point for this wave on both record and playback.
+        if intermission == nil or intermission <= 0 then
+            state.waveSyncStartServer = now
+            state.waveSyncAnchorKnown = true
+            state.waveSyncPending = nil
+        end
+    end
+
+    state.waveSyncStartedAt = startedAt
+    state.waveSyncIntermission = intermission
+end
+
+local function waveSyncSnapshot()
+    updateWaveSync()
+    local now = serverNow()
+    local offset = nil
+    if state.waveSyncAnchorKnown and state.waveSyncStartServer and now then
+        offset = math.max(0, now - state.waveSyncStartServer)
+    end
+    return {
+        wave = state.waveSyncCurrent,
+        offset = offset,
+        anchorKnown = state.waveSyncAnchorKnown == true,
+        pending = state.waveSyncPending ~= nil,
+        intermission = state.waveSyncIntermission,
+        startedAt = state.waveSyncStartedAt,
+    }
+end
+
+-- Keep wave transitions hot independently of recording/playback. This only
+-- reads four replicated attributes and server time; it never scans PlayerGui.
+local waveSyncAccumulator = 0
+keep(RunService.Heartbeat:Connect(function(delta)
+    if state.destroyed then return end
+    waveSyncAccumulator += delta
+    if waveSyncAccumulator < 0.05 then return end
+    waveSyncAccumulator = 0
+    updateWaveSync()
+end))
+
 local function detectGameClock()
     if os.clock() - state.clockCacheAt < 0.12 then
         return state.clockCache == false and nil or state.clockCache
@@ -1274,18 +1373,9 @@ local function requestCashDiscovery(force)
     end)
 end
 
-local function waitForRecordedCash(event, token, catchUp)
-    local cost = tonumber(event and event.cashCost)
-    local required = cost and math.max(0, cost) or nil
-
-    -- New recordings store the actual amount spent by the action. The old
-    -- cashBefore field is a historical balance, not a cost; requiring that same
-    -- balance after AUTO SKIP can add several fake seconds of delay.
-    if required == nil then
-        if catchUp then return true end
-        required = tonumber(event and event.cashBefore)
-    end
-    if not required or required <= 0 then return true end
+local function waitForRecordedCash(event, token)
+    local required = tonumber(event and event.cashBefore)
+    if not required then return true end
 
     local warned = false
     local unseenSince = os.clock()
@@ -1297,7 +1387,7 @@ local function waitForRecordedCash(event, token, catchUp)
             if current + 0.5 >= required then return true end
             if not warned then
                 warned = true
-                log(string.format("Жду cash для действия: %.0f / %.0f", current, required))
+                log(string.format("Жду cash: %.0f / %.0f", current, required))
             end
         else
             requestCashDiscovery(false)
@@ -1325,6 +1415,11 @@ local function addRecordedEvent(kind, data)
             state.recordingMatchStartedAt = startedAt
             state.recordingCombatStarted = true
         end
+
+        local phase = waveSyncSnapshot()
+        if phase.wave ~= nil then data.waveSyncWave = phase.wave end
+        if phase.anchorKnown and phase.offset ~= nil then data.waveSyncOffset = phase.offset end
+
         -- StartedAt is authoritative: only requests made before it exists are opening actions.
         data.opening = elapsed == nil and state.recordingCombatStarted ~= true
         if data.cashBefore == nil then
@@ -1605,27 +1700,6 @@ local function captureRemote(remote, method, arguments, calledAt, cashBefore)
         cashBefore = tonumber(cashBefore),
     })
     if recorded then
-        if tonumber(cashBefore) then
-            local beforeCash = tonumber(cashBefore)
-            task.spawn(function()
-                local deadline = os.clock() + 0.65
-                local minimum = beforeCash
-                while state.recording and os.clock() < deadline do
-                    local currentCash = readCashSourceFast(state.cashSource)
-                    if currentCash ~= nil then
-                        minimum = math.min(minimum, currentCash)
-                        if beforeCash - minimum > 0.5 then
-                            recorded.cashCost = math.max(0, beforeCash - minimum)
-                            break
-                        end
-                    end
-                    task.wait(0.04)
-                end
-                if recorded.cashCost == nil then
-                    recorded.cashCost = math.max(0, beforeCash - minimum)
-                end
-            end)
-        end
         if action == "place" then
             state.pendingPlacements[#state.pendingPlacements + 1] = {
                 unitId = unitId,
@@ -1930,6 +2004,7 @@ local function resetMatchTracking(delay)
     state.bindingScanAt = 0
     state.bindingScan = {}
     state.replayCheck = nil
+    resetWaveSync()
 end
 
 local function releaseAll()
@@ -2167,6 +2242,49 @@ local function collectOpeningPlacements(events)
         end
     end
     return opening, false
+end
+
+local function waitForWaveSyncMoment(event, token)
+    local targetWave = tonumber(event and event.waveSyncWave)
+    local targetOffset = tonumber(event and event.waveSyncOffset)
+    if targetWave == nil or targetOffset == nil then return nil end
+
+    while token == state.playToken and state.playing and not state.destroyed do
+        while state.paused and token == state.playToken do task.wait(0.05) end
+
+        local phase = waveSyncSnapshot()
+        local currentWave = tonumber(phase.wave)
+        if currentWave ~= nil then
+            if currentWave > targetWave then
+                -- Playback entered this wave earlier (for example because AUTO
+                -- SKIP removed intermission). Catch up in event order immediately.
+                return true
+            elseif currentWave < targetWave then
+                task.wait(0.03)
+                continue
+            end
+
+            if phase.anchorKnown and phase.offset ~= nil then
+                local remaining = targetOffset - phase.offset
+                if remaining <= 0.02 then return true end
+                task.wait(math.min(0.03, math.max(0.01, remaining)))
+                continue
+            end
+
+            if phase.pending then
+                -- We know the wave boundary is coming; wait for the exact zero.
+                task.wait(0.03)
+                continue
+            end
+
+            -- Script attached in the middle of this wave, so its true zero is
+            -- unknowable. Fall back to the 1.5.1 StartedAt timing for this event.
+            return nil
+        end
+
+        return nil
+    end
+    return false
 end
 
 local function waitForMatchMoment(event, token)
@@ -2415,13 +2533,6 @@ local function playMacro(macro, force, fromAuto, expectedFingerprint)
     local lockedCamera = cameraSnapshot()
     local speed = math.clamp(tonumber(state.config.settings.playbackSpeed) or 1, 0.25, 3)
     local playbackStarted = os.clock()
-    local playbackMatchElapsed = nil
-    local playbackWave = nil
-    if hasRemoteEvents then
-        playbackMatchElapsed = select(1, matchElapsed())
-        local waveState = ReplicatedStorage:FindFirstChild("WaveState")
-        playbackWave = waveState and tonumber(waveState:GetAttribute("CurrentWave")) or nil
-    end
     local cameraFrames = {}
     for _, frame in ipairs(type(macro.cameraTrack) == "table" and macro.cameraTrack or {}) do
         local cframe = snapshotToCFrame(frame)
@@ -2518,27 +2629,18 @@ local function playMacro(macro, force, fromAuto, expectedFingerprint)
             if token ~= state.playToken or state.destroyed then break end
             if openingSent[event] then continue end
             if event.kind == "remote" then
-                local eventMatchTime = tonumber(event.matchTime)
-                local eventWave = tonumber(event.wave)
-                local catchUp = false
+                local waveWait = waitForWaveSyncMoment(event, token)
+                if waveWait == false then break end
 
-                -- If the script/macros were launched after recorded actions should
-                -- already have happened, replay those missed actions immediately in
-                -- their original order. This is what 1.5.1 failed to make explicit.
-                if playbackMatchElapsed ~= nil and eventMatchTime ~= nil
-                    and eventMatchTime <= playbackMatchElapsed + 0.05 then
-                    catchUp = true
-                elseif playbackWave ~= nil and eventWave ~= nil and eventWave < playbackWave then
-                    catchUp = true
-                end
-
-                if not catchUp then
+                if waveWait == nil then
+                    -- Exact old 1.5.1 timing path for old macros or a late attach
+                    -- in the middle of a wave whose zero we could not observe.
                     local matchWait = waitForMatchMoment(event, token)
                     if matchWait == false then break end
                     if matchWait == nil and not waitForRecordedMoment(event, macro.clock, waveTiming, token, playbackStarted) then break end
                 end
 
-                if not waitForRecordedCash(event, token, catchUp) then break end
+                if not waitForRecordedCash(event, token) then break end
             elseif hasRemoteEvents then
                 -- Server macros can contain legacy input events from older
                 -- recordings. The Remote already performs the action; replaying
@@ -2782,14 +2884,6 @@ local function startRecording()
     end
     if state.remoteBus then state.remoteBus.cashSnapshot = readCashSourceFast(state.cashSource) or state.cashCache end
     state.recording = true
-
-    -- Record under the same match conditions that playback will use.
-    -- In 1.5.1 AUTO SKIP was armed only on playback, so recordings could contain
-    -- full intermissions while playback removed them. That is the drift source.
-    if state.config.settings.autoSkip or state.config.settings.x2 then
-        task.defer(armMatchControls)
-    end
-
     if state.config.settings.remoteMode then
         if not state.remoteHookReady then
             state.recording = false
@@ -2840,7 +2934,7 @@ local function stopAndSave(name)
         viewport = state.recordingViewport,
         camera = state.recordingCamera,
         cameraTrack = state.recordedCameraTrack,
-        timingMode = state.config.settings.remoteMode and "server_started_at_v2_cost" or "input",
+        timingMode = state.config.settings.remoteMode and "server_started_at_v1" or "input",
         clock = {
             direction = state.recordingClockDirection,
             startWave = state.recordingClockInitial and state.recordingClockInitial.wave or nil,
@@ -3192,7 +3286,7 @@ local function setMaximumGameSpeed(runId)
     local maxSeen, wrapped = 0, false
     for attempt = 1, 5 do
         if runId ~= state.controlRunId or state.destroyed
-            or not (state.config.settings.auto or state.playing or state.recording) then return end
+            or not (state.config.settings.auto or state.playing) then return end
         local _, _, object = bindingPoint("x2", true)
         local before = controlSpeed(object)
         if before then maxSeen = math.max(maxSeen, before) end
@@ -3244,7 +3338,7 @@ armMatchControls = function()
     task.spawn(function()
         if state.config.settings.x2 then setMaximumGameSpeed(runId) end
         local deadline = os.clock() + 12
-        while runId == state.controlRunId and (state.config.settings.auto or state.playing or state.recording) and not state.destroyed
+        while runId == state.controlRunId and (state.config.settings.auto or state.playing) and not state.destroyed
             and os.clock() < deadline and next(pending) do
             for kind, item in pairs(pending) do
                 local _, _, object = bindingPoint(kind, false)
