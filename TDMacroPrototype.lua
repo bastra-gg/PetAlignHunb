@@ -3,7 +3,7 @@
 -- 1.5.0: autonomous macros + server StartedAt timeline + late-start catch-up.
 
 local VERSION = 2
-local SCRIPT_VERSION = "1.5.0"
+local SCRIPT_VERSION = "1.5.1"
 local REMOTE_BUS_VERSION = 5
 local ROOT_FOLDER = "TDMacroLab"
 local CONFIG_FILE = ROOT_FOLDER .. "/config.json"
@@ -281,7 +281,8 @@ local aliases = {
         "wave skip", "skip waves", "skip wave", "авто пропуск", "автопропуск",
     },
     playAgain = {
-        "play again", "playagain", "replay", "retry", "again", "return match",
+        "play again", "playagain", "replay", "retry", "try again", "retry battle",
+        "restart", "restart match", "again", "return match",
         "играть снова", "сыграть снова", "повторить", "заново",
     },
 }
@@ -424,6 +425,7 @@ local state = {
     playbackUsesRemote = false,
     waitFreshMatch = false,
     lastAutoStartedAt = nil,
+    replayCheck = nil,
     cashCacheAt = 0,
     cashCache = nil,
     cashSource = nil,
@@ -1026,6 +1028,17 @@ local function matchElapsed()
     local elapsed = now - startedAt
     if elapsed < -2 then return nil, startedAt end
     return math.max(0, elapsed), startedAt
+end
+
+local function waveStateSnapshot()
+    local waveState = ReplicatedStorage:FindFirstChild("WaveState")
+    if not waveState then return {startedAt = nil, wave = nil, intermission = nil, enemies = nil} end
+    return {
+        startedAt = tonumber(waveState:GetAttribute("StartedAt")),
+        wave = tonumber(waveState:GetAttribute("CurrentWave")),
+        intermission = tonumber(waveState:GetAttribute("IntermissionRemaining")),
+        enemies = tonumber(waveState:GetAttribute("EnemiesAlive")),
+    }
 end
 
 local function detectGameClock()
@@ -1886,6 +1899,7 @@ local function resetMatchTracking(delay)
     state.mapCacheAt = 0
     state.bindingScanAt = 0
     state.bindingScan = {}
+    state.replayCheck = nil
 end
 
 local function releaseAll()
@@ -2040,6 +2054,14 @@ end
 
 local function replayRemoteEvent(event)
     local remote = resolveInstancePath(event.remotePath)
+    if not remote or (not remote:IsA("RemoteEvent") and not remote:IsA("RemoteFunction")) then
+        local deadline = os.clock() + 2.5
+        repeat
+            task.wait(0.1)
+            remote = resolveInstancePath(event.remotePath)
+        until (remote and (remote:IsA("RemoteEvent") or remote:IsA("RemoteFunction")))
+            or not state.playing or os.clock() >= deadline
+    end
     if not remote or (not remote:IsA("RemoteEvent") and not remote:IsA("RemoteFunction")) then
         log("Remote не найден: " .. tostring(event.remoteName), true)
         return false
@@ -2840,6 +2862,22 @@ local function scanBindingCandidates(force)
                             or parentText:find("wave", 1, true) or parentText:find("hud", 1, true) then
                             score += 4
                         end
+                        if kind == "playAgain" then
+                            local ancestor = object
+                            for _ = 1, 7 do
+                                if not ancestor then break end
+                                local ancestorName = Core.cleanText(ancestor.Name)
+                                if ancestorName:find("gameend", 1, true)
+                                    or ancestorName:find("result", 1, true)
+                                    or ancestorName:find("defeat", 1, true)
+                                    or ancestorName:find("victory", 1, true)
+                                    or ancestorName:find("gameover", 1, true) then
+                                    score += 28
+                                    break
+                                end
+                                ancestor = ancestor.Parent
+                            end
+                        end
                         if score > result.score then
                             result.object, result.score, result.source = target or object, score, object
                         end
@@ -2879,12 +2917,12 @@ local function findManualBindingCandidate(kind, binding)
     return best, bestScore
 end
 
-local function bindingPoint(kind, forDetection)
+local function bindingPoint(kind, forDetection, forceScan)
     local binding = state.config.bindings[kind] or {mode = "auto"}
     -- Always prefer the live HUD. A saved manual point is only a fallback, so
     -- changing resolution or rebuilding the match GUI cannot pin us to stale
     -- coordinates from the previous server.
-    local automatic, automaticScore = findBindingCandidate(kind)
+    local automatic, automaticScore = findBindingCandidate(kind, forceScan == true)
     if automatic and automaticScore >= 64 then
         local position, size = automatic.AbsolutePosition, automatic.AbsoluteSize
         return position.X + size.X / 2, position.Y + size.Y / 2, automatic
@@ -3022,16 +3060,18 @@ local function controlState(kind, object)
     return nil
 end
 
-local function clickBinding(kind, quiet)
-    local x, y, object = bindingPoint(kind, false)
+local function clickBinding(kind, quiet, forceScan, forcePhysical)
+    local x, y, object = bindingPoint(kind, false, forceScan == true)
     if not x then
         if not quiet then log(kind .. ": кнопка не найдена") end
         return false
     end
-    local direct = activateGuiButton(object)
-    if direct then
-        if not quiet then log(kind .. ": включено напрямую") end
-        return true
+    if not forcePhysical then
+        local direct = activateGuiButton(object)
+        if direct then
+            if not quiet then log(kind .. ": включено напрямую") end
+            return true
+        end
     end
 
     -- During server-macro playback on mobile, never synthesize a touch
@@ -3177,11 +3217,12 @@ armMatchControls = function()
 end
 
 local endWords = {
-    "victory", "defeat", "completed", "you win", "you lost", "победа", "поражение",
+    "victory", "defeat", "completed", "you win", "you lost", "game over", "loss",
+    "retry", "try again", "победа", "поражение", "проигрыш",
     "завершено", "матч окончен", "играть снова", "сыграть снова",
 }
 
-local function endDetected()
+local function endDetected(visibleOnly)
     local x = bindingPoint("playAgain", true)
     if x then return true, "Play Again видна" end
     local playerGui = player:FindFirstChildOfClass("PlayerGui")
@@ -3213,9 +3254,93 @@ local function endDetected()
         end
     end
     local timeout = tonumber(state.config.settings.endTimeout) or 600
-    if state.playbackFinishedAt > 0 and os.clock() - state.playbackFinishedAt >= timeout then
+    if not visibleOnly and state.playbackFinishedAt > 0 and os.clock() - state.playbackFinishedAt >= timeout then
         return true, "таймаут"
     end
+    return false
+end
+
+local function waitForReplayTransition(autoRunToken)
+    local deadline = os.clock() + 40
+    local nextAttempt = os.clock() + 0.35
+    local attempts = 0
+    local initialState = waveStateSnapshot()
+    local oldStartedAt = initialState.startedAt
+    local sawResults = endDetected(true) == true
+    local hiddenSince = nil
+
+    state.replayCheck = {
+        token = autoRunToken,
+        oldStartedAt = oldStartedAt,
+        attempts = 0,
+    }
+
+    while os.clock() < deadline do
+        if autoRunToken ~= state.autoRunToken or not state.config.settings.auto
+            or state.destroyed or state.recording or state.playing
+            or state.controllerState ~= "REPLAY" then
+            return nil
+        end
+
+        local resultsVisible = endDetected(true) == true
+        local ws = waveStateSnapshot()
+        local startedChanged = oldStartedAt and ws.startedAt
+            and math.abs(ws.startedAt - oldStartedAt) > 0.001
+        local startedReset = oldStartedAt and (not ws.startedAt or ws.startedAt <= 0)
+
+        if startedChanged then
+            state.lastAutoStartedAt = nil
+            state.replayCheck = nil
+            log("Играть снова: новая катка подтверждена по StartedAt")
+            return true
+        end
+
+        if resultsVisible then
+            sawResults = true
+            hiddenSince = nil
+        elseif sawResults then
+            hiddenSince = hiddenSince or os.clock()
+            local freshLobby = startedReset
+                or ((tonumber(ws.wave) or 0) <= 1 and (tonumber(ws.intermission) or 0) > 0)
+            if freshLobby and os.clock() - hiddenSince >= 0.6 then
+                state.lastAutoStartedAt = nil
+                state.replayCheck = nil
+                log("Играть снова: переход в новую катку подтверждён")
+                return true
+            end
+        end
+
+        if state.config.settings.autoPlayAgain and resultsVisible and os.clock() >= nextAttempt then
+            attempts += 1
+            state.bindingScanAt = 0
+            state.bindingScan = {}
+            local x, _, object = bindingPoint("playAgain", true, true)
+            local enabled = x ~= nil
+            if object then
+                pcall(function()
+                    if object.Interactable == false then enabled = false end
+                end)
+            end
+            if enabled then
+                -- Alternate a direct signal and a real input tap. Some defeat UIs
+                -- expose a connection that fires without actually transitioning.
+                local forcePhysical = attempts % 2 == 0
+                local sent = clickBinding("playAgain", true, true, forcePhysical)
+                if sent then
+                    log("Играть снова: попытка " .. tostring(attempts)
+                        .. (forcePhysical and " · физический клик" or " · сигнал"))
+                end
+            elseif attempts == 1 or attempts % 4 == 0 then
+                log("Играть снова: кнопка пока не найдена")
+            end
+            nextAttempt = os.clock() + 1.4
+        end
+
+        task.wait(0.15)
+    end
+
+    state.replayCheck = nil
+    log("Играть снова: переход не подтверждён за 40с", true)
     return false
 end
 
@@ -3336,25 +3461,28 @@ keep(RunService.Heartbeat:Connect(function(delta)
             transition("REPLAY", reason)
             local autoRunToken = state.autoRunToken
             task.spawn(function()
-                task.wait(0.8)
-                if autoRunToken ~= state.autoRunToken or not state.config.settings.auto then return end
-                if state.config.settings.autoPlayAgain then
-                    local clicked = false
-                    for _ = 1, 4 do
-                        if autoRunToken ~= state.autoRunToken or not state.config.settings.auto then return end
-                        if clickBinding("playAgain", true) then clicked = true break end
-                        task.wait(0.35)
-                    end
-                    log(clicked and "playAgain: нажато" or "playAgain: кнопка не сработала", not clicked)
+                local ok, confirmed = pcall(waitForReplayTransition, autoRunToken)
+                if not ok then
+                    log("Играть снова: ошибка проверки · " .. tostring(confirmed), true)
+                    confirmed = false
                 end
-                if autoRunToken ~= state.autoRunToken or not state.config.settings.auto then return end
+                if confirmed == nil or autoRunToken ~= state.autoRunToken
+                    or not state.config.settings.auto or state.playing or state.recording or state.destroyed then
+                    return
+                end
+                if not confirmed then
+                    state.controllerNotBefore = os.clock() + 1
+                    transition("WAIT_END", "не получилось перейти · пробую снова")
+                    refreshAll()
+                    return
+                end
                 if not state.config.settings.autoLoop then
                     state.config.settings.auto = false
                     resetMatchTracking(0)
                     transition("IDLE", "цикл выключен")
                 else
-                    resetMatchTracking(5)
-                    transition("WAIT_MATCH", "жду новую карту")
+                    resetMatchTracking(0.35)
+                    transition("WAIT_MATCH", "новая катка · запускаю привязанный макрос")
                 end
                 saveDisk()
                 refreshAll()
