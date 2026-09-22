@@ -2,7 +2,7 @@
 -- Records tower actions and replays the same server remotes without moving the camera.
 
 local VERSION = 2
-local SCRIPT_VERSION = "1.4.18"
+local SCRIPT_VERSION = "1.4.19"
 local REMOTE_BUS_VERSION = 5
 local ROOT_FOLDER = "TDMacroLab"
 local CONFIG_FILE = ROOT_FOLDER .. "/config.json"
@@ -69,13 +69,15 @@ function Core.mapBindingKey(fingerprint)
 end
 
 function Core.boundMacroId(currentFingerprint, manualMatches, mapMatches)
-    local mapKey = Core.mapBindingKey(currentFingerprint)
-    if type(mapMatches) == "table" and mapMatches[mapKey] then
-        return mapMatches[mapKey], "map"
-    end
+    -- Exact map+spawn bindings must win over broad map bindings. Some TD maps
+    -- expose the same generic workspace map name, so map-only keys can collide.
     local exactKey = Core.fingerprintKey(currentFingerprint)
     if type(manualMatches) == "table" and manualMatches[exactKey] then
         return manualMatches[exactKey], "exact"
+    end
+    local mapKey = Core.mapBindingKey(currentFingerprint)
+    if type(mapMatches) == "table" and mapMatches[mapKey] then
+        return mapMatches[mapKey], "map"
     end
     -- Before v1.3.0 the button called "bind to map" actually saved a full
     -- map+spawn fingerprint. Treat every old entry from this map as a map
@@ -548,6 +550,33 @@ local function loadConfig()
         normalized[#normalized + 1] = Core.normalizeMacro(macro, "Macro " .. index)
     end
     state.config.macros = normalized
+
+    -- 1.4.19: recordings are map-specific by design. Older builds saved the
+    -- fingerprint inside the macro but did not always create the lookup entry,
+    -- so AUTO could only find the first/explicitly bound map. Repair missing
+    -- exact and map bindings without overwriting anything the user bound.
+    state.config.manualMatches = type(state.config.manualMatches) == "table" and state.config.manualMatches or {}
+    state.config.mapMatches = type(state.config.mapMatches) == "table" and state.config.mapMatches or {}
+    local exactWinners, mapWinners = {}, {}
+    local function betterBindingMacro(candidate, current)
+        if not current then return true end
+        if (candidate.isDefault == true) ~= (current.isDefault == true) then return candidate.isDefault == true end
+        local candidateUsed, currentUsed = tonumber(candidate.lastUsed) or 0, tonumber(current.lastUsed) or 0
+        if candidateUsed ~= currentUsed then return candidateUsed > currentUsed end
+        return (tonumber(candidate.savedAt) or 0) > (tonumber(current.savedAt) or 0)
+    end
+    for _, macro in ipairs(state.config.macros) do
+        local exactKey = tostring(macro.fingerprintKey or Core.fingerprintKey(macro.fingerprint))
+        if not state.config.manualMatches[exactKey] and betterBindingMacro(macro, exactWinners[exactKey]) then
+            exactWinners[exactKey] = macro
+        end
+        local mapKey = Core.mapBindingKey(macro.fingerprint)
+        if not state.config.mapMatches[mapKey] and betterBindingMacro(macro, mapWinners[mapKey]) then
+            mapWinners[mapKey] = macro
+        end
+    end
+    for key, macro in pairs(exactWinners) do state.config.manualMatches[key] = macro.id end
+    for key, macro in pairs(mapWinners) do state.config.mapMatches[key] = macro.id end
 
     local legacy = readJson(LEGACY_FILE)
     if legacy and type(legacy.macros) == "table" then
@@ -2727,8 +2756,17 @@ local function stopAndSave(name)
     })
     state.config.macros[#state.config.macros + 1] = macro
     state.selectedId = macro.id
+
+    -- Every freshly recorded macro belongs to the map/spawn it was recorded on.
+    -- Save both the exact binding and a map fallback immediately, so AUTO works
+    -- on the second/third map without requiring a separate "bind" click.
+    local exactBindingKey = tostring(macro.fingerprintKey or Core.fingerprintKey(macro.fingerprint))
+    local mapBindingKey = Core.mapBindingKey(macro.fingerprint)
+    state.config.manualMatches[exactBindingKey] = macro.id
+    state.config.mapMatches[mapBindingKey] = macro.id
+
     saveDisk()
-    log("Сохранено: " .. macro.name .. " · " .. #events .. " событий")
+    log("Сохранено и привязано: " .. macro.name .. " · " .. #events .. " событий")
     refreshAll()
     return macro
 end
