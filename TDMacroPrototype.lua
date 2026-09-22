@@ -3,7 +3,7 @@
 -- 1.5.0: autonomous macros + server StartedAt timeline + late-start catch-up.
 
 local VERSION = 2
-local SCRIPT_VERSION = "1.5.5"
+local SCRIPT_VERSION = "1.5.6"
 local REMOTE_BUS_VERSION = 5
 local ROOT_FOLDER = "TDMacroLab"
 local CONFIG_FILE = ROOT_FOLDER .. "/config.json"
@@ -252,7 +252,9 @@ function Core.chooseMacro(macros, currentFingerprint, manualMatches, mapMatches)
                 return macro, {macro}
             end
         end
-        return nil, candidates
+        -- Stale binding (usually after deleting/replacing a macro). Ignore it
+        -- instead of making every other macro for this map unreachable.
+        boundId = nil
     end
 
     for _, macro in ipairs(type(macros) == "table" and macros or {}) do
@@ -4034,19 +4036,42 @@ renameButton.TextSize = 10
 button(macrosPage, "ОСНОВНЫМ", UDim2.new(0.61, 4, 1, -84), UDim2.new(0.2, -4, 0, 35), function()
     local macro = selectedMacro()
     if not macro then return end
+    local macroMapKey = Core.mapBindingKey(macro.fingerprint or {})
     for _, other in ipairs(state.config.macros) do
-        if other.fingerprintKey == macro.fingerprintKey then other.isDefault = false end
+        local otherMapKey = Core.mapBindingKey(other.fingerprint or {})
+        if tonumber(other.placeId) == tonumber(macro.placeId) and otherMapKey == macroMapKey then
+            other.isDefault = false
+        end
     end
     macro.isDefault = true
+
+    -- AUTO uses one macro per map. Making a macro "primary" therefore also
+    -- makes it the explicit AUTO binding for that map.
+    state.config.mapMatches[macroMapKey] = macro.id
+    for oldKey, macroId in pairs(state.config.manualMatches) do
+        if macroId ~= nil and tostring(oldKey):sub(1, #macroMapKey + 2) == macroMapKey .. "::" then
+            state.config.manualMatches[oldKey] = nil
+        end
+    end
     saveDisk()
+    log("Основной для карты: " .. macro.name)
     refreshMacros()
 end)
 button(macrosPage, "УДАЛИТЬ", UDim2.new(0.81, 4, 1, -84), UDim2.new(0.19, -4, 0, 35), function()
     local macro = selectedMacro()
     if not macro then return end
+
+    for key, macroId in pairs(state.config.mapMatches) do
+        if macroId == macro.id then state.config.mapMatches[key] = nil end
+    end
+    for key, macroId in pairs(state.config.manualMatches) do
+        if macroId == macro.id then state.config.manualMatches[key] = nil end
+    end
+
     for index, other in ipairs(state.config.macros) do
         if other.id == macro.id then table.remove(state.config.macros, index) break end
     end
+
     state.selectedId = state.config.macros[1] and state.config.macros[1].id or nil
     saveDisk()
     refreshMacros()
@@ -4059,8 +4084,14 @@ button(macrosPage, "ПРИВЯЗАТЬ К КАРТЕ", UDim2.new(0.34, 4, 1, -41
     local macro = selectedMacro()
     if not macro then log("Выбери макрос") return end
     local current = fingerprint()
-    state.config.mapMatches[Core.mapBindingKey(current)] = macro.id
-    -- Keep the exact entry for backward compatibility with old configs/tools.
+    local mapKey = Core.mapBindingKey(current)
+    state.config.mapMatches[mapKey] = macro.id
+    for oldKey, oldMacroId in pairs(state.config.manualMatches) do
+        if oldMacroId ~= nil and tostring(oldKey):sub(1, #mapKey + 2) == mapKey .. "::" then
+            state.config.manualMatches[oldKey] = nil
+        end
+    end
+    -- Keep one exact entry for backward compatibility with old configs/tools.
     state.config.manualMatches[current.key] = macro.id
     saveDisk()
     log("Карта привязана к " .. macro.name .. " · автозапуск будет сразу")
