@@ -3,7 +3,7 @@
 -- 1.5.0: autonomous macros + server StartedAt timeline + late-start catch-up.
 
 local VERSION = 2
-local SCRIPT_VERSION = "1.5.1"
+local SCRIPT_VERSION = "1.5.2"
 local REMOTE_BUS_VERSION = 5
 local ROOT_FOLDER = "TDMacroLab"
 local CONFIG_FILE = ROOT_FOLDER .. "/config.json"
@@ -1049,6 +1049,19 @@ local function detectGameClock()
     if not playerGui then return nil end
     local bestTimer, bestTimerScore = nil, 0
     local bestWave, bestWaveScore = nil, 0
+
+    -- Alliance TD exposes the authoritative wave in ReplicatedStorage.WaveState.
+    -- Use it before GUI guessing so AUTO SKIP / early wave transitions cannot
+    -- leave us one wave behind because a label updated a few frames later.
+    local waveState = ReplicatedStorage:FindFirstChild("WaveState")
+    if waveState then
+        local replicatedWave = tonumber(waveState:GetAttribute("CurrentWave"))
+        if replicatedWave ~= nil then
+            bestWave = replicatedWave
+            bestWaveScore = 1000
+        end
+    end
+
     local timerBinding = state.config and state.config.bindings and state.config.bindings.matchTimer
     if timerBinding and timerBinding.mode == "manual" then
         local bound = resolveGuiPath(timerBinding.path)
@@ -1121,13 +1134,18 @@ local function readGameClockFast()
     local time, timerText, timerPath = nil, nil, nil
     local wave = nil
 
+    local waveState = ReplicatedStorage:FindFirstChild("WaveState")
+    if waveState then
+        wave = tonumber(waveState:GetAttribute("CurrentWave"))
+    end
+
     if timerSource and timerSource:IsDescendantOf(game) and instanceVisible(timerSource)
         and (timerSource:IsA("TextLabel") or timerSource:IsA("TextButton") or timerSource:IsA("TextBox")) then
         timerText = tostring(timerSource.Text or "")
         time = parseClockText(timerText)
         timerPath = guiPath(timerSource)
     end
-    if waveSource and waveSource:IsDescendantOf(game) and instanceVisible(waveSource)
+    if wave == nil and waveSource and waveSource:IsDescendantOf(game) and instanceVisible(waveSource)
         and (waveSource:IsA("TextLabel") or waveSource:IsA("TextButton") or waveSource:IsA("TextBox")) then
         wave = tonumber(tostring(waveSource.Text or ""):match("(%d+)"))
     end
@@ -1322,8 +1340,12 @@ local function addRecordedEvent(kind, data)
             data.cashBefore = readCashSourceFast(state.cashSource) or state.cashCache
         end
     end
-    local clock = state.recordingClock
-    if not clock and kind ~= "remote" then clock = detectGameClock() end
+    local clock = nil
+    if kind == "remote" and state.config and state.config.settings.remoteMode then
+        clock = readGameClockFast() or state.recordingClock or detectGameClock()
+    else
+        clock = state.recordingClock or detectGameClock()
+    end
     if clock then
         data.wave = clock.wave
         data.gameClock = clock.time
@@ -2243,16 +2265,12 @@ local function waitForRecordedMoment(event, clockConfig, timing, token, playback
                 continue
             end
         end
-        if current and eventWaveTime ~= nil and current.wave == eventWave then
-            local waveElapsed
-            if current.time ~= nil and timing.waveStartClock ~= nil then
-                waveElapsed = math.abs(current.time - timing.waveStartClock)
-            elseif timing.waveStartedAt then
-                waveElapsed = os.clock() - timing.waveStartedAt
-            end
-            if waveElapsed and waveElapsed >= eventWaveTime then return true end
-            task.wait(0.04)
-        elseif current and eventGameClock ~= nil and current.time ~= nil and (not eventWave or not current.wave or current.wave == eventWave) then
+        -- Same-wave timer is the strongest timing source. AUTO SKIP changes
+        -- the length of intermissions between waves, but it does not change the
+        -- recorded point inside the wave. This automatically subtracts every
+        -- second saved by AUTO SKIP instead of applying a guessed fixed offset.
+        if current and eventGameClock ~= nil and current.time ~= nil
+            and (eventWave == nil or current.wave == nil or current.wave == eventWave) then
             local reached
             if direction == "down" then
                 reached = current.time <= eventGameClock
@@ -2260,7 +2278,16 @@ local function waitForRecordedMoment(event, clockConfig, timing, token, playback
                 reached = current.time >= eventGameClock
             end
             if reached then return true end
-            task.wait(0.04)
+            task.wait(0.025)
+        elseif current and eventWaveTime ~= nil and current.wave == eventWave then
+            local waveElapsed
+            if current.time ~= nil and timing.waveStartClock ~= nil then
+                waveElapsed = math.abs(current.time - timing.waveStartClock)
+            elseif timing.waveStartedAt then
+                waveElapsed = os.clock() - timing.waveStartedAt
+            end
+            if waveElapsed and waveElapsed >= eventWaveTime then return true end
+            task.wait(0.025)
         else
             -- Old recordings may include lobby time before their first server action.
             -- Remove only that leading delay and preserve all later event intervals.
@@ -2481,9 +2508,23 @@ local function playMacro(macro, force, fromAuto, expectedFingerprint)
             if token ~= state.playToken or state.destroyed then break end
             if openingSent[event] then continue end
             if event.kind == "remote" then
-                local matchWait = waitForMatchMoment(event, token)
-                if matchWait == false then break end
-                if matchWait == nil and not waitForRecordedMoment(event, macro.clock, waveTiming, token, playbackStarted) then break end
+                local hasWaveSync = tonumber(event.wave) ~= nil
+                    and (tonumber(event.gameClock) ~= nil or tonumber(event.waveTime) ~= nil)
+
+                if hasWaveSync then
+                    -- Wave + in-wave clock is immune to seconds removed by
+                    -- AUTO SKIP between waves. If playback starts late and the
+                    -- recorded wave is already behind us, waitForRecordedMoment
+                    -- returns immediately and the macro catches up in order.
+                    if not waitForRecordedMoment(event, macro.clock, waveTiming, token, playbackStarted) then break end
+                else
+                    -- StartedAt remains the fallback for recordings where the game
+                    -- timer could not be discovered.
+                    local matchWait = waitForMatchMoment(event, token)
+                    if matchWait == false then break end
+                    if matchWait == nil and not waitForRecordedMoment(event, macro.clock, waveTiming, token, playbackStarted) then break end
+                end
+
                 if not waitForRecordedCash(event, token) then break end
             elseif hasRemoteEvents then
                 -- Server macros can contain legacy input events from older
