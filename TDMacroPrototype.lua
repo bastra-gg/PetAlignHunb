@@ -1301,9 +1301,10 @@ local function addRecordedEvent(kind, data)
         if elapsed ~= nil then
             data.matchTime = elapsed
             state.recordingMatchStartedAt = startedAt
+            state.recordingCombatStarted = true
         end
-        -- Do not infer "opening" later from event order. Record the actual phase.
-        data.opening = state.recordingCombatStarted ~= true
+        -- StartedAt is authoritative: only requests made before it exists are opening actions.
+        data.opening = elapsed == nil and state.recordingCombatStarted ~= true
         if data.cashBefore == nil then
             data.cashBefore = readCashSourceFast(state.cashSource) or state.cashCache
         end
@@ -2121,8 +2122,9 @@ local function waitForMatchMoment(event, token)
     if target == nil then return nil end
     while token == state.playToken and state.playing and not state.destroyed do
         while state.paused and token == state.playToken do task.wait(0.05) end
-        local elapsed = matchElapsed()
+        local elapsed, startedAt = matchElapsed()
         if elapsed ~= nil then
+            if state.playbackSource == "auto" and startedAt then state.lastAutoStartedAt = startedAt end
             local remaining = target - elapsed
             if remaining <= 0.025 then return true end
             task.wait(math.min(0.05, math.max(0.01, remaining)))
