@@ -3,7 +3,7 @@
 -- 1.5.0: autonomous macros + server StartedAt timeline + late-start catch-up.
 
 local VERSION = 2
-local SCRIPT_VERSION = "1.5.9"
+local SCRIPT_VERSION = "1.6.0"
 local REMOTE_BUS_VERSION = 5
 local ROOT_FOLDER = "TDMacroLab"
 local CONFIG_FILE = ROOT_FOLDER .. "/config.json"
@@ -77,14 +77,20 @@ function Core.layoutBindingKey(fingerprint)
     return "layout::" .. tostring(fingerprint.placeId or 0) .. "::" .. layoutKey
 end
 
+function Core.primaryMapKey(fingerprint)
+    return Core.layoutBindingKey(fingerprint) or Core.mapBindingKey(fingerprint)
+end
+
 function Core.boundMacroId(currentFingerprint, manualMatches, mapMatches)
-    local mapKey = Core.mapBindingKey(currentFingerprint)
-    if type(mapMatches) == "table" and mapMatches[mapKey] then
-        return mapMatches[mapKey], "map"
-    end
+    -- Physical layout is authoritative. Game mode IDs are only a legacy fallback.
     local layoutKey = Core.layoutBindingKey(currentFingerprint)
     if layoutKey and type(mapMatches) == "table" and mapMatches[layoutKey] then
         return mapMatches[layoutKey], "layout"
+    end
+
+    local mapKey = Core.mapBindingKey(currentFingerprint)
+    if type(mapMatches) == "table" and mapMatches[mapKey] then
+        return mapMatches[mapKey], "map_fallback"
     end
     local exactKey = Core.fingerprintKey(currentFingerprint)
     if type(manualMatches) == "table" and manualMatches[exactKey] then
@@ -252,32 +258,35 @@ function Core.normalizeMacro(source, fallbackName)
 end
 
 function Core.chooseMacro(macros, currentFingerprint, manualMatches, mapMatches)
-    local mapKey = Core.mapBindingKey(currentFingerprint)
     local boundId = Core.boundMacroId(currentFingerprint, manualMatches, mapMatches)
     local candidates = {}
 
-    -- Playback data is independent. Map identity is used only to choose which
-    -- autonomous macro AUTO should start.
+    -- Playback data is independent. Physical layout chooses AUTO. The game's
+    -- mode-specific map ID is consulted only when no layout identity exists.
     if boundId then
         for _, macro in ipairs(type(macros) == "table" and macros or {}) do
             if macro.id == boundId and tonumber(macro.placeId) == tonumber(currentFingerprint.placeId) then
                 return macro, {macro}
             end
         end
-        -- Stale binding (usually after deleting/replacing a macro). Ignore it
-        -- instead of making every other macro for this map unreachable.
         boundId = nil
     end
 
     local currentLayoutKey = Core.layoutBindingKey(currentFingerprint)
+    local currentMapKey = Core.mapBindingKey(currentFingerprint)
     for _, macro in ipairs(type(macros) == "table" and macros or {}) do
         local fp = type(macro.fingerprint) == "table" and macro.fingerprint or {}
-        local sameMap = Core.mapBindingKey(fp) == mapKey
+        local matches = false
         local macroLayoutKey = Core.layoutBindingKey(fp)
-        local sameLayout = currentLayoutKey ~= nil and macroLayoutKey ~= nil
-            and currentLayoutKey == macroLayoutKey
-        if tonumber(macro.placeId) == tonumber(currentFingerprint.placeId)
-            and (sameMap or sameLayout) then
+
+        if currentLayoutKey and macroLayoutKey then
+            matches = currentLayoutKey == macroLayoutKey
+        elseif not currentLayoutKey or not macroLayoutKey then
+            -- Legacy fallback for recordings that predate layoutKey.
+            matches = Core.mapBindingKey(fp) == currentMapKey
+        end
+
+        if tonumber(macro.placeId) == tonumber(currentFingerprint.placeId) and matches then
             candidates[#candidates + 1] = macro
         end
     end
@@ -2599,11 +2608,16 @@ local function macroMatches(macro, currentFingerprint)
     if not macro or tonumber(macro.placeId) ~= game.PlaceId then return false end
     local boundId = Core.boundMacroId(currentFingerprint, state.config.manualMatches, state.config.mapMatches)
     if boundId then return boundId == macro.id end
+
     local fp = type(macro.fingerprint) == "table" and macro.fingerprint or {}
-    if Core.mapBindingKey(fp) == Core.mapBindingKey(currentFingerprint) then return true end
     local macroLayout = Core.layoutBindingKey(fp)
     local currentLayout = Core.layoutBindingKey(currentFingerprint)
-    return macroLayout ~= nil and currentLayout ~= nil and macroLayout == currentLayout
+    if macroLayout and currentLayout then
+        return macroLayout == currentLayout
+    end
+
+    -- Old macros only: fall back to the game's map ID.
+    return Core.mapBindingKey(fp) == Core.mapBindingKey(currentFingerprint)
 end
 
 local function playMacro(macro, force, fromAuto, expectedFingerprint)
@@ -3861,7 +3875,7 @@ keep(RunService.Heartbeat:Connect(function(delta)
         -- starts or in the middle of an already-running match.
         if not state.matchSpawnPosition then state.matchSpawnPosition = rootPart().Position end
         local current = fingerprint(state.matchSpawnPosition)
-        local stableMapKey = Core.mapBindingKey(current)
+        local stableMapKey = Core.primaryMapKey(current)
         if stableMapKey ~= state.stableKey then
             state.stableKey = stableMapKey
             state.stableSince = os.clock()
@@ -4278,22 +4292,26 @@ renameButton.TextSize = 10
 button(macrosPage, "ОСНОВНЫМ", UDim2.new(0.61, 4, 1, -84), UDim2.new(0.2, -4, 0, 35), function()
     local macro = selectedMacro()
     if not macro then return end
-    local macroMapKey = Core.mapBindingKey(macro.fingerprint or {})
+    local macroPrimaryKey = Core.primaryMapKey(macro.fingerprint or {})
     for _, other in ipairs(state.config.macros) do
-        local otherMapKey = Core.mapBindingKey(other.fingerprint or {})
-        if tonumber(other.placeId) == tonumber(macro.placeId) and otherMapKey == macroMapKey then
+        local otherPrimaryKey = Core.primaryMapKey(other.fingerprint or {})
+        if tonumber(other.placeId) == tonumber(macro.placeId) and otherPrimaryKey == macroPrimaryKey then
             other.isDefault = false
         end
     end
     macro.isDefault = true
 
-    -- AUTO uses one macro per map. Making a macro "primary" therefore also
-    -- makes it the explicit AUTO binding for that map.
-    state.config.mapMatches[macroMapKey] = macro.id
+    -- Physical layout is the AUTO identity. mapKey is only kept as a legacy
+    -- fallback for macros that do not have layoutKey yet.
     local macroLayoutKey = Core.layoutBindingKey(macro.fingerprint or {})
-    if macroLayoutKey then state.config.mapMatches[macroLayoutKey] = macro.id end
+    if macroLayoutKey then
+        state.config.mapMatches[macroLayoutKey] = macro.id
+    else
+        state.config.mapMatches[Core.mapBindingKey(macro.fingerprint or {})] = macro.id
+    end
+    local legacyMapKey = Core.mapBindingKey(macro.fingerprint or {})
     for oldKey, macroId in pairs(state.config.manualMatches) do
-        if macroId ~= nil and tostring(oldKey):sub(1, #macroMapKey + 2) == macroMapKey .. "::" then
+        if macroId ~= nil and tostring(oldKey):sub(1, #legacyMapKey + 2) == legacyMapKey .. "::" then
             state.config.manualMatches[oldKey] = nil
         end
     end
@@ -4329,13 +4347,18 @@ button(macrosPage, "ПРИВЯЗАТЬ К КАРТЕ", UDim2.new(0.34, 4, 1, -41
     if not macro then log("Выбери макрос") return end
     local current = fingerprint()
     local mapKey = Core.mapBindingKey(current)
-    state.config.mapMatches[mapKey] = macro.id
     local layoutKey = Core.layoutBindingKey(current)
     if layoutKey then
+        -- New behavior: bind the physical map, not the mode-specific map ID.
         state.config.mapMatches[layoutKey] = macro.id
         if type(macro.fingerprint) == "table" then
             macro.fingerprint.layoutKey = current.layoutKey
         end
+        -- Remove this mode-specific binding so it can never override layout.
+        state.config.mapMatches[mapKey] = nil
+    else
+        -- Only for legacy/undetectable maps where geometry could not be read.
+        state.config.mapMatches[mapKey] = macro.id
     end
     for oldKey, oldMacroId in pairs(state.config.manualMatches) do
         if oldMacroId ~= nil and tostring(oldKey):sub(1, #mapKey + 2) == mapKey .. "::" then
@@ -4346,7 +4369,7 @@ button(macrosPage, "ПРИВЯЗАТЬ К КАРТЕ", UDim2.new(0.34, 4, 1, -41
     state.config.manualMatches[current.key] = macro.id
     saveDisk()
     log("Карта привязана к " .. macro.name
-        .. (current.layoutKey and " · режим больше не важен" or ""))
+        .. (current.layoutKey and " · по геометрии, режим игнорируется" or " · fallback по ID"))
 end)
 button(macrosPage, "СТОП МАКРОСА", UDim2.new(0.73, 4, 1, -41), UDim2.new(0.27, -4, 0, 35), function()
     stopCurrentMacro("Макрос остановлен пользователем")
