@@ -3,7 +3,7 @@
 -- 1.5.0: autonomous macros + server StartedAt timeline + late-start catch-up.
 
 local VERSION = 2
-local SCRIPT_VERSION = "1.5.8"
+local SCRIPT_VERSION = "1.5.9"
 local REMOTE_BUS_VERSION = 5
 local ROOT_FOLDER = "TDMacroLab"
 local CONFIG_FILE = ROOT_FOLDER .. "/config.json"
@@ -70,10 +70,21 @@ function Core.mapBindingKey(fingerprint)
     }, "::")
 end
 
+function Core.layoutBindingKey(fingerprint)
+    fingerprint = type(fingerprint) == "table" and fingerprint or {}
+    local layoutKey = tostring(fingerprint.layoutKey or "")
+    if layoutKey == "" or layoutKey == "unknown" then return nil end
+    return "layout::" .. tostring(fingerprint.placeId or 0) .. "::" .. layoutKey
+end
+
 function Core.boundMacroId(currentFingerprint, manualMatches, mapMatches)
     local mapKey = Core.mapBindingKey(currentFingerprint)
     if type(mapMatches) == "table" and mapMatches[mapKey] then
         return mapMatches[mapKey], "map"
+    end
+    local layoutKey = Core.layoutBindingKey(currentFingerprint)
+    if layoutKey and type(mapMatches) == "table" and mapMatches[layoutKey] then
+        return mapMatches[layoutKey], "layout"
     end
     local exactKey = Core.fingerprintKey(currentFingerprint)
     if type(manualMatches) == "table" and manualMatches[exactKey] then
@@ -190,6 +201,7 @@ function Core.normalizeMacro(source, fallbackName)
     }
     macroFingerprint.placeId = tonumber(macroFingerprint.placeId) or tonumber(source.placeId) or game.PlaceId
     macroFingerprint.mapKey = tostring(macroFingerprint.mapKey or source.tag or "unknown")
+    macroFingerprint.layoutKey = macroFingerprint.layoutKey and tostring(macroFingerprint.layoutKey) or nil
     macroFingerprint.spawnKey = tostring(macroFingerprint.spawnKey or "legacy")
     local events = source.events or source.actions or {}
     local normalizedEvents = Core.normalizeEvents(events, recordedViewport)
@@ -257,10 +269,15 @@ function Core.chooseMacro(macros, currentFingerprint, manualMatches, mapMatches)
         boundId = nil
     end
 
+    local currentLayoutKey = Core.layoutBindingKey(currentFingerprint)
     for _, macro in ipairs(type(macros) == "table" and macros or {}) do
         local fp = type(macro.fingerprint) == "table" and macro.fingerprint or {}
+        local sameMap = Core.mapBindingKey(fp) == mapKey
+        local macroLayoutKey = Core.layoutBindingKey(fp)
+        local sameLayout = currentLayoutKey ~= nil and macroLayoutKey ~= nil
+            and currentLayoutKey == macroLayoutKey
         if tonumber(macro.placeId) == tonumber(currentFingerprint.placeId)
-            and Core.mapBindingKey(fp) == mapKey then
+            and (sameMap or sameLayout) then
             candidates[#candidates + 1] = macro
         end
     end
@@ -425,6 +442,8 @@ local state = {
     matchSpawnPosition = nil,
     mapCacheKey = nil,
     mapCacheAt = 0,
+    layoutCacheKey = nil,
+    layoutCacheAt = 0,
     bindingCapture = nil,
     bindingScanAt = 0,
     bindingScan = {},
@@ -764,6 +783,101 @@ local function detectMapKey()
     return remember("world:" .. tostring(hash))
 end
 
+local function detectLayoutKey()
+    if state.layoutCacheKey and os.clock() - state.layoutCacheAt < 1.5 then
+        return state.layoutCacheKey
+    end
+
+    local function geometryContainer()
+        for _, name in ipairs({"CurrentMap", "Map", "ActiveMap"}) do
+            local object = workspace:FindFirstChild(name)
+            if object and (object:IsA("Model") or object:IsA("Folder")) then
+                local children = object:GetChildren()
+                if #children == 1 and (children[1]:IsA("Model") or children[1]:IsA("Folder")) then
+                    return children[1]
+                end
+                return object
+            end
+        end
+        local maps = workspace:FindFirstChild("Maps")
+        if maps then
+            local candidates = {}
+            for _, child in ipairs(maps:GetChildren()) do
+                if child:IsA("Model") or child:IsA("Folder") then
+                    candidates[#candidates + 1] = child
+                end
+            end
+            if #candidates == 1 then return candidates[1] end
+        end
+        return nil
+    end
+
+    local container = geometryContainer()
+    if not container then return nil end
+
+    local ignored = {
+        enemy = true, enemies = true, mob = true, mobs = true,
+        unit = true, units = true, tower = true, towers = true,
+        effect = true, effects = true, projectile = true, projectiles = true,
+        character = true, characters = true,
+    }
+
+    local parts = {}
+    for _, object in ipairs(container:GetDescendants()) do
+        if object:IsA("BasePart") and object.Anchored then
+            local skip = false
+            local parent = object
+            for _ = 1, 5 do
+                if not parent or parent == container then break end
+                local clean = Core.cleanText(parent.Name)
+                if ignored[clean] then
+                    skip = true
+                    break
+                end
+                parent = parent.Parent
+            end
+            if not skip then
+                local size = object.Size
+                parts[#parts + 1] = {
+                    volume = math.max(0.001, size.X * size.Y * size.Z),
+                    position = object.Position,
+                    size = size,
+                }
+            end
+        end
+    end
+
+    if #parts < 6 then return nil end
+    table.sort(parts, function(a, b) return a.volume > b.volume end)
+
+    local signatures = {}
+    local limit = math.min(40, #parts)
+    for index = 1, limit do
+        local item = parts[index]
+        local p, s = item.position, item.size
+        signatures[#signatures + 1] = table.concat({
+            tostring(Core.round(p.X, 4)),
+            tostring(Core.round(p.Y, 4)),
+            tostring(Core.round(p.Z, 4)),
+            tostring(Core.round(s.X, 2)),
+            tostring(Core.round(s.Y, 2)),
+            tostring(Core.round(s.Z, 2)),
+        }, ",")
+    end
+    table.sort(signatures)
+
+    local source = table.concat(signatures, "|")
+    local hash = 0
+    for index = 1, #source do
+        hash = (hash * 33 + string.byte(source, index)) % 2147483647
+    end
+
+    local result = "geo:" .. tostring(hash)
+    state.layoutCacheKey = result
+    state.layoutCacheAt = os.clock()
+    return result
+end
+
 local function fingerprint(spawnOverride)
     local root = rootPart()
     local position = spawnOverride or (root and root.Position) or Vector3.zero
@@ -771,6 +885,7 @@ local function fingerprint(spawnOverride)
     local fp = {
         placeId = game.PlaceId,
         mapKey = detectMapKey(),
+        layoutKey = detectLayoutKey(),
         spawnKey = string.format("%.0f,%.0f,%.0f", quantized.X, quantized.Y, quantized.Z),
         spawnPosition = {x = position.X, y = position.Y, z = position.Z},
         camera = cameraSnapshot(),
@@ -2007,6 +2122,8 @@ local function resetMatchTracking(delay)
     state.cashDiscoveryQueued = false
     state.mapCacheKey = nil
     state.mapCacheAt = 0
+    state.layoutCacheKey = nil
+    state.layoutCacheAt = 0
     state.bindingScanAt = 0
     state.bindingScan = {}
     state.replayCheck = nil
@@ -2483,7 +2600,10 @@ local function macroMatches(macro, currentFingerprint)
     local boundId = Core.boundMacroId(currentFingerprint, state.config.manualMatches, state.config.mapMatches)
     if boundId then return boundId == macro.id end
     local fp = type(macro.fingerprint) == "table" and macro.fingerprint or {}
-    return Core.mapBindingKey(fp) == Core.mapBindingKey(currentFingerprint)
+    if Core.mapBindingKey(fp) == Core.mapBindingKey(currentFingerprint) then return true end
+    local macroLayout = Core.layoutBindingKey(fp)
+    local currentLayout = Core.layoutBindingKey(currentFingerprint)
+    return macroLayout ~= nil and currentLayout ~= nil and macroLayout == currentLayout
 end
 
 local function playMacro(macro, force, fromAuto, expectedFingerprint)
@@ -3634,7 +3754,8 @@ local function prepareAutoRun(immediate, preparedFingerprint, autoRunToken)
     transition("PREPARE", immediate and "привязка карты найдена" or nil)
     local currentFingerprint = preparedFingerprint or fingerprint(state.matchSpawnPosition)
     state.lastFingerprint = currentFingerprint
-    log("Карта: " .. currentFingerprint.mapKey)
+    log("Карта: " .. currentFingerprint.mapKey
+        .. (currentFingerprint.layoutKey and (" · гео " .. currentFingerprint.layoutKey) or ""))
     local macro, choices = Core.chooseMacro(
         state.config.macros,
         currentFingerprint,
@@ -3650,6 +3771,19 @@ local function prepareAutoRun(immediate, preparedFingerprint, autoRunToken)
         return
     end
     state.selectedId = macro.id
+
+    -- Learn a mode-independent alias whenever this map was identified
+    -- successfully. Normal/Endless can expose different map IDs while sharing
+    -- the same physical layout.
+    local layoutBinding = Core.layoutBindingKey(currentFingerprint)
+    if layoutBinding and state.config.mapMatches[layoutBinding] ~= macro.id then
+        state.config.mapMatches[layoutBinding] = macro.id
+        if type(macro.fingerprint) == "table" and not macro.fingerprint.layoutKey then
+            macro.fingerprint.layoutKey = currentFingerprint.layoutKey
+        end
+        saveDisk()
+    end
+
     if #choices > 1 then log("Совпадений: " .. #choices .. ", выбран " .. macro.name) else log("Выбран: " .. macro.name) end
     local remoteMacro = macro.recordMode == "remote"
     if not remoteMacro then
@@ -4156,6 +4290,8 @@ button(macrosPage, "ОСНОВНЫМ", UDim2.new(0.61, 4, 1, -84), UDim2.new(0.2
     -- AUTO uses one macro per map. Making a macro "primary" therefore also
     -- makes it the explicit AUTO binding for that map.
     state.config.mapMatches[macroMapKey] = macro.id
+    local macroLayoutKey = Core.layoutBindingKey(macro.fingerprint or {})
+    if macroLayoutKey then state.config.mapMatches[macroLayoutKey] = macro.id end
     for oldKey, macroId in pairs(state.config.manualMatches) do
         if macroId ~= nil and tostring(oldKey):sub(1, #macroMapKey + 2) == macroMapKey .. "::" then
             state.config.manualMatches[oldKey] = nil
@@ -4194,6 +4330,13 @@ button(macrosPage, "ПРИВЯЗАТЬ К КАРТЕ", UDim2.new(0.34, 4, 1, -41
     local current = fingerprint()
     local mapKey = Core.mapBindingKey(current)
     state.config.mapMatches[mapKey] = macro.id
+    local layoutKey = Core.layoutBindingKey(current)
+    if layoutKey then
+        state.config.mapMatches[layoutKey] = macro.id
+        if type(macro.fingerprint) == "table" then
+            macro.fingerprint.layoutKey = current.layoutKey
+        end
+    end
     for oldKey, oldMacroId in pairs(state.config.manualMatches) do
         if oldMacroId ~= nil and tostring(oldKey):sub(1, #mapKey + 2) == mapKey .. "::" then
             state.config.manualMatches[oldKey] = nil
@@ -4202,7 +4345,8 @@ button(macrosPage, "ПРИВЯЗАТЬ К КАРТЕ", UDim2.new(0.34, 4, 1, -41
     -- Keep one exact entry for backward compatibility with old configs/tools.
     state.config.manualMatches[current.key] = macro.id
     saveDisk()
-    log("Карта привязана к " .. macro.name .. " · автозапуск будет сразу")
+    log("Карта привязана к " .. macro.name
+        .. (current.layoutKey and " · режим больше не важен" or ""))
 end)
 button(macrosPage, "СТОП МАКРОСА", UDim2.new(0.73, 4, 1, -41), UDim2.new(0.27, -4, 0, 35), function()
     stopCurrentMacro("Макрос остановлен пользователем")
