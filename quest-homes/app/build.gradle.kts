@@ -7,7 +7,7 @@ plugins {
 
 android {
     namespace = "com.bastra.questhomes"
-    compileSdk = 37
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.bastra.questhomes"
@@ -36,8 +36,8 @@ android {
 }
 
 dependencies {
-    implementation("com.flyfishxu:kadb-android:2.1.4")
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0")
+    implementation("com.flyfishxu:kadb-android:2.1.1")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
 }
 
 kotlin {
