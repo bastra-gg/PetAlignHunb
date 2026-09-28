@@ -1,4 +1,4 @@
--- RockBugHub TEST T80: explicit support for the September 2026 Overcharge update.
+-- RockBugHub TEST T81: explicit support for the September 2026 Overcharge update.
 -- No guessed rebirth/strength/durability numbers: live game objects stay authoritative.
 local Players=game:GetService("Players")
 local ReplicatedStorage=game:GetService("ReplicatedStorage")
@@ -10,8 +10,8 @@ if type(getgenv)=="function"then local ok,v=pcall(getgenv)if ok and type(v)=="ta
 local runtime=env.RockBugRuntime
 if type(runtime)~="table"then return end
 
-if env.RockBugOverchargeT80 and type(env.RockBugOverchargeT80.Destroy)=="function"then
- pcall(env.RockBugOverchargeT80.Destroy)
+if env.RockBugOverchargeT81 and type(env.RockBugOverchargeT81.Destroy)=="function"then
+ pcall(env.RockBugOverchargeT81.Destroy)
 end
 
 local state={
@@ -23,8 +23,8 @@ local state={
  detectedCrystals={},
  lastScanAt=0,
 }
-env.RockBugOverchargeT80=state
-runtime.overchargeT80=state
+env.RockBugOverchargeT81=state
+runtime.overchargeT81=state
 
 local ZONE="Overcharge Gym"
 local ORDER=11
@@ -74,21 +74,42 @@ local function nearestWorldPart(obj)
 end
 
 local function textMentions(obj)
- if not obj then return false end
- if obj:IsA("TextLabel")or obj:IsA("TextButton")or obj:IsA("TextBox")then
-  local ok,t=pcall(function()return tostring(obj.Text or"").." "..tostring(obj.ContentText or"")end)
-  return ok and contains(t)
- end
+ -- T81: UI/sign text is not a trustworthy spatial anchor. The game may clone
+ -- destination labels all over the map, which used to drag foreign machines
+ -- into Overcharge.
  return false
 end
 
+local KNOWN_GYM_POSITIONS={
+ Vector3.new(-3000,35,-400),
+ Vector3.new(2400,20,1050),
+ Vector3.new(-7176,45,-1106),
+ Vector3.new(4200,1000,-4000),
+ Vector3.new(-8700,35,-5850),
+ Vector3.new(-8500,35,2400),
+}
+
+local function distXZ(a,b)
+ local dx,dz=a.X-b.X,a.Z-b.Z
+ return math.sqrt(dx*dx+dz*dz)
+end
+
+local function farFromKnownGyms(pos)
+ local best=math.huge
+ for _,known in ipairs(KNOWN_GYM_POSITIONS)do
+  local d=distXZ(pos,known)
+  if d<best then best=d end
+ end
+ return best>900
+end
+
 local function collectAnchors()
- local anchors={}
- local seen={}
+ local raw={}
  local ok,all=pcall(function()return workspace:GetDescendants()end)
- if not ok or type(all)~="table"then return anchors end
+ if not ok or type(all)~="table"then return raw end
+
  for i,obj in ipairs(all)do
-  local hit=contains(obj.Name)or textMentions(obj)
+  local hit=contains(obj.Name)
   if not hit then
    for _,key in ipairs(metadata)do
     local good,v=pcall(function()return obj:GetAttribute(key)end)
@@ -98,29 +119,47 @@ local function collectAnchors()
   if hit then
    local holder=nearestWorldPart(obj)
    local pos=holder and partPosition(holder)or nil
-   if pos then
-    local key=math.floor(pos.X/20)..":"..math.floor(pos.Z/20)
-    if not seen[key]then
-     seen[key]=true
-     table.insert(anchors,pos)
-    end
-   end
+   -- Ignore cloned portal/sign markers that sit inside an existing old gym.
+   if pos and farFromKnownGyms(pos)then table.insert(raw,pos)end
   end
   if i%1800==0 then task.wait()end
+ end
+
+ -- Collapse duplicate marker copies into physical clusters.
+ local clusters={}
+ for _,pos in ipairs(raw)do
+  local target=nil
+  for _,cluster in ipairs(clusters)do
+   if distXZ(pos,cluster.center)<=220 then target=cluster break end
+  end
+  if target then
+   target.count+=1
+   target.center=Vector3.new(
+    (target.center.X*(target.count-1)+pos.X)/target.count,
+    (target.center.Y*(target.count-1)+pos.Y)/target.count,
+    (target.center.Z*(target.count-1)+pos.Z)/target.count
+   )
+  else
+   table.insert(clusters,{center=pos,count=1})
+  end
+ end
+
+ table.sort(clusters,function(a,b)return a.count>b.count end)
+ local anchors={}
+ if clusters[1]then
+  -- One physical Overcharge area only. Never treat every duplicated label as a gym.
+  anchors[1]=clusters[1].center
  end
  return anchors
 end
 
 local function nearAnchor(machine,anchors)
+ local anchor=anchors and anchors[1]
+ if not anchor then return false end
  local pos=partPosition(machine and(machine.seat or machine.model))
  if not pos then return false end
- local best=math.huge
- for _,a in ipairs(anchors)do
-  local dx,dz=pos.X-a.X,pos.Z-a.Z
-  local d=math.sqrt(dx*dx+dz*dz)
-  if d<best then best=d end
- end
- return best<=1250
+ -- Tight cluster: enough for one gym, not enough to swallow neighboring worlds.
+ return distXZ(pos,anchor)<=420
 end
 
 local function addUnique(list,value)
@@ -162,8 +201,8 @@ local function rebuildMachineZones()
  state.anchorCount=#anchors
  for _,machine in ipairs(catalog)do
   local hit,label=objectMentions(machine.model or machine.identity or machine.seat)
-  -- Some builds name only the gym sign/portal, while machine models keep generic
-  -- names. In that case spatially bind nearby machines to the Overcharge marker.
+  -- Some builds name only the gym root/portal, while machine models stay generic.
+  -- T81 binds only the single tight physical Overcharge cluster.
   if not hit and #anchors>0 and nearAnchor(machine,anchors)then
    hit=true
    label="near Overcharge marker"
@@ -202,7 +241,7 @@ local function rebuildMachineZones()
   return a.id<b.id
  end)
  runtime.machineZones=zones
- runtime.machineCatalogUpdateVersion="T80-Overcharge"
+ runtime.machineCatalogUpdateVersion="T81-Overcharge"
 
  local destinations=runtime.teleportDestinations or{}
  runtime.teleportDestinations=destinations
@@ -292,8 +331,8 @@ function state.Destroy()
  if type(state.originalRefresh)=="function"and runtime.refreshMachineCatalog~=state.originalRefresh then
   runtime.refreshMachineCatalog=state.originalRefresh
  end
- if env.RockBugOverchargeT80==state then env.RockBugOverchargeT80=nil end
- if runtime.overchargeT80==state then runtime.overchargeT80=nil end
+ if env.RockBugOverchargeT81==state then env.RockBugOverchargeT81=nil end
+ if runtime.overchargeT81==state then runtime.overchargeT81=nil end
 end
 
 return state
