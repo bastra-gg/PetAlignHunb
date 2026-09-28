@@ -58,6 +58,71 @@ local function partPosition(obj)
  return part and part.Position or nil
 end
 
+local function nearestWorldPart(obj)
+ local p=obj
+ for _=1,8 do
+  if not p then break end
+  if p:IsA("BasePart")then return p end
+  if p:IsA("Model")then
+   local pos=partPosition(p)
+   if pos then return p end
+  end
+  if p==workspace then break end
+  p=p.Parent
+ end
+ return nil
+end
+
+local function textMentions(obj)
+ if not obj then return false end
+ if obj:IsA("TextLabel")or obj:IsA("TextButton")or obj:IsA("TextBox")then
+  local ok,t=pcall(function()return tostring(obj.Text or"").." "..tostring(obj.ContentText or"")end)
+  return ok and contains(t)
+ end
+ return false
+end
+
+local function collectAnchors()
+ local anchors={}
+ local seen={}
+ local ok,all=pcall(function()return workspace:GetDescendants()end)
+ if not ok or type(all)~="table"then return anchors end
+ for i,obj in ipairs(all)do
+  local hit=contains(obj.Name)or textMentions(obj)
+  if not hit then
+   for _,key in ipairs(metadata)do
+    local good,v=pcall(function()return obj:GetAttribute(key)end)
+    if good and type(v)=="string"and contains(v)then hit=true break end
+   end
+  end
+  if hit then
+   local holder=nearestWorldPart(obj)
+   local pos=holder and partPosition(holder)or nil
+   if pos then
+    local key=math.floor(pos.X/20)..":"..math.floor(pos.Z/20)
+    if not seen[key]then
+     seen[key]=true
+     table.insert(anchors,pos)
+    end
+   end
+  end
+  if i%1800==0 then task.wait()end
+ end
+ return anchors
+end
+
+local function nearAnchor(machine,anchors)
+ local pos=partPosition(machine and(machine.seat or machine.model))
+ if not pos then return false end
+ local best=math.huge
+ for _,a in ipairs(anchors)do
+  local dx,dz=pos.X-a.X,pos.Z-a.Z
+  local d=math.sqrt(dx*dx+dz*dz)
+  if d<best then best=d end
+ end
+ return best<=1250
+end
+
 local function addUnique(list,value)
  for _,v in ipairs(list)do if tostring(v)==value then return false end end
  table.insert(list,value)
@@ -93,8 +158,16 @@ local function rebuildMachineZones()
  local catalog=runtime.machineCatalog or{}
  local detected=0
  local anchor=nil
+ local anchors=collectAnchors()
+ state.anchorCount=#anchors
  for _,machine in ipairs(catalog)do
   local hit,label=objectMentions(machine.model or machine.identity or machine.seat)
+  -- Some builds name only the gym sign/portal, while machine models keep generic
+  -- names. In that case spatially bind nearby machines to the Overcharge marker.
+  if not hit and #anchors>0 and nearAnchor(machine,anchors)then
+   hit=true
+   label="near Overcharge marker"
+  end
   if hit then
    machine.zone=ZONE
    machine.zoneOrder=ORDER
@@ -103,6 +176,7 @@ local function rebuildMachineZones()
    anchor=anchor or partPosition(machine.seat or machine.model)
   end
  end
+ if not anchor and anchors[1]then anchor=anchors[1]end
  state.detectedMachines=detected
  runtime.overchargeGymDetected=detected>0
  runtime.overchargeMachineCount=detected
