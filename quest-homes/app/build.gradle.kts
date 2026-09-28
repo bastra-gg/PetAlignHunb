@@ -7,7 +7,7 @@ plugins {
 
 android {
     namespace = "com.bastra.questhomes"
-    compileSdk = 36
+    compileSdk = 37
 
     defaultConfig {
         applicationId = "com.bastra.questhomes"
