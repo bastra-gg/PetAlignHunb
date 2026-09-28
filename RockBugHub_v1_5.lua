@@ -1,11 +1,11 @@
--- RockBugHub TEST bootstrap T80
-local VERSION="T80"
+-- RockBugHub TEST bootstrap T81
+local VERSION="T81"
 local CORE_URL="https://raw.githubusercontent.com/bastra-gg/PetAlignHunb/09719f8e7536f55acda625e8e18ae0ff44ce9cdb/RockBugHub_v1_5_core.lua"
 local BOSS_RUNTIME_URL="https://raw.githubusercontent.com/bastra-gg/PetAlignHunb/09719f8e7536f55acda625e8e18ae0ff44ce9cdb/RockBugHub_TEST_RuntimeA.lua"
 local ROCK_PATCH_URL="https://raw.githubusercontent.com/bastra-gg/PetAlignHunb/main/RockBugHub_TEST_AdaptiveRocks_T80.lua"
 local MACHINE_PATCH_URL="https://raw.githubusercontent.com/bastra-gg/PetAlignHunb/main/RockBugHub_TEST_AdaptiveMachines_T80.lua"
 local UPDATE_PATCH_URL="https://raw.githubusercontent.com/bastra-gg/PetAlignHunb/main/RockBugHub_TEST_UpdateDiscovery_T79.lua"
-local OVERCHARGE_PATCH_URL="https://raw.githubusercontent.com/bastra-gg/PetAlignHunb/main/RockBugHub_TEST_Overcharge_T80.lua"
+local OVERCHARGE_PATCH_URL="https://raw.githubusercontent.com/bastra-gg/PetAlignHunb/main/RockBugHub_TEST_Overcharge_T81.lua"
 local MACHINE_GUARD_URL="https://raw.githubusercontent.com/bastra-gg/PetAlignHunb/09719f8e7536f55acda625e8e18ae0ff44ce9cdb/RockBugHub_TEST_MachineRebirthGuard.lua"
 local BOSS_UI_PATCH_URL="https://raw.githubusercontent.com/bastra-gg/PetAlignHunb/main/RockBugHub_TEST_BossCompact_T77.lua"
 local CARD_PATCH_URL="https://raw.githubusercontent.com/bastra-gg/PetAlignHunb/main/RockBugHub_TEST_StableFarmCards_T77.lua"
@@ -736,7 +736,7 @@ pcall(function()
     if type(runtime)~="table"or type(runtime.layoutUI)~="table"
         or type(runtime.layoutUI.captureLastSession)~="function"
         or type(runtime.layoutUI.resumeLastSession)~="function"then return end
-    if runtime.layoutUI.testPersistenceVersion=="T80"then return end
+    if runtime.layoutUI.testPersistenceVersion=="T81"then return end
 
     local originalCapture=runtime.layoutUI.captureLastSession
     local originalResume=runtime.layoutUI.resumeLastSession
@@ -845,7 +845,7 @@ pcall(function()
         return result
     end
 
-    runtime.layoutUI.testPersistenceVersion="T80"
+    runtime.layoutUI.testPersistenceVersion="T81"
 end)
 
 local okCards,problemCards=pcall(function()run(CARD_PATCH_URL,"stable farm cards patch")end)
