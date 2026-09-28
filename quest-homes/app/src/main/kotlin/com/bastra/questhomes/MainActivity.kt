@@ -1,11 +1,16 @@
 package com.bastra.questhomes
 
+import android.Manifest
 import android.app.Activity
 import android.content.Intent
 import android.graphics.Color
 import android.net.Uri
+import android.net.nsd.NsdManager
+import android.net.nsd.NsdServiceInfo
+import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
+import android.content.pm.PackageManager
 import android.text.Editable
 import android.text.TextWatcher
 import android.view.Gravity
@@ -26,8 +31,12 @@ import java.io.File
 import java.io.FileOutputStream
 import java.net.HttpURLConnection
 import java.net.URL
+import java.net.NetworkInterface
 import java.security.MessageDigest
 import java.util.Locale
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.Executors
 
 class MainActivity : Activity() {
@@ -36,6 +45,9 @@ class MainActivity : Activity() {
         private const val COMMUNITY_RELEASE =
             "https://api.github.com/repos/nikitat21/Quest-Home-Switcher/releases/tags/community-v2.0.0"
         private const val REQUEST_IMPORT = 700
+        private const val REQUEST_NEARBY = 701
+        private const val ADB_PAIRING_SERVICE = "_adb-tls-pairing._tcp."
+        private const val ADB_CONNECT_SERVICE = "_adb-tls-connect._tcp."
     }
 
     data class HomeItem(
@@ -45,14 +57,17 @@ class MainActivity : Activity() {
         val size: Long
     )
 
+    data class AdbEndpoint(
+        val host: String,
+        val port: Int,
+        val name: String
+    )
+
     private val worker = Executors.newSingleThreadExecutor()
     private var adb: Kadb? = null
     private val homes = mutableListOf<HomeItem>()
 
     private lateinit var status: TextView
-    private lateinit var hostInput: EditText
-    private lateinit var pairPortInput: EditText
-    private lateinit var connectPortInput: EditText
     private lateinit var pairCodeInput: EditText
     private lateinit var searchInput: EditText
     private lateinit var catalogBox: LinearLayout
@@ -74,9 +89,9 @@ class MainActivity : Activity() {
         }
 
         setContentView(buildUi())
-        restoreSettings()
         refreshBackupLabel()
         loadCatalog()
+        if (ensureNearbyPermission()) autoConnectDevice()
     }
 
     override fun onDestroy() {
@@ -120,32 +135,22 @@ class MainActivity : Activity() {
         }
         root.addView(status, match())
 
-        root.addView(sectionTitle("1. Wireless ADB"))
+        root.addView(sectionTitle("1. Подключение к Quest 3"))
 
-        hostInput = input("Host / IP", "127.0.0.1")
-        pairPortInput = input("Pairing port", "")
         pairCodeInput = input("6-значный код", "")
-        connectPortInput = input("Connection port", "")
-
-        root.addView(hostInput, match())
-        root.addView(pairPortInput, match())
         root.addView(pairCodeInput, match())
-        root.addView(connectPortInput, match())
 
         val adbButtons = horizontal()
-        adbButtons.addView(button("Открыть настройки ADB") {
-            runCatching {
-                startActivity(Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS))
-            }.onFailure {
-                setStatus("Не получилось открыть Developer settings: " + it.message, true)
-            }
+        adbButtons.addView(button("Открыть Wireless debugging") {
+            openWirelessDebugging()
         }, weight())
-        adbButtons.addView(button("Pair") { pairDevice() }, weight())
-        adbButtons.addView(button("Connect/Test") { connectDevice() }, weight())
+        adbButtons.addView(button("Подключить") {
+            pairDevice()
+        }, weight())
         root.addView(adbButtons, match())
 
         root.addView(TextView(this).apply {
-            text = "В Wireless debugging: Pair device with pairing code → сюда Pairing port + код. Connection port указан на основном экране Wireless debugging."
+            text = "Первый раз: открой Wireless debugging → Pair device with pairing code → запомни 6 цифр → вернись сюда и нажми «Подключить». Порты и IP программа найдёт сама."
             textSize = 13f
             setTextColor(Color.rgb(150, 160, 175))
             setPadding(0, dp(6), 0, dp(6))
@@ -194,72 +199,219 @@ class MainActivity : Activity() {
         return scroll
     }
 
-    private fun restoreSettings() {
-        hostInput.setText(prefs.getString("host", "127.0.0.1"))
-        pairPortInput.setText(prefs.getString("pairPort", ""))
-        connectPortInput.setText(prefs.getString("connectPort", ""))
+    private fun ensureNearbyPermission(): Boolean {
+        if (Build.VERSION.SDK_INT < 33) return true
+        val permission = Manifest.permission.NEARBY_WIFI_DEVICES
+        if (checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED) return true
+        requestPermissions(arrayOf(permission), REQUEST_NEARBY)
+        return false
     }
 
-    private fun saveSettings() {
-        prefs.edit()
-            .putString("host", hostInput.text.toString().trim())
-            .putString("pairPort", pairPortInput.text.toString().trim())
-            .putString("connectPort", connectPortInput.text.toString().trim())
-            .apply()
-    }
-
-    private fun pairDevice() {
-        val host = hostInput.text.toString().trim().ifBlank { "127.0.0.1" }
-        val port = pairPortInput.text.toString().trim().toIntOrNull()
-        val code = pairCodeInput.text.toString().trim()
-        if (port == null || code.length != 6) {
-            setStatus("Нужны Pairing port и 6-значный код.", true)
-            return
-        }
-        saveSettings()
-        setBusy("Pairing…")
-        worker.execute {
-            try {
-                runBlocking { Kadb.pair(host, port, code, "Quest Homes") }
-                setStatus("Pairing OK. Теперь Connect/Test.", false)
-            } catch (e: Throwable) {
-                setStatus("Pairing error: " + shortError(e), true)
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == REQUEST_NEARBY) {
+            if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
+                autoConnectDevice()
+            } else {
+                setStatus("Нужен доступ «Устройства поблизости» для локального ADB.", true)
             }
         }
     }
 
-    private fun connectDevice() {
-        val host = hostInput.text.toString().trim().ifBlank { "127.0.0.1" }
-        val port = connectPortInput.text.toString().trim().toIntOrNull()
-        if (port == null) {
-            setStatus("Укажи Connection port из Wireless debugging.", true)
+    private fun openWirelessDebugging() {
+        val intents = listOf(
+            Intent("android.settings.WIRELESS_DEBUGGING_SETTINGS"),
+            Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS)
+        )
+        for (intent in intents) {
+            val ok = runCatching {
+                startActivity(intent)
+                true
+            }.getOrDefault(false)
+            if (ok) return
+        }
+        setStatus("Не получилось открыть Wireless debugging.", true)
+    }
+
+    private fun localAddresses(): Set<String> {
+        val out = linkedSetOf<String>()
+        runCatching {
+            val interfaces = NetworkInterface.getNetworkInterfaces()
+            while (interfaces.hasMoreElements()) {
+                val network = interfaces.nextElement()
+                if (!network.isUp) continue
+                val addresses = network.inetAddresses
+                while (addresses.hasMoreElements()) {
+                    val address = addresses.nextElement()
+                    if (address.isLoopbackAddress) continue
+                    val host = address.hostAddress?.substringBefore('%') ?: continue
+                    out += host
+                }
+            }
+        }
+        out += "127.0.0.1"
+        out += "::1"
+        return out
+    }
+
+    @Suppress("DEPRECATION")
+    private fun discoverSelfEndpoint(serviceType: String, timeoutMs: Long): AdbEndpoint? {
+        val nsd = getSystemService(NSD_SERVICE) as NsdManager
+        val found = AtomicReference<AdbEndpoint?>(null)
+        val latch = CountDownLatch(1)
+        val local = localAddresses()
+        val resolving = mutableSetOf<String>()
+        val lock = Any()
+
+        lateinit var listener: NsdManager.DiscoveryListener
+        listener = object : NsdManager.DiscoveryListener {
+            override fun onDiscoveryStarted(regType: String) = Unit
+            override fun onDiscoveryStopped(serviceType: String) = Unit
+            override fun onStartDiscoveryFailed(serviceType: String, errorCode: Int) {
+                latch.countDown()
+            }
+            override fun onStopDiscoveryFailed(serviceType: String, errorCode: Int) = Unit
+            override fun onServiceLost(serviceInfo: NsdServiceInfo) = Unit
+
+            override fun onServiceFound(serviceInfo: NsdServiceInfo) {
+                val key = serviceInfo.serviceName + "|" + serviceInfo.serviceType
+                synchronized(lock) {
+                    if (!resolving.add(key)) return
+                }
+                runCatching {
+                    nsd.resolveService(serviceInfo, object : NsdManager.ResolveListener {
+                        override fun onResolveFailed(serviceInfo: NsdServiceInfo, errorCode: Int) {
+                            synchronized(lock) { resolving.remove(key) }
+                        }
+
+                        override fun onServiceResolved(info: NsdServiceInfo) {
+                            synchronized(lock) { resolving.remove(key) }
+                            val address = info.host?.hostAddress?.substringBefore('%') ?: return
+                            val isSelf = info.host?.isLoopbackAddress == true || local.contains(address)
+                            if (!isSelf) return
+                            val port = info.port
+                            if (port !in 1..65535) return
+                            if (found.compareAndSet(null, AdbEndpoint(address, port, info.serviceName))) {
+                                latch.countDown()
+                            }
+                        }
+                    })
+                }.onFailure {
+                    synchronized(lock) { resolving.remove(key) }
+                }
+            }
+        }
+
+        return try {
+            nsd.discoverServices(serviceType, NsdManager.PROTOCOL_DNS_SD, listener)
+            latch.await(timeoutMs, TimeUnit.MILLISECONDS)
+            found.get()
+        } finally {
+            runCatching { nsd.stopServiceDiscovery(listener) }
+        }
+    }
+
+    private fun connectEndpoint(endpoint: AdbEndpoint): Kadb {
+        runCatching { adb?.close() }
+        val client = Kadb.create(
+            endpoint.host,
+            endpoint.port,
+            connectTimeout = 8_000,
+            socketTimeout = 20_000
+        )
+        val ping = client.shell("echo QUEST_HOMES_OK").allOutput.trim()
+        check(ping.contains("QUEST_HOMES_OK")) { "ADB не ответил" }
+        adb = client
+        prefs.edit()
+            .putString("lastAdbHost", endpoint.host)
+            .putInt("lastAdbPort", endpoint.port)
+            .apply()
+        runCatching {
+            client.shell("pm grant " + packageName + " android.permission.WRITE_SECURE_SETTINGS")
+        }
+        return client
+    }
+
+    private fun pairDevice() {
+        if (!ensureNearbyPermission()) return
+
+        val code = pairCodeInput.text.toString().trim()
+        if (code.length != 6 || !code.all { it.isDigit() }) {
+            setStatus("Введи 6-значный код с экрана Pair device with pairing code.", true)
             return
         }
-        saveSettings()
-        setBusy("ADB connect…")
+
+        setBusy("Ищу pairing на этом Quest 3…")
         worker.execute {
             try {
-                runCatching { adb?.close() }
-                val client = Kadb.create(host, port, connectTimeout = 8000, socketTimeout = 20000)
-                val ping = client.shell("echo QUEST_HOMES_OK").allOutput.trim()
-                check(ping.contains("QUEST_HOMES_OK")) { "ADB не ответил" }
-                adb = client
-                runCatching {
-                    client.shell("pm grant " + packageName + " android.permission.WRITE_SECURE_SETTINGS")
+                val pairing = discoverSelfEndpoint(ADB_PAIRING_SERVICE, 15_000)
+                    ?: error("Pairing не найден. Оставь окно с 6-значным кодом открытым и попробуй ещё раз.")
+
+                runBlocking {
+                    Kadb.pair(pairing.host, pairing.port, code, "Quest Homes")
                 }
-                setStatus("ADB подключён ✓", false)
+
+                setBusy("Спарено ✓ Ищу рабочее ADB-подключение…")
+                val connect = discoverSelfEndpoint(ADB_CONNECT_SERVICE, 15_000)
+                    ?: error("Спаривание прошло, но ADB-порт не найден. Проверь, что Wireless debugging включён.")
+
+                connectEndpoint(connect)
+                pairCodeInput.post { pairCodeInput.setText("") }
+                setStatus("Quest 3 подключён ✓ Дальше код обычно не нужен.", false)
+            } catch (e: Throwable) {
+                setStatus("Подключение: " + shortError(e), true)
+            }
+        }
+    }
+
+    private fun autoConnectDevice() {
+        setBusy("Ищу Quest 3…")
+        worker.execute {
+            try {
+                val savedHost = prefs.getString("lastAdbHost", null)
+                val savedPort = prefs.getInt("lastAdbPort", 0)
+                if (!savedHost.isNullOrBlank() && savedPort in 1..65535) {
+                    val restored = runCatching {
+                        connectEndpoint(AdbEndpoint(savedHost, savedPort, "saved"))
+                    }.getOrNull()
+                    if (restored != null) {
+                        setStatus("Quest 3 подключён ✓", false)
+                        return@execute
+                    }
+                }
+
+                val endpoint = discoverSelfEndpoint(ADB_CONNECT_SERVICE, 6_000)
+                if (endpoint != null) {
+                    connectEndpoint(endpoint)
+                    setStatus("Quest 3 подключён ✓", false)
+                } else {
+                    setStatus("Не подключено. Первый раз открой Wireless debugging и введи 6 цифр.", false)
+                }
             } catch (e: Throwable) {
                 adb = null
-                setStatus("ADB error: " + shortError(e), true)
+                setStatus("Не подключено. Включи Wireless debugging.", false)
             }
         }
     }
 
     private fun currentAdb(): Kadb {
-        val client = adb ?: error("Сначала Connect/Test.")
-        val ping = client.shell("echo ok").allOutput.trim()
-        check(ping == "ok") { "ADB соединение потеряно. Нажми Connect/Test." }
-        return client
+        val existing = adb
+        if (existing != null) {
+            val ok = runCatching {
+                existing.shell("echo ok").allOutput.trim() == "ok"
+            }.getOrDefault(false)
+            if (ok) return existing
+            runCatching { existing.close() }
+            adb = null
+        }
+
+        val endpoint = discoverSelfEndpoint(ADB_CONNECT_SERVICE, 7_000)
+            ?: error("ADB не найден. Включи Wireless debugging; при первом запуске нужно спаривание.")
+        return connectEndpoint(endpoint)
     }
 
     private fun backupOfficial() {
