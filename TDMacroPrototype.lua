@@ -1,9 +1,9 @@
 -- TD Macro Lab
 -- Records tower actions and replays the same server remotes without moving the camera.
--- 1.7.0: x3 match speed + integrated game-time pacing across speed changes.
+-- 1.5.0: autonomous macros + server StartedAt timeline + late-start catch-up.
 
 local VERSION = 2
-local SCRIPT_VERSION = "1.7.0"
+local SCRIPT_VERSION = "1.6.0"
 local REMOTE_BUS_VERSION = 5
 local ROOT_FOLDER = "TDMacroLab"
 local CONFIG_FILE = ROOT_FOLDER .. "/config.json"
@@ -51,53 +51,6 @@ end
 function Core.round(value, step)
     step = step or 1
     return math.floor((tonumber(value) or 0) / step + 0.5) * step
-end
-
--- Speed/timing helpers are pure so the same code can be regression-tested.
-function Core.parseSpeed(value)
-    if type(value) == "number" then
-        return value == value and value >= 0.25 and value <= 4 and value or nil
-    end
-    local text = string.lower(tostring(value or "")):gsub(",", "."):gsub("×", "x"):gsub("х", "x"):gsub("Х", "x"):gsub("%s+", "")
-    local amount = tonumber(text:match("x(%d+%.?%d*)") or text:match("(%d+%.?%d*)x"))
-    return amount and amount >= 0.25 and amount <= 4 and amount or nil
-end
-
-function Core.advanceSpeedClock(clock, now, rate, paused)
-    -- Integrate each interval with its previous rate. Multiplying all elapsed
-    -- time by the newest rate would move already-recorded events backwards.
-    if clock.at then
-        clock.total = (clock.total or 0) + math.max(0, now - clock.at) * (clock.rate or 1) * (clock.paused and 0 or 1)
-    end
-    clock.at, clock.rate, clock.paused = now, Core.parseSpeed(rate) or clock.rate or 1, paused == true
-    return clock.total or 0
-end
-
-function Core.recordedSpeed(macro, event)
-    local rate = Core.parseSpeed(event and event.gameSpeed) or Core.parseSpeed(macro and macro.clock and macro.clock.recordedSpeed)
-    if rate then return rate, false end
-    -- Old versions stored only the requested x2 switch, not speed observations.
-    -- This is a compatibility estimate, not a claim about historical HUD state.
-    return (macro and macro.settings and macro.settings.x2 == true) and 2 or 1, true
-end
-
-function Core.gameTarget(event, normalizedKey, legacyKey, macro)
-    if tonumber(event[normalizedKey]) then return tonumber(event[normalizedKey]) end
-    local old = tonumber(event[legacyKey])
-    return old and old * Core.recordedSpeed(macro, event) or nil
-end
-
-function Core.speedStep(progress, current)
-    if not current then return "unknown" end
-    progress.max = math.max(progress.max or current, current)
-    if current >= 2.99 then return "done" end
-    if progress.restore and math.abs(current - progress.max) < 0.01 then return "done" end
-    if progress.previous then
-        if math.abs(current - progress.previous) < 0.01 then return "unchanged" end
-        if current < progress.previous then progress.restore = true end
-    end
-    progress.previous = current
-    return "press"
 end
 
 function Core.fingerprintKey(fingerprint)
@@ -230,7 +183,6 @@ function Core.normalizeCameraTrack(track)
         if type(source) == "table" and type(source.cframe) == "table" and #source.cframe >= 12 then
             output[#output + 1] = {
                 t = math.max(0, tonumber(source.t) or 0),
-                gameT = tonumber(source.gameT),
                 cframe = source.cframe,
                 fov = tonumber(source.fov),
                 _order = index,
@@ -273,7 +225,6 @@ function Core.normalizeMacro(source, fallbackName)
             if event.kind == "mouse_down" and type(event.camera) == "table" and type(event.camera.cframe) == "table" then
                 cameraTrack[#cameraTrack + 1] = {
                     t = event.t,
-                    gameT = event.gameT,
                     cframe = event.camera.cframe,
                     fov = event.camera.fov,
                 }
@@ -351,8 +302,8 @@ end
 
 local aliases = {
     -- The live Alliance TD HUD shows the *current* speed, so the same control
-    -- can be captioned 1x/1.5x/2x before it reaches 3x.
-    x2 = {"x3", "3x", "×3", "3×", "x2", "2x", "×2", "2×", "1x", "1.5x", "×1", "×1.5", "game speed", "speed button", "speed", "скорость"},
+    -- can be captioned 1x/1.5x before it ever reaches 2x.
+    x2 = {"x2", "2x", "1x", "1.5x", "game speed", "speed button", "speed", "скорость"},
     autoSkip = {
         "auto skip", "autoskip", "auto wave", "auto skip wave", "auto skip waves",
         "wave skip", "skip waves", "skip wave", "авто пропуск", "автопропуск",
@@ -383,7 +334,7 @@ function Core.bindingScore(kind, text, name)
         -- not contain separators, so word-only matching silently missed them.
         if #compactTarget >= 4 and compact:find(compactTarget, 1, true) then score = math.max(score, 82) end
         if #compactTarget >= 4 and compactName:find(compactTarget, 1, true) then score = math.max(score, 86) end
-        if (compactTarget == "x2" or compactTarget == "2x" or compactTarget == "x3" or compactTarget == "3x")
+        if (compactTarget == "x2" or compactTarget == "2x")
             and (compact:find(compactTarget, 1, true) or compactName:find(compactTarget, 1, true)) then
             score = math.max(score, 78)
         end
@@ -433,15 +384,6 @@ local state = {
     selectedId = nil,
     recording = false,
     recordingStarted = 0,
-    recordingGameStart = nil,
-    recordingStartSpeed = nil,
-    speedClock = {},
-    liveSpeedObject = nil,
-    liveSpeedScanAt = 0,
-    liveGameSpeed = nil,
-    matchGameStart = nil,
-    matchGameStartedAt = nil,
-    waveGameStart = nil,
     recordedEvents = {},
     recordingFingerprint = nil,
     recordingViewport = nil,
@@ -725,7 +667,6 @@ local function recordCameraFrame(force)
     end
     state.recordedCameraTrack[#state.recordedCameraTrack + 1] = {
         t = math.max(0, os.clock() - state.recordingStarted),
-        gameT = state.recordingGameStart and (Core.gameTime() - state.recordingGameStart) or nil,
         cframe = snapshot.cframe,
         fov = snapshot.fov,
     }
@@ -1226,27 +1167,6 @@ local function matchElapsed()
     return math.max(0, elapsed), startedAt
 end
 
-function Core.gameTime()
-    local rate = Core.readLiveSpeed and Core.readLiveSpeed(false) or nil
-    return Core.advanceSpeedClock(state.speedClock, os.clock(), rate)
-end
-
-function Core.matchGameElapsed()
-    local elapsed, startedAt = matchElapsed()
-    if elapsed == nil then
-        state.matchGameStart, state.matchGameStartedAt = nil, nil
-        return nil
-    end
-    local total = Core.gameTime()
-    if state.matchGameStartedAt ~= startedAt or state.matchGameStart == nil then
-        -- A late attach cannot reconstruct past speed switches. Wave anchors
-        -- take priority as soon as the next boundary is observed.
-        state.matchGameStartedAt = startedAt
-        state.matchGameStart = total - elapsed * (state.liveGameSpeed or 1)
-    end
-    return math.max(0, total - state.matchGameStart)
-end
-
 local function waveStateSnapshot()
     local waveState = ReplicatedStorage:FindFirstChild("WaveState")
     if not waveState then return {startedAt = nil, wave = nil, intermission = nil, enemies = nil} end
@@ -1266,7 +1186,6 @@ local function resetWaveSync()
     state.waveSyncStartServer = nil
     state.waveSyncAnchorKnown = false
     state.waveSyncIntermission = nil
-    state.waveGameStart = nil
 end
 
 local function updateWaveSync()
@@ -1274,8 +1193,6 @@ local function updateWaveSync()
     local now = serverNow()
     if not waveState or not now then return end
 
-    local gameTime = Core.gameTime()
-    Core.matchGameElapsed()
     local startedAt = tonumber(waveState:GetAttribute("StartedAt"))
     local wave = tonumber(waveState:GetAttribute("CurrentWave"))
     local intermission = tonumber(waveState:GetAttribute("IntermissionRemaining"))
@@ -1316,7 +1233,6 @@ local function updateWaveSync()
         -- is the stable zero point for this wave on both record and playback.
         if intermission == nil or intermission <= 0 then
             state.waveSyncStartServer = now
-            state.waveGameStart = gameTime
             state.waveSyncAnchorKnown = true
             state.waveSyncPending = nil
         end
@@ -1336,7 +1252,6 @@ local function waveSyncSnapshot()
     return {
         wave = state.waveSyncCurrent,
         offset = offset,
-        gameOffset = state.waveSyncAnchorKnown and state.waveGameStart and math.max(0, Core.gameTime() - state.waveGameStart) or nil,
         anchorKnown = state.waveSyncAnchorKnown == true,
         pending = state.waveSyncPending ~= nil,
         intermission = state.waveSyncIntermission,
@@ -1623,23 +1538,17 @@ local function addRecordedEvent(kind, data)
     data.kind = kind
     data.seq = #state.recordedEvents + 1
     data.t = math.max(0, os.clock() - state.recordingStarted)
-    data.gameSpeed = state.liveGameSpeed
-    data.gameT = state.recordingGameStart and math.max(0, Core.gameTime() - state.recordingGameStart) or nil
     if kind == "remote" and state.config and state.config.settings.remoteMode then
         local elapsed, startedAt = matchElapsed()
         if elapsed ~= nil then
             data.matchTime = elapsed
-            data.matchGameTime = Core.matchGameElapsed()
             state.recordingMatchStartedAt = startedAt
             state.recordingCombatStarted = true
         end
 
         local phase = waveSyncSnapshot()
         if phase.wave ~= nil then data.waveSyncWave = phase.wave end
-        if phase.anchorKnown and phase.offset ~= nil then
-            data.waveSyncOffset = phase.offset
-            data.waveGameOffset = phase.gameOffset
-        end
+        if phase.anchorKnown and phase.offset ~= nil then data.waveSyncOffset = phase.offset end
 
         -- StartedAt is authoritative: only requests made before it exists are opening actions.
         data.opening = elapsed == nil and state.recordingCombatStarted ~= true
@@ -2471,9 +2380,9 @@ local function collectOpeningPlacements(events)
     return opening, false
 end
 
-local function waitForWaveSyncMoment(event, token, macro)
+local function waitForWaveSyncMoment(event, token)
     local targetWave = tonumber(event and event.waveSyncWave)
-    local targetOffset = Core.gameTarget(event, "waveGameOffset", "waveSyncOffset", macro)
+    local targetOffset = tonumber(event and event.waveSyncOffset)
     if targetWave == nil or targetOffset == nil then return nil end
 
     while token == state.playToken and state.playing and not state.destroyed do
@@ -2491,8 +2400,8 @@ local function waitForWaveSyncMoment(event, token, macro)
                 continue
             end
 
-            if phase.anchorKnown and phase.gameOffset ~= nil then
-                local remaining = targetOffset - phase.gameOffset
+            if phase.anchorKnown and phase.offset ~= nil then
+                local remaining = targetOffset - phase.offset
                 if remaining <= 0.02 then return true end
                 task.wait(math.min(0.03, math.max(0.01, remaining)))
                 continue
@@ -2514,15 +2423,15 @@ local function waitForWaveSyncMoment(event, token, macro)
     return false
 end
 
-local function waitForMatchMoment(event, token, macro)
-    local target = Core.gameTarget(event, "matchGameTime", "matchTime", macro)
+local function waitForMatchMoment(event, token)
+    local target = tonumber(event and event.matchTime)
     if target == nil then return nil end
     while token == state.playToken and state.playing and not state.destroyed do
         while state.paused and token == state.playToken do task.wait(0.05) end
         local elapsed, startedAt = matchElapsed()
         if elapsed ~= nil then
             if state.playbackSource == "auto" and startedAt then state.lastAutoStartedAt = startedAt end
-            local remaining = target - (Core.matchGameElapsed() or elapsed)
+            local remaining = target - elapsed
             if remaining <= 0.025 then return true end
             task.wait(math.min(0.05, math.max(0.01, remaining)))
         else
@@ -2582,7 +2491,6 @@ local function waitForRecordedMoment(event, clockConfig, timing, token, playback
                 timing.wave = current.wave
                 timing.waveStartClock = anchorClock
                 timing.waveStartedAt = os.clock()
-                timing.waveGameStart = Core.gameTime()
                 timing.lastClock = current.time
                 justAnchoredCombat = true
             else
@@ -2598,7 +2506,6 @@ local function waitForRecordedMoment(event, clockConfig, timing, token, playback
                 timing.wave = current.wave
                 timing.waveStartClock = current.time
                 timing.waveStartedAt = os.clock()
-                timing.waveGameStart = Core.gameTime()
                 timing.lastClock = current.time
             elseif current and current.time ~= nil and timing.lastClock ~= nil and current.time ~= timing.lastClock then
                 local observedDirection = current.time > timing.lastClock and "up" or "down"
@@ -2606,7 +2513,6 @@ local function waitForRecordedMoment(event, clockConfig, timing, token, playback
                     -- Same wave label can survive the lobby -> combat timer reset.
                     timing.waveStartClock = current.time
                     timing.waveStartedAt = os.clock()
-                    timing.waveGameStart = Core.gameTime()
                 end
                 timing.lastClock = current.time
             elseif current and current.time ~= nil then
@@ -2626,7 +2532,7 @@ local function waitForRecordedMoment(event, clockConfig, timing, token, playback
             if current.time ~= nil and timing.waveStartClock ~= nil then
                 waveElapsed = math.abs(current.time - timing.waveStartClock)
             elseif timing.waveStartedAt then
-                waveElapsed = (Core.gameTime() - (timing.waveGameStart or Core.gameTime())) / (timing.recordedSpeed or 1)
+                waveElapsed = os.clock() - timing.waveStartedAt
             end
             if waveElapsed and waveElapsed >= eventWaveTime then return true end
             task.wait(0.04)
@@ -2642,7 +2548,7 @@ local function waitForRecordedMoment(event, clockConfig, timing, token, playback
         else
             -- Old recordings may include lobby time before their first server action.
             -- Remove only that leading delay and preserve all later event intervals.
-            local elapsed = timing.elapsed() / (timing.recordedSpeed or 1)
+            local elapsed = os.clock() - playbackStarted - state.pauseAccum
             local target = math.max(0, (tonumber(event.t) or 0) - (timing.fallbackOrigin or 0))
             local remaining = target - elapsed
             if remaining <= 0 then return true end
@@ -2771,17 +2677,10 @@ local function playMacro(macro, force, fromAuto, expectedFingerprint)
     local lockedCamera = cameraSnapshot()
     local speed = math.clamp(tonumber(state.config.settings.playbackSpeed) or 1, 0.25, 3)
     local playbackStarted = os.clock()
-    local playbackClock = {at = Core.gameTime(), rate = speed, paused = false}
-    local function playbackElapsed()
-        return Core.advanceSpeedClock(playbackClock, Core.gameTime(), speed, state.paused)
-    end
-    state.playbackTick = playbackElapsed
-    local recordedSpeed, estimatedSpeed = Core.recordedSpeed(macro)
-    if estimatedSpeed then log("Старая запись: скорость оценена как x" .. recordedSpeed .. " по настройке записи") end
     local cameraFrames = {}
     for _, frame in ipairs(type(macro.cameraTrack) == "table" and macro.cameraTrack or {}) do
         local cframe = snapshotToCFrame(frame)
-        if cframe then cameraFrames[#cameraFrames + 1] = {t = tonumber(frame.gameT) or (tonumber(frame.t) or 0) * recordedSpeed, cframe = cframe, fov = tonumber(frame.fov)} end
+        if cframe then cameraFrames[#cameraFrames + 1] = {t = tonumber(frame.t) or 0, cframe = cframe, fov = tonumber(frame.fov)} end
     end
     if not hasRemoteEvents and (state.config.settings.lockCamera or #cameraFrames >= 2) then
         local camera = workspace.CurrentCamera
@@ -2809,7 +2708,7 @@ local function playMacro(macro, force, fromAuto, expectedFingerprint)
                 if state.paused then
                     RunService.RenderStepped:Wait()
                 else
-                    local elapsed = playbackElapsed()
+                    local elapsed = (os.clock() - playbackStarted - state.pauseAccum) * speed
                     while index < #cameraFrames - 1 and cameraFrames[index + 1].t <= elapsed do index += 1 end
                     local first = cameraFrames[index]
                     local second = cameraFrames[math.min(index + 1, #cameraFrames)]
@@ -2837,8 +2736,6 @@ local function playMacro(macro, force, fromAuto, expectedFingerprint)
             waveStartedAt = nil,
             lastClock = nil,
             fallbackOrigin = 0,
-            elapsed = playbackElapsed,
-            recordedSpeed = recordedSpeed,
             strictFirstWave = false,
             combatStarted = true,
             preCombatDirection = nil,
@@ -2854,7 +2751,6 @@ local function playMacro(macro, force, fromAuto, expectedFingerprint)
             -- Per-event wave/game-clock checks below are the only gate. A separate
             -- first-wave detector caused valid macros to remain armed for many waves.
             playbackStarted = os.clock()
-            playbackClock = {at = Core.gameTime(), rate = speed, paused = false}
             state.pauseAccum = 0
             log("Макрос активен · синхронизация по событиям")
 
@@ -2877,13 +2773,13 @@ local function playMacro(macro, force, fromAuto, expectedFingerprint)
             if token ~= state.playToken or state.destroyed then break end
             if openingSent[event] then continue end
             if event.kind == "remote" then
-                local waveWait = waitForWaveSyncMoment(event, token, macro)
+                local waveWait = waitForWaveSyncMoment(event, token)
                 if waveWait == false then break end
 
                 if waveWait == nil then
-                    -- Match-time fallback for old macros or a late attach
+                    -- Exact old 1.5.1 timing path for old macros or a late attach
                     -- in the middle of a wave whose zero we could not observe.
-                    local matchWait = waitForMatchMoment(event, token, macro)
+                    local matchWait = waitForMatchMoment(event, token)
                     if matchWait == false then break end
                     if matchWait == nil and not waitForRecordedMoment(event, macro.clock, waveTiming, token, playbackStarted) then break end
                 end
@@ -2897,16 +2793,16 @@ local function playMacro(macro, force, fromAuto, expectedFingerprint)
             else
                 while state.paused and token == state.playToken do task.wait(0.05) end
                 while token == state.playToken do
-                    local elapsed = playbackElapsed()
-                    local remaining = (Core.gameTarget(event, "gameT", "t", macro) or 0) - elapsed
+                    local elapsed = (os.clock() - playbackStarted - state.pauseAccum) * speed
+                    local remaining = (tonumber(event.t) or 0) - elapsed
                     if remaining <= 0 then break end
                     task.wait(math.min(0.03, remaining / speed))
                 end
             end
             if token ~= state.playToken then break end
 
-            local elapsed = playbackElapsed()
-            local late = elapsed - (Core.gameTarget(event, "gameT", "t", macro) or 0)
+            local elapsed = (os.clock() - playbackStarted - state.pauseAccum) * speed
+            local late = elapsed - (tonumber(event.t) or 0)
             if event.kind == "remote" then
                 local spacing = 0.075 - (os.clock() - lastSent)
                 if spacing > 0 then task.wait(spacing) end
@@ -2955,7 +2851,6 @@ local function togglePause()
         state.paused = false
         log("Продолжено")
     end
-    if state.playbackTick then state.playbackTick() end
     refreshAll()
 end
 
@@ -2965,7 +2860,6 @@ activateRecordingTimeline = function(clock, anchorAt, initialClock, combatStarte
     state.recordingCombatStarted = combatStarted == true
     state.recordingPreCombatDirection = nil
     state.recordingStarted = tonumber(anchorAt) or os.clock()
-    state.recordingGameStart = Core.gameTime() - math.max(0, os.clock() - state.recordingStarted) * (state.liveGameSpeed or 1)
     state.recordingClock = clock
     state.recordingClockInitial = initialClock or clock
     state.recordingClockChanges = 0
@@ -3100,9 +2994,6 @@ local function startRecording()
     local currentRoot = rootPart()
     state.recordingFingerprint = fingerprint(currentRoot and currentRoot.Position or nil)
     state.recordingCamera = cameraSnapshot()
-    Core.readLiveSpeed(true)
-    state.recordingGameStart = Core.gameTime()
-    state.recordingStartSpeed = state.liveGameSpeed
     state.recordingStarted = os.clock()
     state.recordedCameraTrack = {}
     state.recordedPlacements = {}
@@ -3187,9 +3078,8 @@ local function stopAndSave(name)
         viewport = state.recordingViewport,
         camera = state.recordingCamera,
         cameraTrack = state.recordedCameraTrack,
-        timingMode = state.config.settings.remoteMode and "game_time_v2" or "input_game_time_v2",
+        timingMode = state.config.settings.remoteMode and "server_started_at_v1" or "input",
         clock = {
-            recordedSpeed = state.recordingStartSpeed,
             direction = state.recordingClockDirection,
             startWave = state.recordingClockInitial and state.recordingClockInitial.wave or nil,
             startTime = state.recordingClockInitial and state.recordingClockInitial.time or nil,
@@ -3416,7 +3306,15 @@ local function visibleControlTexts(object)
     return output
 end
 
-local parseSpeedValue = Core.parseSpeed
+local function parseSpeedValue(value)
+    if type(value) == "number" then
+        return value >= 0.25 and value <= 4 and value or nil
+    end
+    local text = string.lower(tostring(value or "")):gsub(",", "."):gsub("%s+", "")
+    local amount = text:match("x(%d+%.?%d*)") or text:match("(%d+%.?%d*)x")
+    amount = tonumber(amount)
+    return amount and amount >= 0.25 and amount <= 4 and amount or nil
+end
 
 local function controlSpeed(object)
     if not object then return nil end
@@ -3434,32 +3332,11 @@ local function controlSpeed(object)
     return best
 end
 
-function Core.readLiveSpeed(discover)
-    local object = state.liveSpeedObject
-    if not object or not object.Parent or not instanceVisible(object) then object = nil end
-    if discover and (not object or os.clock() - state.liveSpeedScanAt >= 0.65) then
-        local _, _, found = bindingPoint("x2", true)
-        object = found
-        state.liveSpeedObject, state.liveSpeedScanAt = object, os.clock()
-    end
-    local rate = controlSpeed(object)
-    if rate then state.liveGameSpeed = rate end
-    return rate
-end
-
--- Observe manual speed changes too. Only discovery scans the HUD; normal
--- record/replay timestamps read the already discovered control directly.
-keep(RunService.Heartbeat:Connect(function()
-    if state.destroyed then return end
-    Core.readLiveSpeed(true)
-    Core.gameTime()
-end))
-
 local function controlState(kind, object)
     if not object then return nil end
     if kind == "x2" then
         local amount = controlSpeed(object)
-        if amount then return amount >= 2.99 end
+        if amount then return amount >= 1.99 end
     end
     for _, attribute in ipairs({"Toggled", "Toggle", "IsOn", "On", "Selected", "Checked", "State", "Value"}) do
         local value = object:GetAttribute(attribute)
@@ -3550,36 +3427,49 @@ local function pressSpeedKey()
 end
 
 local function setMaximumGameSpeed(runId)
-    local progress = {}
-    for _ = 1, 12 do
-        if runId ~= state.controlRunId or state.destroyed or not state.config.settings.x2
+    local maxSeen, wrapped = 0, false
+    for attempt = 1, 5 do
+        if runId ~= state.controlRunId or state.destroyed
             or not (state.config.settings.auto or state.playing) then return end
-        local before = Core.readLiveSpeed(true)
-        local step = Core.speedStep(progress, before)
-        if step == "unknown" then
-            log("скорость: значение HUD не распознано; переключение пропущено", true)
-            return
-        elseif step == "done" or step == "unchanged" then
-            log(string.format("скорость: x%g%s", before, before < 2.99 and " · x3 недоступна или не подтверждена" or " включена"))
+        local _, _, object = bindingPoint("x2", true)
+        local before = controlSpeed(object)
+        if before then maxSeen = math.max(maxSeen, before) end
+        if before and before >= 1.99 then
+            log("скорость: x2 уже включена")
             return
         end
-        Core.gameTime()
         if not pressSpeedKey() then
             log("скорость: клавиша Z не сработала", true)
             return
         end
-        -- Let the server/HUD acknowledge one step before sending another.
-        local deadline = os.clock() + 1.0
-        repeat
-            task.wait(0.05)
-            if runId ~= state.controlRunId or state.destroyed or not state.config.settings.x2
-                or not (state.config.settings.auto or state.playing) then return end
-            local after = Core.readLiveSpeed(true)
-            Core.gameTime()
-            if after and math.abs(after - before) > 0.01 then break end
-        until os.clock() >= deadline
+        task.wait(0.18)
+        local _, _, currentObject = bindingPoint("x2", true)
+        local after = controlSpeed(currentObject or object)
+        if after then
+            local previousMax = maxSeen
+            if after > previousMax + 0.01 then
+                maxSeen = after
+            elseif after < previousMax - 0.01 then
+                wrapped = true
+            elseif after >= 1.49 and (wrapped or (before and math.abs(after - before) <= 0.01)) then
+                log(string.format("скорость: максимум x%.1f через Z", after))
+                return
+            end
+            if after >= 1.99 then
+                log("скорость: x2 включена через Z")
+                return
+            end
+        elseif attempt >= 2 then
+            log("скорость: Z отправлена дважды")
+            return
+        end
+        task.wait(0.16)
     end
-    log("скорость: не удалось подтвердить максимум; проверь HUD", true)
+    if maxSeen >= 1.49 then
+        log(string.format("скорость: максимум x%.1f", maxSeen))
+    else
+        log("скорость: значение не распознано", true)
+    end
 end
 
 armMatchControls = function()
@@ -4504,7 +4394,7 @@ makeToggle(autoPage, "АВТОЗАПУСК", UDim2.fromOffset(0, 27), function()
     transition(value and "WAIT_MATCH" or "IDLE", value and "автоматизация включена" or "автоматизация выключена")
 end)
 makeToggle(autoPage, "ПОВТОР МАТЧЕЙ", UDim2.new(0.5, 8, 0, 27), function() return state.config.settings.autoLoop end, function(value) state.config.settings.autoLoop = value end)
-makeToggle(autoPage, "МАКС. СКОРОСТЬ ×3", UDim2.fromOffset(0, 73), function() return state.config.settings.x2 end, function(value)
+makeToggle(autoPage, "МАКС. СКОРОСТЬ", UDim2.fromOffset(0, 73), function() return state.config.settings.x2 end, function(value)
     state.config.settings.x2 = value
     if value and (state.playing or state.config.settings.auto) then task.defer(armMatchControls) end
 end)
@@ -4520,7 +4410,7 @@ button(autoPage, "ОСТАНОВИТЬ ВСЁ", UDim2.new(0.5, 5, 1, -43), UDim2
     stopPlayback("EMERGENCY STOP", true)
 end, palette.danger)
 
-label(bindingsPage, "Скорость до ×3 — через Z. Тайминги подстраиваются под текущую скорость.", UDim2.fromOffset(2, 0), UDim2.new(1, -4, 0, 34), 10, palette.muted)
+label(bindingsPage, "Скорость переключается через Z. Остальные кнопки ищутся автоматически.", UDim2.fromOffset(2, 0), UDim2.new(1, -4, 0, 34), 10, palette.muted)
 for index, item in ipairs({
     {key = "x2", title = "СКОРОСТЬ ИГРЫ", keyboard = true},
     {key = "autoSkip", title = "ПРОПУСК ВОЛН"},
@@ -4671,28 +4561,13 @@ refreshMacros = function()
             refreshMacros()
             refreshAll()
         end, macro.id == state.selectedId and Color3.fromRGB(42, 81, 84) or palette.panel2)
-        row.LayoutOrder = index * 2
+        row.LayoutOrder = index
         row.TextWrapped = false
         row.TextXAlignment = Enum.TextXAlignment.Left
         row.TextYAlignment = Enum.TextYAlignment.Center
         local padding = Instance.new("UIPadding")
         padding.PaddingLeft = UDim.new(0, 10)
         padding.Parent = row
-        if macro.id == state.selectedId and not tostring(macro.timingMode):find("game_time_v2", 1, true) then
-            local rate, estimated = Core.recordedSpeed(macro)
-            local speedRow = button(list, "ЗАПИСАНО ×" .. rate .. (estimated and " (оценка)" or "") .. " · изменить", UDim2.new(), UDim2.new(1, 0, 0, 32), function()
-                if state.playing or state.recording then log("Меняй скорость записи после остановки макроса") return end
-                local rates = {1, 1.5, 2, 3}
-                local nextRate = 1
-                for i, value in ipairs(rates) do if value == rate then nextRate = rates[i % #rates + 1] break end end
-                macro.clock = macro.clock or {}
-                macro.clock.recordedSpeed = nextRate
-                saveDisk()
-                log("Скорость старой записи: ×" .. nextRate .. ". Укажи скорость, на которой записывал макрос.")
-                refreshMacros()
-            end, palette.panel2)
-            speedRow.LayoutOrder = index * 2 + 1
-        end
     end
 end
 
@@ -4703,8 +4578,7 @@ refreshBindings = function()
         if target then
             local binding = state.config.bindings[kind] or {mode = "auto"}
             if kind == "x2" then
-                local rate = Core.readLiveSpeed(false)
-                target.Text = rate and ("×" .. rate .. " · Z") or "КЛАВИША Z"
+                target.Text = "КЛАВИША Z"
                 target.TextColor3 = palette.accent
             elseif state.bindingCapture == kind then
                 target.Text = "ЖДУ КЛИК"
