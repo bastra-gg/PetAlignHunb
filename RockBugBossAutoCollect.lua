@@ -1,10 +1,11 @@
--- RockBugBossAutoCollect 1.7 — unprotected standalone build.
+-- RockBugBossAutoCollect 1.8 — lightweight account-key checks; no encrypted VM.
 local runtime=(function()
--- RockBug Boss AutoCollect 1.7: standalone, no access gate or protected loader.
+-- RockBug Boss 1.8: lightweight server license checks, native Luau execution.
 -- Shares under-arena combat, a safe exit to the surface, strength warmup and the chest cycle with the test hub.
+-- A client-side Lua gate is not tamper-proof DRM. UserId alone never grants access.
 if not game:IsLoaded() then game.Loaded:Wait() end
 local a,b,c = game:GetService("Players"),game:GetService("ReplicatedStorage"),game:GetService("RunService")
-local input = game:GetService("UserInputService")
+local input,http = game:GetService("UserInputService"),game:GetService("HttpService")
 local j=a.LocalPlayer
 while not j do task.wait() j=a.LocalPlayer end
 local pg=j:WaitForChild("PlayerGui",60)
@@ -12,7 +13,7 @@ if not pg then return end
 local env=_G
 if type(getgenv)=="function" then local ok,v=pcall(getgenv) if ok and type(v)=="table" then env=v end end
 if env.RockBugBossStandalone and type(env.RockBugBossStandalone.Destroy)=="function" then env.RockBugBossStandalone:Destroy() end
-local q={alive=true,killMode="off",connections={},punchCycle=0,directRemoteEnabled=true,remoteSentWindow=0,remoteWindowStart=os.clock(),equipInFlight=false,networkPaused=false,rewardsEnabled=true}
+local q={alive=true,killMode="off",connections={},punchCycle=0,directRemoteEnabled=true,remoteSentWindow=0,remoteWindowStart=os.clock(),equipInFlight=false,networkPaused=false,authorized=false,rewardsEnabled=true}
 env.RockBugBossStandalone=q
 local function B(fn) return pcall(fn) end
 local function aM() return j.Character end
@@ -114,7 +115,71 @@ local rewardStroke=outline(reward,purple,0.18)
 local rewardKnob=make("Frame",reward,{Position=UDim2.new(1,-48,0,10),Size=UDim2.fromOffset(34,19),BackgroundColor3=purple,BorderSizePixel=0})
 round(rewardKnob,20)
 local rewardDot=make("Frame",rewardKnob,{Position=UDim2.fromOffset(17,3),Size=UDim2.fromOffset(13,13),BackgroundColor3=white,BorderSizePixel=0}) round(rewardDot,20)
-content.Visible=true
+local gate=make("Frame",window,{Size=content.Size,Position=content.Position,BackgroundTransparency=1})
+label(gate,"Доступ к аккаунту",0,0,310,30,19)
+label(gate,"@"..j.Name,0,33,310,20,13,purple)
+local keyInput=make("TextBox",gate,{Size=UDim2.fromOffset(312,42),Position=UDim2.fromOffset(0,67),BackgroundColor3=Color3.fromRGB(32,25,45),PlaceholderText="Вставь ключ",Text="",ClearTextOnFocus=false,TextSize=13,TextColor3=white,PlaceholderColor3=muted,Font=Enum.Font.Gotham,BorderSizePixel=0})
+round(keyInput,10) outline(keyInput,purple,0.5)
+local unlock=button(gate,"Активировать",0,119,312,42,purple) unlock.TextColor3=Color3.fromRGB(24,13,40)
+local gateNote=label(gate,"Ключ нужен только при первом входе",0,170,312,39,12,muted)
+gateNote.TextWrapped=true gateNote.TextTruncate=Enum.TextTruncate.None
+local cachePath="RockBugBoss_"..tostring(j.UserId)..".key"
+local license=nil
+local httpBusy=false
+local endpoint="https://szfjrpkdbccsveklkwyy.supabase.co/functions/v1/rockbug-boss-keys"
+local function post(url,payload,extra)
+    local requestFn=request or http_request or (syn and syn.request) or (fluxus and fluxus.request) or (env.http and env.http.request)
+    local body=http:JSONEncode(payload)
+    local headers={["Content-Type"]="application/json"}
+    for key,value in pairs(extra or {}) do headers[key]=value end
+    local ok,response=pcall(function()
+        if type(requestFn)=="function" then return requestFn({Url=url,Method="POST",Headers=headers,Body=body,Timeout=12}) end
+        return game:HttpPost(url,body,"application/json")
+    end)
+    if not ok then return nil end
+    local raw=type(response)=="table" and (response.Body or response.body) or response
+    if type(raw)~="string" or #raw>65536 then return nil end
+    local good,decoded=pcall(function() return http:JSONDecode(raw) end)
+    return good and type(decoded)=="table" and decoded or nil
+end
+local function saveKey(value)
+    env.RockBugBossKeys=env.RockBugBossKeys or {}
+    env.RockBugBossKeys[tostring(j.UserId)]=value
+    if type(writefile)=="function" then return pcall(writefile,cachePath,value) end
+    return false
+end
+local function checkKey(value,redeem)
+    return post(endpoint,{action=redeem and "redeem" or "check",key=value,user_id=j.UserId,user_name=j.Name})
+end
+local errors={invalid="Ключ не подходит",bound="Этот ключ привязан к другому аккаунту",expired="Срок доступа истёк",revoked="Доступ отозван владельцем",rate_limit="Слишком часто. Подожди минуту"}
+local function showGate(reason)
+    q.authorized=false
+    if q.bossCycle then q.bossCycle:Cancel(false)end
+    if q.boss then q.boss:Stop(nil,true) end
+    content.Visible=false gate.Visible=true gateNote.Text=reason
+end
+local function activate(value,redeem)
+    if httpBusy or not q.alive then return end
+    value=tostring(value or ""):gsub("%s",""):upper()
+    if value=="" then gateNote.Text="Вставь выданный ключ" return end
+    httpBusy=true unlock.Text="Проверяю…" unlock.Active=false
+    task.spawn(function()
+        local result=checkKey(value,redeem)
+        httpBusy=false
+        if not q.alive then return end
+        unlock.Text="Активировать" unlock.Active=true
+        if result and result.ok and tonumber(result.user_id)==j.UserId then
+            license=value q.authorized=true q.lastKeyCheck=os.clock()
+            local persisted=saveKey(value)
+            gate.Visible=false content.Visible=true keyInput.Text=""
+            account.Text="@"..j.Name..(persisted and "  ·  доступ сохранён" or "  ·  вход на эту сессию")
+        else
+            gateNote.Text=result and (errors[result.error] or "Сервис недоступен. Попробуй снова") or "Нет связи. Попробуй снова"
+        end
+    end)
+end
+aJ(unlock.Activated:Connect(function() activate(keyInput.Text,true) end))
+aJ(keyInput.FocusLost:Connect(function(enter) if enter then activate(keyInput.Text,true) end end))
 
 local function ca()
     local groups={j}
@@ -140,7 +205,7 @@ local function dk(mode)
     return tool
 end
 local function em()
-    if not q.alive or q.networkPaused or q.remotePaused then return false end
+    if not q.alive or not q.authorized or q.networkPaused or q.remotePaused then return false end
     local remote=eg()
     if not remote then return false end
     local ok=pcall(function()remote:FireServer("rep")end)
@@ -1152,7 +1217,7 @@ function q.refreshBossUI()
     start.TextColor3=active and white or Color3.fromRGB(24,13,40)
 end
 aJ(start.Activated:Connect(function()
-    if not q.alive then return end
+    if not q.authorized then return end
     if q.boss.enabled or q.bossCycle and q.bossCycle.enabled then q:StopBoss() else
         local other=env.RockBugRuntime
         if other and other.alive and (other.boss and other.boss.enabled or other.bugActive or other.trainActive or other.kingLock or other.lockPosition or other.machineActive) then
@@ -1738,7 +1803,7 @@ end
     local function acknowledged()observeReward(false)return rewardAcknowledged end
     local collector=createChestCollector({
         now=os.clock,wait=task.wait,character=aM,acknowledged=acknowledged,
-        ready=function()local h=aN()return q.alive and not q.remotePaused and not q.networkPaused and h and h.Health>0 and aO()~=nil end,
+        ready=function()local h=aN()return q.alive and q.authorized and not q.remotePaused and not q.networkPaused and h and h.Health>0 and aO()~=nil end,
         matches=matches,closed=function(prompt)return not prompt.Parent or not prompt.Enabled end,
         find=function(snapshot)
             local root=aO()
@@ -1773,7 +1838,7 @@ end
     end
     q.bossCycle=createCycle({
         alive=function()return q.alive end,now=os.clock,
-        ready=function()local h=aN()return not q.remotePaused and not q.networkPaused and h and h.Health>0 and aO()~=nil end,
+        ready=function()local h=aN()return q.authorized and not q.remotePaused and not q.networkPaused and h and h.Health>0 and aO()~=nil end,
         idle=function()return not q.boss.enabled and not q.equipInFlight and not conflict()end,
         scan=q.bossAdapter.scan,
         targetAlive=function(model)local info=q.bossAdapter.info(model)return info and info.alive end,
@@ -1822,7 +1887,7 @@ end
         return not info or not info.alive
     end
     function q:StartBoss()
-        if self.remotePaused or conflict()then return false end
+        if not self.authorized or self.remotePaused or conflict()then return false end
         self.bossCycle:SetEnabled(true)
         self.bossCycle:Tick()
         return self.bossCycle.enabled
@@ -1835,7 +1900,7 @@ end
     q.rewardCollector={Destroy=function()q.bossCycle:Cancel(false)collector:Cancel()end}
     task.spawn(function()
         while q.alive do
-            if q.remotePaused then
+            if not q.authorized or q.remotePaused then
                 if q.bossCycle.enabled or q.bossCycle.snapshot then q.bossCycle:Cancel(false)end
             else q.bossCycle:Tick()end
             task.wait(0.25)
@@ -1892,7 +1957,7 @@ watchCamera()
 function q:Destroy()
     if not self.alive then return end
     if self.boss then self.boss:Stop(nil,true) end
-    self.alive=false
+    self.alive=false self.authorized=false
     if self.paidRewardV3 and self.paidRewardV3.Destroy then self.paidRewardV3.Destroy() end
     if self.rewardCollector then self.rewardCollector:Destroy() end
     for _,connection in ipairs(self.connections) do pcall(function()connection:Disconnect()end) end
@@ -1901,6 +1966,25 @@ function q:Destroy()
 end
 aJ(close.Activated:Connect(function()q:Destroy()end))
 q.refreshBossUI()
+task.spawn(function()
+    local value=env.RockBugBossKeys and env.RockBugBossKeys[tostring(j.UserId)]
+    if not value and type(readfile)=="function" then local ok,v=pcall(readfile,cachePath) if ok and type(v)=="string" and #v<128 then value=v end end
+    if value then activate(value,false) end
+end)
+task.spawn(function()
+    while q.alive do
+        task.wait(60)
+        if q.alive and q.authorized and license and not httpBusy then
+            httpBusy=true
+            local result=checkKey(license,false)
+            httpBusy=false
+            if not q.alive then return end
+            if result and result.ok and tonumber(result.user_id)==j.UserId then q.lastKeyCheck=os.clock()
+            elseif result and errors[result.error] and result.error~="rate_limit" then showGate(errors[result.error])
+            elseif os.clock()-(q.lastKeyCheck or 0)>180 then showGate("Нет связи с проверкой доступа. Повтори вход.") end
+        end
+    end
+end)
 return q
 
 end)()
@@ -1943,7 +2027,7 @@ end)
 
 
 local rewardState=(function()
--- RockBug Boss reward collector v3
+-- RockBug Boss paid reward collector v3 contract: 1
 -- Uses the same direct Boss Chest prompt path that passed the standalone v3 test.
 local Players=game:GetService("Players")
 local lp=Players.LocalPlayer
@@ -1951,7 +2035,7 @@ while not lp do task.wait() lp=Players.LocalPlayer end
 local env=_G
 if type(getgenv)=="function"then local ok,v=pcall(getgenv)if ok and type(v)=="table"then env=v end end
 local q=env.RockBugBossStandalone
-if type(q)~="table"or type(q.bossCycle)~="table"then error("Reward v3: boss runtime not found",0)end
+if type(q)~="table"or type(q.bossCycle)~="table"then error("Paid reward v3: boss runtime not found",0)end
 
 if env.RockBugBossPaidRewardV3 and type(env.RockBugBossPaidRewardV3.Destroy)=="function"then
  pcall(env.RockBugBossPaidRewardV3.Destroy)
@@ -1964,7 +2048,7 @@ env.RockBugBossPaidRewardV3=state
 q.paidRewardV3=state
 
 local function enabled()
- return state.alive and q.alive and q.rewardsEnabled==true and q.bossCycle and q.bossCycle.enabled
+ return state.alive and q.alive and q.authorized and q.rewardsEnabled==true and q.bossCycle and q.bossCycle.enabled
 end
 local function low(v)return string.lower(tostring(v or""))end
 local tiers={
