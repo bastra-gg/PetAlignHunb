@@ -1,18 +1,21 @@
--- RockBugBossAutoCollect 1.8 — lightweight account-key checks; no encrypted VM.
+-- RockBugBossAutoCollect 1.9 — unified Boss startup; lightweight server key checks.
 local runtime=(function()
--- RockBug Boss 1.8: lightweight server license checks, native Luau execution.
+-- RockBug Boss 1.9: lightweight server license checks, native Luau execution.
 -- Shares under-arena combat, a safe exit to the surface, strength warmup and the chest cycle with the test hub.
 -- A client-side Lua gate is not tamper-proof DRM. UserId alone never grants access.
-if not game:IsLoaded() then game.Loaded:Wait() end
+local readyDeadline=os.clock()+60
+while not game:IsLoaded() and os.clock()<readyDeadline do task.wait(0.1) end
+if not game:IsLoaded() then error("RockBug Boss: игра не загрузилась за 60 секунд. Повтори запуск.",0) end
 local a,b,c = game:GetService("Players"),game:GetService("ReplicatedStorage"),game:GetService("RunService")
 local input,http = game:GetService("UserInputService"),game:GetService("HttpService")
 local j=a.LocalPlayer
-while not j do task.wait() j=a.LocalPlayer end
+while not j and os.clock()<readyDeadline do task.wait(0.1) j=a.LocalPlayer end
+if not j then error("RockBug Boss: LocalPlayer ещё не создан. Повтори запуск.",0) end
 local pg=j:WaitForChild("PlayerGui",60)
-if not pg then return end
+if not pg then error("RockBug Boss: PlayerGui не появился. Повтори запуск.",0) end
 local env=_G
 if type(getgenv)=="function" then local ok,v=pcall(getgenv) if ok and type(v)=="table" then env=v end end
-if env.RockBugBossStandalone and type(env.RockBugBossStandalone.Destroy)=="function" then env.RockBugBossStandalone:Destroy() end
+if type(env.RockBugBossStandalone)=="table" and type(env.RockBugBossStandalone.Destroy)=="function" then env.RockBugBossStandalone:Destroy() end
 local q={alive=true,killMode="off",connections={},punchCycle=0,directRemoteEnabled=true,remoteSentWindow=0,remoteWindowStart=os.clock(),equipInFlight=false,networkPaused=false,authorized=false,rewardsEnabled=true}
 env.RockBugBossStandalone=q
 local function B(fn) return pcall(fn) end
@@ -128,22 +131,47 @@ local license=nil
 local httpBusy=false
 local endpoint="https://szfjrpkdbccsveklkwyy.supabase.co/functions/v1/rockbug-boss-keys"
 local function post(url,payload,extra)
-    local requestFn=request or http_request or (syn and syn.request) or (fluxus and fluxus.request) or (env.http and env.http.request)
-    local body=http:JSONEncode(payload)
-    local headers={["Content-Type"]="application/json"}
-    for key,value in pairs(extra or {}) do headers[key]=value end
-    local ok,response=pcall(function()
-        if type(requestFn)=="function" then return requestFn({Url=url,Method="POST",Headers=headers,Body=body,Timeout=12}) end
-        return game:HttpPost(url,body,"application/json")
+    local completed,response=false,nil
+    local requestThread=task.spawn(function()
+        local ok,value=pcall(function()
+            local requestFn
+            for _,name in ipairs({"request","http_request"}) do
+                if type(env[name])=="function" then requestFn=env[name] break end
+            end
+            if not requestFn then
+                if type(request)=="function" then requestFn=request
+                elseif type(http_request)=="function" then requestFn=http_request end
+            end
+            if not requestFn then
+                for _,name in ipairs({"syn","fluxus","http"}) do
+                    local provider=env[name]
+                    if type(provider)=="table" and type(provider.request)=="function" then requestFn=provider.request break end
+                end
+            end
+            local headers={["Content-Type"]="application/json"}
+            for key,value in pairs(extra or {}) do headers[key]=value end
+            local body=http:JSONEncode(payload)
+            local result
+            if requestFn then result=requestFn({Url=url,Method="POST",Headers=headers,Body=body,Timeout=12})
+            else result=game:HttpPost(url,body,"application/json") end
+            local raw=type(result)=="table" and (result.Body or result.body) or result
+            if type(raw)~="string" or #raw>65536 then return nil end
+            local decoded=http:JSONDecode(raw)
+            return type(decoded)=="table" and decoded or nil
+        end)
+        response=ok and value or nil
+        completed=true
     end)
-    if not ok then return nil end
-    local raw=type(response)=="table" and (response.Body or response.body) or response
-    if type(raw)~="string" or #raw>65536 then return nil end
-    local good,decoded=pcall(function() return http:JSONDecode(raw) end)
-    return good and type(decoded)=="table" and decoded or nil
+    local deadline=os.clock()+15
+    while not completed and q.alive and os.clock()<deadline do task.wait(0.05) end
+    if not completed then
+        if type(task.cancel)=="function" then pcall(task.cancel,requestThread) end
+        return nil
+    end
+    return response
 end
 local function saveKey(value)
-    env.RockBugBossKeys=env.RockBugBossKeys or {}
+    if type(env.RockBugBossKeys)~="table" then env.RockBugBossKeys={} end
     env.RockBugBossKeys[tostring(j.UserId)]=value
     if type(writefile)=="function" then return pcall(writefile,cachePath,value) end
     return false
@@ -1967,7 +1995,7 @@ end
 aJ(close.Activated:Connect(function()q:Destroy()end))
 q.refreshBossUI()
 task.spawn(function()
-    local value=env.RockBugBossKeys and env.RockBugBossKeys[tostring(j.UserId)]
+    local value=type(env.RockBugBossKeys)=="table" and env.RockBugBossKeys[tostring(j.UserId)] or nil
     if not value and type(readfile)=="function" then local ok,v=pcall(readfile,cachePath) if ok and type(v)=="string" and #v<128 then value=v end end
     if value then activate(value,false) end
 end)
