@@ -21,6 +21,10 @@ end
 local value=boot()
 assert(value.authorized==false,'key check bypassed')
 assert(value:StartBoss()==false,'unauthorized start allowed')
+value.authorized=true;value.lastKeyCheck=math.huge
+assert(value:StartBoss()==false,'public flag bypassed private lease')
+assert(value.boss:Start()==false,'direct boss start bypassed private lease')
+value.authorized=false
 print('PASS initial startup, visible UI, key required')
 local checks=0
 env.request=function()checks+=1;return {StatusCode=403,Body='invalid'}end
@@ -28,6 +32,16 @@ login('BAD');assert(not value.authorized,'invalid key accepted');assert(checks==
 env.request=function()checks+=1;return {StatusCode=200,Body='valid'}end
 login('GOOD');assert(value.authorized,'valid key did not unlock');assert(checks==2)
 print('PASS valid and invalid server responses')
+env.request=function()return {StatusCode=503,Body='unavailable'}end
+advance(181)
+assert(value:StartBoss()==false,'expired lease allowed start')
+assert(value.boss:Start()==false,'expired lease allowed direct start')
+assert(not value.authorized,'expired lease did not close gate')
+for _,body in ipairs({'wrong-user','truthy'})do
+ env.request=function()return {StatusCode=200,Body=body}end
+ login('BAD');assert(not value.authorized,'malformed response accepted: '..body)
+end
+print('PASS private lease, expiry and strict account-bound response validation')
 value:Destroy();assert(not value.alive and not value.authorized)
 assert(not playerGui:FindFirstChild('RockBugBossStandalone'),'UI remained after destroy')
 env.request=function()return {StatusCode=403,Body='invalid'}end

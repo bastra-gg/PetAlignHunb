@@ -13,3 +13,9 @@ text+=(Path(__file__).parent/'startup.spec.luau').read_text()
 with tempfile.TemporaryDirectory() as d:
  f=Path(d)/'test.luau';f.write_text(text)
  subprocess.run([a.luau,str(f)],check=True,timeout=40)
+
+vm=source.split('-- BEGIN LICENSE VM',1)[1].split('-- END LICENSE VM',1)[0]
+with tempfile.TemporaryDirectory() as d:
+ f=Path(d)/'license.luau'
+ f.write_text(vm+'\n'+(Path(__file__).parent/'license.spec.luau').read_text())
+ subprocess.run([a.luau,str(f)],check=True,timeout=10)

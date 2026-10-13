@@ -1,4 +1,4 @@
--- RockBug Boss launcher v1.9
+-- RockBug Boss launcher v1.10
 -- Both Boss entry points use the same native Luau runtime and server key checks.
 local SOURCE_URL="https://raw.githubusercontent.com/bastra-gg/PetAlignHunb/main/RockBugBossAutoCollect.lua"
 local env=_G
@@ -18,7 +18,7 @@ local function valid(body)
   and body:find("-- RockBugBossAutoCollect",1,true)==1
 end
 local function download()
- local url=SOURCE_URL.."?v=1.9-"..tostring(os.time()).."-"..tostring(math.random(100000,999999))
+ local url=SOURCE_URL.."?v=1.10-"..tostring(os.time()).."-"..tostring(math.random(100000,999999))
  local ok,body=pcall(function()return game:HttpGet(url,true)end)
  if ok and valid(body) then return body end
  -- Some executors expose HTTP only through request; reject HTTP error pages.

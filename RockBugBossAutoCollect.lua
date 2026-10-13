@@ -1,6 +1,43 @@
--- RockBugBossAutoCollect 1.9 — unified Boss startup; lightweight server key checks.
+-- RockBugBossAutoCollect 1.10 — unified Boss startup; lightweight server key checks.
+-- BEGIN LICENSE VM
+-- Finite decision program: response shape, strict success, account binding, lease.
+-- Runs only on server replies. Gameplay reads a native private deadline.
+local access=(function()
+    local deadline=0
+    local program={41,73,29,91}
+    local function accept(reply,userId,now)
+        local matched=false
+        for pc=1,#program do
+            local op=program[pc]
+            if op==41 then
+                if type(reply)~="table" then return false end
+            elseif op==73 then
+                if reply.ok~=true then return false end
+            elseif op==29 then
+                local id=tonumber(reply.user_id)
+                matched=type(userId)=="number" and userId>0 and userId<math.huge and userId%1==0 and id==userId
+                if not matched then return false end
+            elseif op==91 then
+                if not matched or type(now)~="number" or now~=now or now<0 or now==math.huge then return false end
+                deadline=now+180
+                return true
+            else
+                return false
+            end
+        end
+        return false
+    end
+    return {
+        accept=accept,
+        invalidate=function()deadline=0 end,
+        active=function()return deadline>0 end,
+        allowed=function(now)return deadline>0 and now>=0 and now<deadline end,
+    }
+end)()
+local function hasAccess()return access.allowed(os.clock())end
+-- END LICENSE VM
 local runtime=(function()
--- RockBug Boss 1.9: lightweight server license checks, native Luau execution.
+-- RockBug Boss 1.10: lightweight server license checks, native Luau execution.
 -- Shares under-arena combat, a safe exit to the surface, strength warmup and the chest cycle with the test hub.
 -- A client-side Lua gate is not tamper-proof DRM. UserId alone never grants access.
 local readyDeadline=os.clock()+60
@@ -181,6 +218,7 @@ local function checkKey(value,redeem)
 end
 local errors={invalid="Ключ не подходит",bound="Этот ключ привязан к другому аккаунту",expired="Срок доступа истёк",revoked="Доступ отозван владельцем",rate_limit="Слишком часто. Подожди минуту"}
 local function showGate(reason)
+    access.invalidate()
     q.authorized=false
     if q.bossCycle then q.bossCycle:Cancel(false)end
     if q.boss then q.boss:Stop(nil,true) end
@@ -196,7 +234,7 @@ local function activate(value,redeem)
         httpBusy=false
         if not q.alive then return end
         unlock.Text="Активировать" unlock.Active=true
-        if result and result.ok and tonumber(result.user_id)==j.UserId then
+        if access.accept(result,j.UserId,os.clock()) then
             license=value q.authorized=true q.lastKeyCheck=os.clock()
             local persisted=saveKey(value)
             gate.Visible=false content.Visible=true keyInput.Text=""
@@ -233,7 +271,7 @@ local function dk(mode)
     return tool
 end
 local function em()
-    if not q.alive or not q.authorized or q.networkPaused or q.remotePaused then return false end
+    if not q.alive or not hasAccess() or q.networkPaused or q.remotePaused then return false end
     local remote=eg()
     if not remote then return false end
     local ok=pcall(function()remote:FireServer("rep")end)
@@ -326,10 +364,11 @@ return function(runtime, api)
         return list
     end
     function state:Start()
+        if not hasAccess() then return false end
         if self.enabled or not runtime.alive then return self.enabled end
         local health = api.ownHealth()
         api.prepare()
-        if not runtime.alive then return false end
+        if not runtime.alive or not hasAccess() then return false end
         self.generation += 1
         self.enabled = true
         self.nextScan = 0
@@ -366,7 +405,7 @@ return function(runtime, api)
     end
     local function step(now)
         if not state.enabled then return end
-        if not runtime.alive then state:Stop(nil, false) return end
+        if not runtime.alive or not hasAccess() then state:Stop(nil, false) return end
         if api.conflict() then
             state:Stop("Стоп: включён другой режим боя/перемещения", false)
             return
@@ -416,7 +455,7 @@ return function(runtime, api)
                 state.nextTraining = now + 0.25
                 local generation = state.generation
                 local ok, reason = api.trainStrength(function()
-                    return runtime.alive and state.enabled and state.generation == generation
+                    return runtime.alive and hasAccess() and state.enabled and state.generation == generation
                         and not runtime.networkPaused and not api.conflict()
                 end)
                 if state.generation ~= generation or not state.enabled then return end
@@ -496,7 +535,7 @@ return function(runtime, api)
             local generation = state.generation
             local target = state.target
             local ok, reason = api.punch(info, function()
-                return runtime.alive and state.enabled and state.generation == generation
+                return runtime.alive and hasAccess() and state.enabled and state.generation == generation
                     and not runtime.networkPaused and state.target == target
             end)
             if state.generation ~= generation or not state.enabled then return end
@@ -1207,7 +1246,7 @@ do
     end
     aJ(c.Heartbeat:Connect(function()
         -- Keep following on every frame even when equipping/punching has yielded.
-        if saved and q.boss.enabled and not q.networkPaused and not q.bossAdapter.conflict()
+        if saved and hasAccess() and q.boss.enabled and not q.networkPaused and not q.bossAdapter.conflict()
             and (ca() or 0) > 0 and not (q.bossAdapter.awaitingReward and q.bossAdapter.awaitingReward()) then
             local target = q.boss.target and info(q.boss.target)
             if target and target.alive then pcall(q.bossAdapter.hold, target, q.boss.height, q.boss.damageEvents) end
@@ -1245,7 +1284,7 @@ function q.refreshBossUI()
     start.TextColor3=active and white or Color3.fromRGB(24,13,40)
 end
 aJ(start.Activated:Connect(function()
-    if not q.authorized then return end
+    if not hasAccess() then return end
     if q.boss.enabled or q.bossCycle and q.bossCycle.enabled then q:StopBoss() else
         local other=env.RockBugRuntime
         if other and other.alive and (other.boss and other.boss.enabled or other.bugActive or other.trainActive or other.kingLock or other.lockPosition or other.machineActive) then
@@ -1831,7 +1870,7 @@ end
     local function acknowledged()observeReward(false)return rewardAcknowledged end
     local collector=createChestCollector({
         now=os.clock,wait=task.wait,character=aM,acknowledged=acknowledged,
-        ready=function()local h=aN()return q.alive and q.authorized and not q.remotePaused and not q.networkPaused and h and h.Health>0 and aO()~=nil end,
+        ready=function()local h=aN()return q.alive and hasAccess() and not q.remotePaused and not q.networkPaused and h and h.Health>0 and aO()~=nil end,
         matches=matches,closed=function(prompt)return not prompt.Parent or not prompt.Enabled end,
         find=function(snapshot)
             local root=aO()
@@ -1866,7 +1905,7 @@ end
     end
     q.bossCycle=createCycle({
         alive=function()return q.alive end,now=os.clock,
-        ready=function()local h=aN()return q.authorized and not q.remotePaused and not q.networkPaused and h and h.Health>0 and aO()~=nil end,
+        ready=function()local h=aN()return hasAccess() and not q.remotePaused and not q.networkPaused and h and h.Health>0 and aO()~=nil end,
         idle=function()return not q.boss.enabled and not q.equipInFlight and not conflict()end,
         scan=q.bossAdapter.scan,
         targetAlive=function(model)local info=q.bossAdapter.info(model)return info and info.alive end,
@@ -1915,7 +1954,7 @@ end
         return not info or not info.alive
     end
     function q:StartBoss()
-        if not self.authorized or self.remotePaused or conflict()then return false end
+        if not hasAccess() or self.remotePaused or conflict()then return false end
         self.bossCycle:SetEnabled(true)
         self.bossCycle:Tick()
         return self.bossCycle.enabled
@@ -1928,7 +1967,7 @@ end
     q.rewardCollector={Destroy=function()q.bossCycle:Cancel(false)collector:Cancel()end}
     task.spawn(function()
         while q.alive do
-            if not q.authorized or q.remotePaused then
+            if not hasAccess() or q.remotePaused then
                 if q.bossCycle.enabled or q.bossCycle.snapshot then q.bossCycle:Cancel(false)end
             else q.bossCycle:Tick()end
             task.wait(0.25)
@@ -1985,6 +2024,7 @@ watchCamera()
 function q:Destroy()
     if not self.alive then return end
     if self.boss then self.boss:Stop(nil,true) end
+    access.invalidate()
     self.alive=false self.authorized=false
     if self.paidRewardV3 and self.paidRewardV3.Destroy then self.paidRewardV3.Destroy() end
     if self.rewardCollector then self.rewardCollector:Destroy() end
@@ -2002,14 +2042,14 @@ end)
 task.spawn(function()
     while q.alive do
         task.wait(60)
-        if q.alive and q.authorized and license and not httpBusy then
+        if q.alive and access.active() and license and not httpBusy then
             httpBusy=true
             local result=checkKey(license,false)
             httpBusy=false
             if not q.alive then return end
-            if result and result.ok and tonumber(result.user_id)==j.UserId then q.lastKeyCheck=os.clock()
+            if access.accept(result,j.UserId,os.clock()) then q.lastKeyCheck=os.clock()
             elseif result and errors[result.error] and result.error~="rate_limit" then showGate(errors[result.error])
-            elseif os.clock()-(q.lastKeyCheck or 0)>180 then showGate("Нет связи с проверкой доступа. Повтори вход.") end
+            elseif not hasAccess() then showGate("Нет связи с проверкой доступа. Повтори вход.") end
         end
     end
 end)
@@ -2076,7 +2116,7 @@ env.RockBugBossPaidRewardV3=state
 q.paidRewardV3=state
 
 local function enabled()
- return state.alive and q.alive and q.authorized and q.rewardsEnabled==true and q.bossCycle and q.bossCycle.enabled
+ return state.alive and q.alive and hasAccess() and q.rewardsEnabled==true and q.bossCycle and q.bossCycle.enabled
 end
 local function low(v)return string.lower(tostring(v or""))end
 local tiers={

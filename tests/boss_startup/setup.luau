@@ -32,6 +32,8 @@ local storage=Instance.new('ReplicatedStorage')
 local http={}
 function http:JSONEncode(data)return 'json' end
 function http:JSONDecode(raw)
+ if raw=='wrong-user' then return {ok=true,user_id=99}end
+ if raw=='truthy' then return {ok='true',user_id=17}end
  if raw=='valid' then return {ok=true,user_id=17}end
  if raw=='invalid' then return {error='invalid'}end
  error('invalid json')
