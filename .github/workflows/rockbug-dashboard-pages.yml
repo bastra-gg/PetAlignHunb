@@ -1,0 +1,41 @@
+name: Publish RockBug Dashboard
+on:
+  push:
+    branches: [main, gh-pages]
+    paths:
+      - '.github/workflows/rockbug-dashboard-pages.yml'
+      - 'index.html'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: rockbug-pages
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Checkout dashboard
+        uses: actions/checkout@v4
+        with:
+          ref: gh-pages
+          persist-credentials: false
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+        with:
+          enablement: true
+      - name: Upload
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: .
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v4
